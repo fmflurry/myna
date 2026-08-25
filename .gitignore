@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Node
+node_modules/
+dist/
+
+# Rust
+target/
+
+# Model artifacts (downloaded via `hf download`)
+models/**/*.gguf
+models/**/*.onnx
+
+# Logs
+*.log
+
+# Environment
+.env
+
+# Local runtime data (machine-local; never commit)
+data/
+
+# Database artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
