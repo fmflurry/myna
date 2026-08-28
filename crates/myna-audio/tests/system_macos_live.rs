@@ -22,12 +22,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use myna_audio::{
     capture_sources, list_system_audio_sources, rms, system_audio_status, CaptureConfig,
     CaptureRequest, CaptureSource, SystemAudioStatus, ALL_OUTPUT_SOURCE_ID,
 };
+#[cfg(target_os = "macos")]
+use myna_coreaudio_tap::{hal_device_uid, list_hal_device_ids, AudioObjectID};
 
 /// How long to run each live capture before stopping and inspecting results.
 const CAPTURE_DURATION: Duration = Duration::from_secs(5);
@@ -290,6 +292,168 @@ fn captures_system_audio_for_a_specific_afplay_process_by_pid_when_permission_is
         "expected at least one non-zero sample while afplay (pid {pid}) was looping audio — \
          a silent result here is a real per-process-tap regression, not an environment issue"
     );
+}
+
+/// Proves the full Core Audio teardown chain — `AudioDeviceStop` ->
+/// `AudioDeviceDestroyIOProcID` -> destroy aggregate device -> destroy
+/// process tap (see `myna-coreaudio-tap`'s `tap.rs`) — actually runs on real
+/// hardware and leaves no trace: the HAL's device set
+/// (`kAudioHardwarePropertyDevices`) is captured before any tap exists, then
+/// re-checked after each of several start/stop cycles. A leaked aggregate
+/// device would show up as an extra id that persists after `stop()` returns.
+///
+/// Runs 5 cycles rather than 1 so a slow/eventual leak (e.g. one that only
+/// manifests every other teardown) can't hide behind a single lucky pass,
+/// and so the device count is proven not to grow cycle over cycle.
+///
+/// # Why this polls instead of asserting immediately
+///
+/// Empirically (confirmed via [`hal_device_uid`] on the extra id), Core
+/// Audio's `kAudioHardwarePropertyDevices` does not update synchronously
+/// with `AudioHardwareDestroyAggregateDevice` returning: a just-destroyed
+/// aggregate device (UID `dev.myna.coreaudiotap.aggregate.<pid>`) can still
+/// enumerate for up to roughly a second after its owning
+/// `ProcessTapCapture`'s `Drop` has already run and returned — and the same
+/// lag can leave a *previous* test's (or, once, this test's own prior
+/// cycle's) residue in the very first read taken right after that test
+/// finished, contaminating a naively-immediate baseline. That is HAL
+/// enumeration lag, not a leak: teardown has already returned before this
+/// test ever reads the device list. [`stabilized_hal_device_ids`] waits out
+/// that lag — for the baseline *and* every post-cycle read — by polling
+/// until two consecutive reads agree; a genuine leak would never stabilize
+/// back down to the same set.
+#[test]
+#[ignore = "requires real hardware: system-audio (kTCCServiceAudioCapture) permission granted"]
+#[cfg(target_os = "macos")]
+fn system_capture_leaves_no_aggregate_device_after_stop() {
+    let _guard = LIVE_CAPTURE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if std::env::var("MYNA_LIVE_AUDIO_TESTS").is_err() {
+        return;
+    }
+
+    let status = system_audio_status();
+    // `Unknown` is expected on a fresh test binary — there is no preflight
+    // for this TCC service, so the only way to learn the real status is to
+    // actually attempt the capture below, which itself observes and caches
+    // the outcome. Only a *definite* non-available status short-circuits.
+    if matches!(
+        status,
+        SystemAudioStatus::PermissionDenied { .. } | SystemAudioStatus::Unavailable { .. }
+    ) {
+        println!(
+            "system audio not available (status: {status:?}) — grant system-audio \
+             (Audio Recording) permission to this test binary in System Settings and \
+             re-run; not failing the test since this is an environment \
+             precondition, not a code defect"
+        );
+        return;
+    }
+
+    const CYCLE_DURATION: Duration = Duration::from_millis(500);
+    const CYCLES: usize = 5;
+    const SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
+    const SETTLE_POLL_INTERVAL: Duration = Duration::from_millis(150);
+
+    let baseline = stabilized_hal_device_ids(SETTLE_TIMEOUT, SETTLE_POLL_INTERVAL);
+    println!(
+        "baseline HAL device set before any tap (stabilized): {} device(s)",
+        baseline.len()
+    );
+
+    let mut device_counts = Vec::with_capacity(CYCLES);
+    for cycle in 1..=CYCLES {
+        run_one_capture_cycle(None, CYCLE_DURATION);
+        let after = stabilized_hal_device_ids(SETTLE_TIMEOUT, SETTLE_POLL_INTERVAL);
+        println!(
+            "cycle {cycle}/{CYCLES}: {} device(s) after stop (stabilized within {SETTLE_TIMEOUT:?})",
+            after.len()
+        );
+        device_counts.push(after.len());
+        if after != baseline {
+            for id in after.iter().filter(|id| !baseline.contains(id)) {
+                println!("  leaked id={id} uid={:?}", hal_device_uid(*id));
+            }
+        }
+        assert_eq!(
+            after, baseline,
+            "cycle {cycle}/{CYCLES}: HAL device set did not stabilize back to \
+             the pre-tap baseline within {SETTLE_TIMEOUT:?} of stop() \
+             returning — the tap's aggregate device (or some other HAL \
+             resource) was not torn down. before={baseline:?} after={after:?}"
+        );
+    }
+
+    let grew_every_cycle = device_counts.windows(2).all(|pair| pair[1] > pair[0]);
+    assert!(
+        !grew_every_cycle,
+        "HAL device count grew every cycle across {CYCLES} start/stop cycles: \
+         {device_counts:?} — this indicates a leaked aggregate device per capture"
+    );
+}
+
+/// Runs one system-audio start/stop cycle for `duration`, discarding
+/// captured samples — this test only cares about the underlying HAL
+/// resources (aggregate device, IOProc) left behind, not audio content.
+#[cfg(target_os = "macos")]
+fn run_one_capture_cycle(system_source: Option<&str>, duration: Duration) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_capture = Arc::clone(&stop);
+    let system_source_owned = system_source.map(str::to_string);
+
+    let capture_thread = thread::spawn(move || {
+        let request = CaptureRequest {
+            source: CaptureSource::System,
+            device: None,
+            system_source: system_source_owned.as_deref(),
+            config: CaptureConfig::default(),
+        };
+        capture_sources(
+            &request,
+            stop_for_capture,
+            |_samples| {},
+            |resolved| println!("effective system-audio source: {resolved:?}"),
+        )
+    });
+
+    thread::sleep(duration);
+    stop.store(true, Ordering::Relaxed);
+    let capture_result = capture_thread.join().expect("capture thread joins");
+    capture_result.expect("system audio capture runs without error");
+}
+
+/// [`list_hal_device_ids`], sorted so two independent enumerations of the
+/// same device set compare equal regardless of the HAL's internal ordering.
+#[cfg(target_os = "macos")]
+fn sorted_hal_device_ids() -> Vec<AudioObjectID> {
+    let mut ids = list_hal_device_ids();
+    ids.sort_unstable();
+    ids
+}
+
+/// Polls [`sorted_hal_device_ids`] until two consecutive reads,
+/// `poll_interval` apart, agree — or until `timeout` elapses, in which case
+/// it returns whatever the last read was. Used for *both* the baseline and
+/// every post-cycle read in
+/// `system_capture_leaves_no_aggregate_device_after_stop`, since the same
+/// HAL enumeration lag that can leave a just-destroyed aggregate device
+/// briefly visible can equally leave a *previous* tap's residue in a
+/// naively-immediate baseline read — waiting for two-reads-agree rather
+/// than for a specific target value catches both.
+#[cfg(target_os = "macos")]
+fn stabilized_hal_device_ids(timeout: Duration, poll_interval: Duration) -> Vec<AudioObjectID> {
+    let deadline = Instant::now() + timeout;
+    let mut previous = sorted_hal_device_ids();
+    loop {
+        thread::sleep(poll_interval);
+        let current = sorted_hal_device_ids();
+        if current == previous || Instant::now() >= deadline {
+            return current;
+        }
+        previous = current;
+    }
 }
 
 /// Shells out to `pgrep -n afplay`, mirroring the spike that first validated

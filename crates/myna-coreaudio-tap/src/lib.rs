@@ -32,7 +32,8 @@ mod version;
 
 pub use objc2_core_audio::AudioObjectID;
 pub use process::{
-    executable_name, executable_path, is_process_running_output, translate_pid, AudioProcess,
+    executable_name, executable_path, hal_device_uid, is_process_running_output,
+    list_hal_device_ids, translate_pid, AudioProcess,
 };
 pub use tap::{CapturedFormat, ProcessTapCapture, TapError, TapScope};
 pub use version::is_macos_at_least;

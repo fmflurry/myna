@@ -9,6 +9,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use objc2_core_audio::{
+    kAudioDevicePropertyDeviceUID, kAudioHardwarePropertyDevices,
     kAudioHardwarePropertyProcessObjectList, kAudioHardwarePropertyTranslatePIDToProcessObject,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     kAudioProcessPropertyBundleID, kAudioProcessPropertyIsRunningOutput, kAudioProcessPropertyPID,
@@ -139,6 +140,43 @@ pub fn is_process_running_output(object_id: AudioObjectID) -> bool {
     .and_then(|bytes| read_u32(&bytes))
     .map(|value| value != 0)
     .unwrap_or(false)
+}
+
+/// Enumerates every device object id currently registered with the HAL
+/// (`kAudioHardwarePropertyDevices`) — this includes a
+/// [`crate::ProcessTapCapture`]'s private aggregate device for as long as
+/// one is live, alongside every ordinary physical/virtual audio device.
+///
+/// Exists so tests can prove a tap's aggregate device is fully torn down
+/// after [`crate::ProcessTapCapture`] drops: capture the set before starting
+/// a tap and again after stopping it, and assert they're equal — a leaked
+/// aggregate device would show up as an extra id that was not present
+/// before.
+pub fn list_hal_device_ids() -> Vec<AudioObjectID> {
+    let Some(bytes) = get_property_raw(
+        kAudioObjectSystemObject as AudioObjectID,
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+        None,
+    ) else {
+        return Vec::new();
+    };
+    bytes
+        .as_chunks::<ID_SIZE>()
+        .0
+        .iter()
+        .copied()
+        .map(u32::from_ne_bytes)
+        .collect()
+}
+
+/// Reads a HAL device's persistent UID (`kAudioDevicePropertyDeviceUID`,
+/// e.g. `"BuiltInSpeakerDevice"`) — for diagnosing exactly which device a
+/// [`list_hal_device_ids`] entry refers to, when a test needs to tell a
+/// caller-owned aggregate device apart from an unrelated system device.
+/// Returns `None` if `object_id` no longer resolves a device or has no UID.
+pub fn hal_device_uid(object_id: AudioObjectID) -> Option<String> {
+    get_property_cf_string(object_id, kAudioDevicePropertyDeviceUID)
 }
 
 fn process_object_ids() -> Vec<AudioObjectID> {
