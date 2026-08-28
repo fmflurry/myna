@@ -330,8 +330,7 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [], archived: false,
-      hasAudio: false,
+      summaries: [], archived: false, hasAudio: false,
     };
     selectedMeeting.set(meeting);
     const fixture = createFixture();
@@ -367,8 +366,7 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [], archived: false,
-      hasAudio: false,
+      summaries: [], archived: false, hasAudio: false,
     };
     selectedMeeting.set(meeting);
     templates.set([{ name: 'key-points', description: '', prompt: '' }]);
@@ -386,8 +384,7 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [], archived: false,
-      hasAudio: false,
+      summaries: [], archived: false, hasAudio: false,
     };
     selectedMeeting.set(meeting);
     const fixture = createFixture();
