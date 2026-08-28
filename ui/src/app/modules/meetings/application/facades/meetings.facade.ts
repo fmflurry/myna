@@ -1,9 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 
 import type { CaptureSource } from '../../core/models/capture-source.model';
-import type { MeetingId } from '../../core/models/meeting.model';
+import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import { withSummary } from '../../core/models/meeting.model';
-import { MeetingsError } from '../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
@@ -12,6 +11,7 @@ import { CancelSummarizationUseCase } from '../use-cases/cancel-summarization.us
 import { CheckModelsUseCase } from '../use-cases/check-models.usecase';
 import { CheckSystemAudioUseCase } from '../use-cases/check-system-audio.usecase';
 import { DeleteMeetingUseCase } from '../use-cases/delete-meeting.usecase';
+import { EditTranscriptSegmentUseCase } from '../use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from '../use-cases/get-app-version.usecase';
 import { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
@@ -22,27 +22,12 @@ import { ListSummaryLanguagesUseCase } from '../use-cases/list-summary-languages
 import { ListTemplatesUseCase } from '../use-cases/list-templates.usecase';
 import { OpenMeetingUseCase } from '../use-cases/open-meeting.usecase';
 import { RenameMeetingUseCase } from '../use-cases/rename-meeting.usecase';
+import { SetMeetingArchivedUseCase } from '../use-cases/set-meeting-archived.usecase';
 import { StartRecordingUseCase } from '../use-cases/start-recording.usecase';
 import { StopRecordingUseCase } from '../use-cases/stop-recording.usecase';
 import { SummarizeMeetingUseCase } from '../use-cases/summarize-meeting.usecase';
-import { MeetingsStore, type MeetingsErrorInfo } from '../stores/meetings.store';
-
-/** File extension the save dialog should offer for each export format. */
-const EXPORT_EXTENSIONS: Readonly<Record<MeetingExportFormat, string>> = {
-  markdown: 'md',
-  json: 'json',
-  txt: 'txt',
-};
-
-const toErrorInfo = (caught: unknown): MeetingsErrorInfo => {
-  if (caught instanceof MeetingsError) {
-    return { code: caught.code, message: caught.message };
-  }
-  if (caught instanceof Error) {
-    return { code: 'UNKNOWN', message: caught.message };
-  }
-  return { code: 'UNKNOWN', message: String(caught) };
-};
+import { MeetingsStore } from '../stores/meetings.store';
+import { EXPORT_EXTENSIONS, toErrorInfo } from './meetings-facade.support';
 
 /**
  * The ONLY class components are allowed to inject for the meetings module.
@@ -59,6 +44,8 @@ export class MeetingsFacade {
   private readonly openMeetingUseCase = inject(OpenMeetingUseCase);
   private readonly deleteMeetingUseCase = inject(DeleteMeetingUseCase);
   private readonly renameMeetingUseCase = inject(RenameMeetingUseCase);
+  private readonly setMeetingArchivedUseCase = inject(SetMeetingArchivedUseCase);
+  private readonly editTranscriptSegmentUseCase = inject(EditTranscriptSegmentUseCase);
   private readonly summarizeMeetingUseCase = inject(SummarizeMeetingUseCase);
   private readonly listTemplatesUseCase = inject(ListTemplatesUseCase);
   private readonly checkModelsUseCase = inject(CheckModelsUseCase);
@@ -97,6 +84,8 @@ export class MeetingsFacade {
   readonly audioSources = this.store.audioSources;
   readonly selectedAudioSource = this.store.selectedAudioSource;
   readonly effectiveSystemSource = this.store.effectiveSystemSource;
+  readonly splitRatio = this.store.splitRatio;
+  readonly transcriptCollapsed = this.store.transcriptCollapsed;
 
   async startRecording(title: string, deviceName?: string): Promise<void> {
     this.store.setStartingRecording(true);
@@ -109,6 +98,7 @@ export class MeetingsFacade {
         this.store.selectedAudioSource(),
       );
       this.store.setSelectedMeeting(meeting);
+      this.store.addMeeting(meeting);
       this.store.clearError();
     } catch (caught) {
       this.store.setError(toErrorInfo(caught));
@@ -121,6 +111,7 @@ export class MeetingsFacade {
     try {
       const meeting = await this.stopRecordingUseCase.stop();
       this.store.setSelectedMeeting(meeting);
+      this.store.addMeeting(meeting);
       this.store.clearError();
     } catch (caught) {
       this.store.setError(toErrorInfo(caught));
@@ -128,13 +119,22 @@ export class MeetingsFacade {
   }
 
   async cancelRecording(): Promise<void> {
+    const cancelled = this.store.selectedMeeting();
     try {
       await this.cancelRecordingUseCase.cancel();
+      if (cancelled) {
+        this.store.setMeetings(this.store.meetings().filter((meeting) => meeting.id !== cancelled.id));
+      }
       this.store.clearSelectedMeeting();
       this.store.clearError();
     } catch (caught) {
       this.store.setError(toErrorInfo(caught));
     }
+  }
+
+  /** Clears the selected meeting without modifying the meetings list. */
+  clearSelection(): void {
+    this.store.clearSelectedMeeting();
   }
 
   async loadMeetings(): Promise<void> {
@@ -170,6 +170,16 @@ export class MeetingsFacade {
     }
   }
 
+  /** Runs a mutation that returns the meeting the backend actually persisted, mirrors it into the store, and funnels any failure into the shared error slot. Never optimistic. */
+  private async applyMeetingMutation(mutate: () => Promise<Meeting>): Promise<void> {
+    try {
+      this.store.updateMeeting(await mutate());
+      this.store.clearError();
+    } catch (caught) {
+      this.store.setError(toErrorInfo(caught));
+    }
+  }
+
   /**
    * Renames a meeting. Only updates the store with the meeting the Rust
    * command actually persisted (never optimistically), so a failed rename
@@ -177,13 +187,17 @@ export class MeetingsFacade {
    * heading simply keep showing whatever was already correct.
    */
   async renameMeeting(id: MeetingId, title: string): Promise<void> {
-    try {
-      const meeting = await this.renameMeetingUseCase.rename(id, title);
-      this.store.updateMeeting(meeting);
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    }
+    await this.applyMeetingMutation(() => this.renameMeetingUseCase.rename(id, title));
+  }
+
+  /** Archives or unarchives a meeting; never optimistic, mirrors renameMeeting. */
+  async setMeetingArchived(id: MeetingId, archived: boolean): Promise<void> {
+    await this.applyMeetingMutation(() => this.setMeetingArchivedUseCase.set(id, archived));
+  }
+
+  /** Persists a manual correction to one transcript segment; never optimistic. Rejected with BUSY by the backend while that meeting is recording. */
+  async editTranscriptSegment(id: MeetingId, index: number, text: string): Promise<void> {
+    await this.applyMeetingMutation(() => this.editTranscriptSegmentUseCase.edit(id, index, text));
   }
 
   async summarizeMeeting(id: MeetingId, template: SummaryTemplate): Promise<void> {
@@ -370,5 +384,15 @@ export class MeetingsFacade {
     } catch (caught) {
       this.store.setError(toErrorInfo(caught));
     }
+  }
+
+  /** Persists the transcript/summary split ratio for the NEXT session too, via the store. */
+  setSplitRatio(ratio: number): void {
+    this.store.setSplitRatio(ratio);
+  }
+
+  /** Persists whether the transcript column is collapsed for the NEXT session too, via the store. */
+  setTranscriptCollapsed(collapsed: boolean): void {
+    this.store.setTranscriptCollapsed(collapsed);
   }
 }

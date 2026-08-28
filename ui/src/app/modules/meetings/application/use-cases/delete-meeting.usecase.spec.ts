@@ -23,7 +23,7 @@ describe('DeleteMeetingUseCase', () => {
 
   it('removes the meeting matching the given id', async () => {
     const id = toMeetingId('m-7');
-    repository.seed([{ id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [] }]);
+    repository.seed([{ id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: false }]);
 
     await useCase.delete(id);
 
@@ -34,8 +34,8 @@ describe('DeleteMeetingUseCase', () => {
     const keep = toMeetingId('keep');
     const remove = toMeetingId('remove');
     repository.seed([
-      { id: keep, title: 'Keep me', createdAt: new Date(), durationSec: 10, summaries: [] },
-      { id: remove, title: 'Remove me', createdAt: new Date(), durationSec: 10, summaries: [] },
+      { id: keep, title: 'Keep me', createdAt: new Date(), durationSec: 10, summaries: [], archived: false },
+      { id: remove, title: 'Remove me', createdAt: new Date(), durationSec: 10, summaries: [], archived: false },
     ]);
 
     await useCase.delete(remove);

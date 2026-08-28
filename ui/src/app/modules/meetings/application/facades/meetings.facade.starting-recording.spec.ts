@@ -65,7 +65,14 @@ describe('MeetingsFacade startingRecording', () => {
     const pending = facade.startRecording('Standup');
     expect(facade.startingRecording()).toBe(true);
 
-    resolveStart({ id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [] });
+    resolveStart({
+      id: toMeetingId('m-1'),
+      title: 'Standup',
+      createdAt: new Date(),
+      durationSec: 0,
+      summaries: [],
+      archived: false,
+    });
     await pending;
 
     expect(facade.startingRecording()).toBe(false);
@@ -79,5 +86,15 @@ describe('MeetingsFacade startingRecording', () => {
 
     expect(facade.startingRecording()).toBe(false);
     expect(facade.error()?.code).toBe('UNKNOWN');
+  });
+
+  it('leaves the meetings list unchanged (no phantom row) when start() fails', async () => {
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    vi.spyOn(recorder, 'start').mockRejectedValue(new Error('boom'));
+    expect(facade.meetings()).toEqual([]);
+
+    await facade.startRecording('Standup');
+
+    expect(facade.meetings()).toEqual([]);
   });
 });

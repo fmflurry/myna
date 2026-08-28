@@ -44,6 +44,16 @@
     [startingRecording]="startingRecording()"
     (recordClicked)="recordClicked.emit()"
     (stopClicked)="stopClicked.emit()"
-    (cancelClicked)="cancelClicked.emit()"
+    (cancelClicked)="onCancelClicked()"
   />
+
+  @if (confirmingCancel()) {
+    <div class="cancel-confirm" role="alert">
+      <span class="confirm-label">Stop and discard this recording? The audio and transcript will be deleted.</span>
+      <span class="confirm-actions">
+        <button type="button" class="confirm-yes" (click)="confirmCancel($event)">Yes</button>
+        <button type="button" class="confirm-no" (click)="dismissCancel($event)">No</button>
+      </span>
+    </div>
+  }
 </div>

@@ -23,7 +23,7 @@ describe('ExportMeetingUseCase', () => {
 
   it('delegates to the meeting repository export with the given format and destination', async () => {
     repository.seed([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [] },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false },
     ]);
 
     const result = await useCase.export(toMeetingId('m-1'), 'markdown', '/tmp/standup.md');

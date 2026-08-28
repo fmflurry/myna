@@ -20,8 +20,10 @@ import type { MeetingExportFormat } from '../../../core/ports/meeting-repository
 import { AttributionComponent } from '../../components/attribution/attribution.component';
 import type { SummaryLoadRequest } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
 import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
+import type { MeetingArchiveRequest } from '../../components/meeting-list-item/meeting-list-item.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
+import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
 
 /**
@@ -68,6 +70,16 @@ export class MeetingsShellPage implements OnInit {
 
   protected readonly elapsedSec = signal(0);
   protected readonly elapsedLabel = computed(() => formatMmSs(this.elapsedSec()));
+
+  /**
+   * Id of the meeting currently being recorded, if any. During a recording
+   * the recording meeting IS the selected meeting (`startRecording` sets it,
+   * and the busy-guard in `onMeetingSelected` blocks selection from
+   * changing), so `busy()` + `selectedMeeting()?.id` identifies it.
+   */
+  protected readonly recordingMeetingId = computed<MeetingId | undefined>(() =>
+    this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined,
+  );
 
   private timerHandle: ReturnType<typeof setInterval> | undefined;
 
@@ -116,8 +128,14 @@ export class MeetingsShellPage implements OnInit {
       .subscribe((id) => {
         if (id) {
           void this.facade.openMeeting(toMeetingId(id));
+        } else {
+          this.facade.clearSelection();
         }
       });
+  }
+
+  onGoHome(): void {
+    void this.router.navigate(['/meetings']);
   }
 
   toggleAbout(): void {
@@ -180,12 +198,31 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.renameMeeting(meeting.id, title);
   }
 
+  onSegmentEdited(edit: TranscriptSegmentEdit): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.editTranscriptSegment(meeting.id, edit.index, edit.text);
+  }
+
   onMeetingDeleted(id: MeetingId): void {
+    if (this.facade.busy() && this.facade.selectedMeeting()?.id === id) {
+      // There is no finished recording session on disk to stop first —
+      // `cancelRecording()` stops the session and wipes the meeting dir,
+      // including audio.wav, instead of `deleteMeeting()`.
+      void this.facade.cancelRecording().then(() => this.router.navigate(['/meetings']));
+      return;
+    }
     void this.facade.deleteMeeting(id).then(() => {
       if (this.facade.selectedMeeting() === undefined) {
         void this.router.navigate(['/meetings']);
       }
     });
+  }
+
+  onMeetingArchiveToggled(request: MeetingArchiveRequest): void {
+    void this.facade.setMeetingArchived(request.id, request.archived);
   }
 
   reload(): void {
@@ -218,6 +255,14 @@ export class MeetingsShellPage implements OnInit {
 
   onSummaryLoadRequested(request: SummaryLoadRequest): void {
     void this.facade.loadSummary(request.meetingId, request.template, request.language);
+  }
+
+  onSplitRatioChanged(ratio: number): void {
+    this.facade.setSplitRatio(ratio);
+  }
+
+  onTranscriptCollapsedChanged(collapsed: boolean): void {
+    this.facade.setTranscriptCollapsed(collapsed);
   }
 
   exportMeeting(format: MeetingExportFormat): void {

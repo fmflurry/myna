@@ -25,6 +25,8 @@ export const COMMAND_NAMES = [
   'get_meeting',
   'delete_meeting',
   'rename_meeting',
+  'set_meeting_archived',
+  'edit_transcript_segment',
   'get_transcript',
   'list_templates',
   'list_summary_languages',
@@ -37,6 +39,9 @@ export const COMMAND_NAMES = [
   'request_system_audio_permission',
   'get_summary',
   'app_version',
+  'import_audio',
+  'retranscribe_meeting',
+  'cancel_import',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -76,6 +81,14 @@ export interface CommandSignatures {
     args: { readonly meetingId: string; readonly title: string };
     result: MeetingDto;
   };
+  readonly set_meeting_archived: {
+    args: { readonly meetingId: string; readonly archived: boolean };
+    result: MeetingDto;
+  };
+  readonly edit_transcript_segment: {
+    args: { readonly meetingId: string; readonly segmentIndex: number; readonly text: string };
+    result: MeetingDto;
+  };
   readonly get_transcript: { args: { readonly id: string }; result: TranscriptDto | null };
   readonly list_templates: { args: NoArgs; result: readonly TemplateDto[] };
   readonly list_summary_languages: { args: NoArgs; result: readonly SummaryLanguageDto[] };
@@ -97,6 +110,15 @@ export interface CommandSignatures {
     result: SummaryDto | null;
   };
   readonly app_version: { args: NoArgs; result: string };
+  readonly import_audio: {
+    args: { readonly path: string; readonly title?: string };
+    result: MeetingDto;
+  };
+  readonly retranscribe_meeting: {
+    args: { readonly meetingId: string; readonly path?: string };
+    result: MeetingDto;
+  };
+  readonly cancel_import: { args: NoArgs; result: void };
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];

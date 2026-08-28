@@ -8,6 +8,7 @@ import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { ModelsStatus } from '../../core/models/models-status.model';
 import type { MeetingsErrorCode, RecordingState } from '../../core/models/recording-state.model';
+import { DEFAULT_SPLIT_RATIO } from '../../core/models/split-layout.model';
 import { DEFAULT_SUMMARY_LANGUAGE_CODE, type SummaryLanguage } from '../../core/models/summary-language.model';
 import type { Summary } from '../../core/models/summary.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
@@ -16,6 +17,7 @@ import { PreferencesPort } from '../../core/ports/preferences.port';
 import { RecorderPort } from '../../core/ports/recorder.port';
 import { SummarizerPort } from '../../core/ports/summarizer.port';
 import { TranscriberPort } from '../../core/ports/transcriber.port';
+import { readStoredSplitRatio, readStoredTranscriptCollapsed, storeSplitRatio, storeTranscriptCollapsed } from './split-layout-preferences.util';
 import { summaryCacheKey } from './summary-cache.model';
 import type { SummaryCacheEntry, SummaryCacheStatus } from './summary-cache.model';
 import type { SummarizingKey } from './summarizing-key.model';
@@ -23,6 +25,7 @@ import type { SummarizingKey } from './summarizing-key.model';
 export type { SummarizingKey };
 export type { SummaryCacheEntry, SummaryCacheStatus };
 export { summaryCacheKey };
+export { SPLIT_RATIO_PREFERENCE_KEY, TRANSCRIPT_COLLAPSED_PREFERENCE_KEY } from './split-layout-preferences.util';
 
 export interface MeetingsErrorInfo {
   readonly code: MeetingsErrorCode;
@@ -53,6 +56,8 @@ interface MeetingsStoreConfig {
   AUDIO_SOURCES: readonly AudioSource[];
   SELECTED_AUDIO_SOURCE: string;
   EFFECTIVE_SYSTEM_SOURCE: AudioSource | null;
+  SPLIT_RATIO: number;
+  TRANSCRIPT_COLLAPSED: boolean;
 }
 
 /** localStorage key the selected summary output language is persisted under. */
@@ -103,86 +108,48 @@ export class MeetingsStore {
   private readonly summarizer = inject(SummarizerPort);
   private readonly preferences = inject(PreferencesPort);
 
-  readonly meetings: Signal<readonly Meeting[]> = computed(
-    () => this.slots.get('MEETINGS')().data ?? []
-  );
-  readonly selectedMeeting: Signal<Meeting | undefined> = computed(
-    () => this.slots.get('SELECTED_MEETING')().data
-  );
-  readonly recordingState: Signal<RecordingState> = computed(
-    () => this.slots.get('RECORDING_STATE')().data ?? 'idle'
-  );
+  readonly meetings: Signal<readonly Meeting[]> = computed(() => this.slots.get('MEETINGS')().data ?? []);
+  readonly selectedMeeting: Signal<Meeting | undefined> = computed(() => this.slots.get('SELECTED_MEETING')().data);
+  readonly recordingState: Signal<RecordingState> = computed(() => this.slots.get('RECORDING_STATE')().data ?? 'idle');
   /** Finalized segments only ever append; the partial is transient and clears once a final arrives (see `finals()` below). */
-  readonly finalizedSegments: Signal<readonly TranscriptSegment[]> = computed(
-    () => this.slots.get('FINALIZED_SEGMENTS')().data ?? []
-  );
-  readonly partialText: Signal<string> = computed(
-    () => this.slots.get('PARTIAL_TEXT')().data ?? ''
-  );
+  readonly finalizedSegments: Signal<readonly TranscriptSegment[]> = computed(() => this.slots.get('FINALIZED_SEGMENTS')().data ?? []);
+  readonly partialText: Signal<string> = computed(() => this.slots.get('PARTIAL_TEXT')().data ?? '');
   readonly level: Signal<AudioLevel | undefined> = computed(() => this.slots.get('LEVEL')().data);
-  readonly templates: Signal<readonly SummaryTemplate[]> = computed(
-    () => this.slots.get('TEMPLATES')().data ?? []
-  );
-  readonly modelsStatus: Signal<ModelsStatus | undefined> = computed(
-    () => this.slots.get('MODELS_STATUS')().data
-  );
-  readonly summaryStream: Signal<string> = computed(
-    () => this.slots.get('SUMMARY_STREAM')().data ?? ''
-  );
-  readonly error: Signal<MeetingsErrorInfo | undefined> = computed(
-    () => this.slots.get('ERROR')().data
-  );
+  readonly templates: Signal<readonly SummaryTemplate[]> = computed(() => this.slots.get('TEMPLATES')().data ?? []);
+  readonly modelsStatus: Signal<ModelsStatus | undefined> = computed(() => this.slots.get('MODELS_STATUS')().data);
+  readonly summaryStream: Signal<string> = computed(() => this.slots.get('SUMMARY_STREAM')().data ?? '');
+  readonly error: Signal<MeetingsErrorInfo | undefined> = computed(() => this.slots.get('ERROR')().data);
   readonly busy: Signal<boolean> = computed(() => this.recordingState() !== 'idle');
-  readonly devices: Signal<readonly AudioDevice[]> = computed(
-    () => this.slots.get('DEVICES')().data ?? []
-  );
-  readonly selectedDevice: Signal<AudioDevice | null> = computed(
-    () => this.slots.get('SELECTED_DEVICE')().data ?? null
-  );
-  readonly summarizingKey: Signal<SummarizingKey | null> = computed(
-    () => this.slots.get('SUMMARIZING_KEY')().data ?? null
-  );
+  readonly devices: Signal<readonly AudioDevice[]> = computed(() => this.slots.get('DEVICES')().data ?? []);
+  readonly selectedDevice: Signal<AudioDevice | null> = computed(() => this.slots.get('SELECTED_DEVICE')().data ?? null);
+  readonly summarizingKey: Signal<SummarizingKey | null> = computed(() => this.slots.get('SUMMARIZING_KEY')().data ?? null);
   /** True while ANYTHING is generating; scope to ONE tab via `summarizingKey` instead. */
   readonly summarizing: Signal<boolean> = computed(() => this.summarizingKey() !== null);
   /** True while the STT model loads after a Record click, before `recordingState` leaves `'idle'`. */
   readonly startingRecording: Signal<boolean> = computed(() => this.slots.get('STARTING_RECORDING')().data ?? false);
-  readonly systemAudioStatus: Signal<SystemAudioStatus | undefined> = computed(
-    () => this.slots.get('SYSTEM_AUDIO_STATUS')().data
-  );
+  readonly systemAudioStatus: Signal<SystemAudioStatus | undefined> = computed(() => this.slots.get('SYSTEM_AUDIO_STATUS')().data);
   /** The source the user has selected for the NEXT recording. Defaults to both mic and system audio. */
-  readonly captureSource: Signal<CaptureSource> = computed(
-    () => this.slots.get('CAPTURE_SOURCE')().data ?? DEFAULT_CAPTURE_SOURCE
-  );
-  readonly summaryLanguages: Signal<readonly SummaryLanguage[]> = computed(
-    () => this.slots.get('SUMMARY_LANGUAGES')().data ?? []
-  );
+  readonly captureSource: Signal<CaptureSource> = computed(() => this.slots.get('CAPTURE_SOURCE')().data ?? DEFAULT_CAPTURE_SOURCE);
+  readonly summaryLanguages: Signal<readonly SummaryLanguage[]> = computed(() => this.slots.get('SUMMARY_LANGUAGES')().data ?? []);
   /**
    * The language the NEXT summary generation should use. Seeded once from
    * `PreferencesPort` at construction time so it survives a store rebuild
    * (e.g. app relaunch, or a fresh injector in tests sharing the same
    * preferences backend) — never re-read on every access.
    */
-  readonly selectedSummaryLanguage: Signal<string> = computed(
-    () => this.slots.get('SELECTED_SUMMARY_LANGUAGE')().data ?? DEFAULT_SUMMARY_LANGUAGE_CODE
-  );
+  readonly selectedSummaryLanguage: Signal<string> = computed(() => this.slots.get('SELECTED_SUMMARY_LANGUAGE')().data ?? DEFAULT_SUMMARY_LANGUAGE_CODE);
   /** Per-(meeting, template, language) load state for persisted summaries fetched via `get_summary`. */
-  readonly summaryCache: Signal<ReadonlyMap<string, SummaryCacheEntry>> = computed(
-    () => this.slots.get('SUMMARY_CACHE')().data ?? new Map()
-  );
-  readonly appVersion: Signal<string | undefined> = computed(
-    () => this.slots.get('APP_VERSION')().data
-  );
-  readonly audioSources: Signal<readonly AudioSource[]> = computed(
-    () => this.slots.get('AUDIO_SOURCES')().data ?? []
-  );
+  readonly summaryCache: Signal<ReadonlyMap<string, SummaryCacheEntry>> = computed(() => this.slots.get('SUMMARY_CACHE')().data ?? new Map());
+  readonly appVersion: Signal<string | undefined> = computed(() => this.slots.get('APP_VERSION')().data);
+  readonly audioSources: Signal<readonly AudioSource[]> = computed(() => this.slots.get('AUDIO_SOURCES')().data ?? []);
   /** The system-audio source the user has selected for the NEXT recording. Defaults to all system output. */
-  readonly selectedAudioSource: Signal<string> = computed(
-    () => this.slots.get('SELECTED_AUDIO_SOURCE')().data ?? DEFAULT_AUDIO_SOURCE_ID
-  );
+  readonly selectedAudioSource: Signal<string> = computed(() => this.slots.get('SELECTED_AUDIO_SOURCE')().data ?? DEFAULT_AUDIO_SOURCE_ID);
   /** The system-audio source ACTUALLY in effect (post-fallback), per `recording://state`. */
-  readonly effectiveSystemSource: Signal<AudioSource | null> = computed(
-    () => this.slots.get('EFFECTIVE_SYSTEM_SOURCE')().data ?? null
-  );
+  readonly effectiveSystemSource: Signal<AudioSource | null> = computed(() => this.slots.get('EFFECTIVE_SYSTEM_SOURCE')().data ?? null);
+  /** Fraction of the two-column workspace the transcript column occupies. Seeded from `PreferencesPort`. */
+  readonly splitRatio: Signal<number> = computed(() => this.slots.get('SPLIT_RATIO')().data ?? DEFAULT_SPLIT_RATIO);
+  /** Whether the transcript column is collapsed to its reopen rail. Seeded from `PreferencesPort`. */
+  readonly transcriptCollapsed: Signal<boolean> = computed(() => this.slots.get('TRANSCRIPT_COLLAPSED')().data ?? false);
 
   constructor() {
     const storedLanguage = this.preferences.get(SUMMARY_LANGUAGE_PREFERENCE_KEY);
@@ -204,6 +171,9 @@ export class MeetingsStore {
       status: 'Success',
       isLoading: false,
     });
+
+    this.slots.update('SPLIT_RATIO', { data: readStoredSplitRatio(this.preferences), status: 'Success', isLoading: false });
+    this.slots.update('TRANSCRIPT_COLLAPSED', { data: readStoredTranscriptCollapsed(this.preferences), status: 'Success', isLoading: false });
 
     this.recorder
       .stateChanges()
@@ -268,13 +238,7 @@ export class MeetingsStore {
     this.slots.update('SELECTED_MEETING', { data: meeting, status: 'Success', isLoading: false });
   }
 
-  /**
-   * Replaces `meeting` within `MEETINGS` (matched by id) and, if it is the
-   * currently selected meeting, mirrors it onto `SELECTED_MEETING` too — so
-   * the sidebar row and the detail heading never disagree about a meeting's
-   * title. Always writes new array/object references, never mutates in
-   * place.
-   */
+  /** Replaces `meeting` within `MEETINGS` (matched by id) and mirrors it onto `SELECTED_MEETING` if selected; never mutates in place. */
   updateMeeting(meeting: Meeting): void {
     const meetings = this.slots.get('MEETINGS')().data ?? [];
     this.slots.update('MEETINGS', {
@@ -285,6 +249,12 @@ export class MeetingsStore {
     if (this.slots.get('SELECTED_MEETING')().data?.id === meeting.id) {
       this.slots.update('SELECTED_MEETING', { data: meeting, status: 'Success', isLoading: false });
     }
+  }
+
+  /** Upserts `meeting` at the front of `MEETINGS` (dropping any existing entry with its id first); never mutates in place. */
+  addMeeting(meeting: Meeting): void {
+    const rest = (this.slots.get('MEETINGS')().data ?? []).filter((existing) => existing.id !== meeting.id);
+    this.slots.update('MEETINGS', { data: [meeting, ...rest], status: 'Success', isLoading: false });
   }
 
   clearSelectedMeeting(): void {
@@ -392,5 +362,17 @@ export class MeetingsStore {
 
   setAppVersion(version: string): void {
     this.slots.update('APP_VERSION', { data: version, status: 'Success', isLoading: false });
+  }
+
+  /** Clamps, persists (via `PreferencesPort`), and applies a new transcript/summary split ratio. */
+  setSplitRatio(ratio: number): void {
+    const clamped = storeSplitRatio(this.preferences, ratio);
+    this.slots.update('SPLIT_RATIO', { data: clamped, status: 'Success', isLoading: false });
+  }
+
+  /** Persists (via `PreferencesPort`) and applies the transcript-collapsed flag. */
+  setTranscriptCollapsed(collapsed: boolean): void {
+    storeTranscriptCollapsed(this.preferences, collapsed);
+    this.slots.update('TRANSCRIPT_COLLAPSED', { data: collapsed, status: 'Success', isLoading: false });
   }
 }

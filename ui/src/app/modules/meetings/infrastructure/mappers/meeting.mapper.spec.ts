@@ -11,6 +11,8 @@ describe('mapMeetingDtoToDomain', () => {
       audioPath: null,
       transcript: null,
       summaries: [],
+      archived: false,
+      hasAudio: false,
     });
 
     expect(meeting).toEqual({
@@ -19,6 +21,8 @@ describe('mapMeetingDtoToDomain', () => {
       createdAt: new Date('2026-01-15T09:00:00Z'),
       durationSec: 0,
       summaries: [],
+      archived: false,
+      hasAudio: false,
     });
     expect('audioPath' in meeting).toBe(false);
     expect('transcript' in meeting).toBe(false);
@@ -35,6 +39,8 @@ describe('mapMeetingDtoToDomain', () => {
       summaries: [
         { template: 'key-points', createdAt: '2026-01-15T09:05:00Z', path: '/x.md', language: 'en' },
       ],
+      archived: false,
+      hasAudio: true,
     });
 
     expect(meeting.audioPath).toBe('/data/meetings/m-2/audio.wav');
@@ -42,6 +48,22 @@ describe('mapMeetingDtoToDomain', () => {
     expect(meeting.summaries).toEqual([
       { template: 'key-points', markdown: '', createdAt: new Date('2026-01-15T09:05:00Z'), language: 'en' },
     ]);
+  });
+
+  it('maps an archived meeting', () => {
+    const meeting = mapMeetingDtoToDomain({
+      id: 'm-3',
+      title: 'Old standup',
+      createdAt: '2026-01-15T09:00:00Z',
+      durationSec: 0,
+      audioPath: null,
+      transcript: null,
+      summaries: [],
+      archived: true,
+      hasAudio: false,
+    });
+
+    expect(meeting.archived).toBe(true);
   });
 });
 

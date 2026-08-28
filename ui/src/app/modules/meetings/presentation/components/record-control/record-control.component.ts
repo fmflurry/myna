@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, input, output, signal } from '@angular/core';
 
 import type { AudioDevice, AudioLevel } from '../../../core/models/audio-device.model';
 import type { AudioSource } from '../../../core/models/audio-source.model';
@@ -58,4 +58,32 @@ export class RecordControlComponent {
   protected readonly degradedToMicOnly = computed(
     () => this.captureSource() !== 'microphone' && this.effectiveSystemSource() === null,
   );
+
+  /** Inline two-step confirm for the header cancel — mirrors `MeetingListItemComponent.confirmingDelete`. */
+  protected readonly confirmingCancel = signal(false);
+
+  /** Intercepts the child record-button's cancel click; the discard only happens once confirmed. */
+  onCancelClicked(): void {
+    this.confirmingCancel.set(true);
+  }
+
+  confirmCancel(event: Event): void {
+    event.stopPropagation();
+    this.confirmingCancel.set(false);
+    this.cancelClicked.emit();
+  }
+
+  dismissCancel(event: Event): void {
+    event.stopPropagation();
+    this.confirmingCancel.set(false);
+  }
+
+  /** Escape backs out of the cancel confirmation without discarding anything. */
+  @HostListener('keydown.escape', ['$event'])
+  onEscapeKey(event: Event): void {
+    if (!this.confirmingCancel()) {
+      return;
+    }
+    this.dismissCancel(event);
+  }
 }

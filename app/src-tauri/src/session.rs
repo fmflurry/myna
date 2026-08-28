@@ -111,6 +111,18 @@ pub fn guard_stop(has_active_session: bool) -> Result<(), AppError> {
     }
 }
 
+/// Pure guard for mutating a stored meeting (archive, transcript edit):
+/// `Busy` when `target` is the meeting the active session is currently
+/// recording into.
+pub fn guard_not_recording(active: Option<MeetingId>, target: MeetingId) -> Result<(), AppError> {
+    if active == Some(target) {
+        return Err(AppError::Busy(
+            "cannot modify the meeting currently being recorded",
+        ));
+    }
+    Ok(())
+}
+
 /// Pure decision: resolves the effective [`CaptureSource`] for a new
 /// recording from what was `requested` and the current system-audio
 /// availability.

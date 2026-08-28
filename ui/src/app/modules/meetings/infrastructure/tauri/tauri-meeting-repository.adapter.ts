@@ -28,6 +28,20 @@ export class TauriMeetingRepositoryAdapter extends MeetingRepositoryPort {
     return mapMeetingDtoToDomain(dto);
   }
 
+  override async setArchived(id: MeetingId, archived: boolean): Promise<Meeting> {
+    const dto = await invokeCommand('set_meeting_archived', { meetingId: id, archived });
+    return mapMeetingDtoToDomain(dto);
+  }
+
+  override async editTranscriptSegment(id: MeetingId, index: number, text: string): Promise<Meeting> {
+    const dto = await invokeCommand('edit_transcript_segment', {
+      meetingId: id,
+      segmentIndex: index,
+      text,
+    });
+    return mapMeetingDtoToDomain(dto);
+  }
+
   override async export(id: MeetingId, format: MeetingExportFormat, dest: string): Promise<void> {
     await invokeCommand('export_meeting', {
       meetingId: id,

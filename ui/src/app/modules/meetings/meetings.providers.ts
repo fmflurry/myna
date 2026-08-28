@@ -2,6 +2,7 @@ import type { EnvironmentProviders } from '@angular/core';
 import { makeEnvironmentProviders } from '@angular/core';
 
 import { AppInfoPort } from './core/ports/app-info.port';
+import { AudioImportPort } from './core/ports/audio-import.port';
 import { FileDialogPort } from './core/ports/file-dialog.port';
 import { MeetingRepositoryPort } from './core/ports/meeting-repository.port';
 import { ModelsStatusPort } from './core/ports/models-status.port';
@@ -12,6 +13,7 @@ import { TemplateRepositoryPort } from './core/ports/template-repository.port';
 import { TranscriberPort } from './core/ports/transcriber.port';
 import { LocalStoragePreferencesAdapter } from './infrastructure/local-storage-preferences.adapter';
 import { TauriAppInfoAdapter } from './infrastructure/tauri/tauri-app-info.adapter';
+import { TauriAudioImportAdapter } from './infrastructure/tauri/tauri-audio-import.adapter';
 import { TauriFileDialogAdapter } from './infrastructure/tauri/tauri-file-dialog.adapter';
 import { TauriMeetingRepositoryAdapter } from './infrastructure/tauri/tauri-meeting-repository.adapter';
 import { TauriModelsStatusAdapter } from './infrastructure/tauri/tauri-models-status.adapter';
@@ -19,14 +21,17 @@ import { TauriRecorderAdapter } from './infrastructure/tauri/tauri-recorder.adap
 import { TauriSummarizerAdapter } from './infrastructure/tauri/tauri-summarizer.adapter';
 import { TauriTemplateRepositoryAdapter } from './infrastructure/tauri/tauri-template-repository.adapter';
 import { TauriTranscriberAdapter } from './infrastructure/tauri/tauri-transcriber.adapter';
+import { CancelImportUseCase } from './application/use-cases/cancel-import.usecase';
 import { CancelRecordingUseCase } from './application/use-cases/cancel-recording.usecase';
 import { CancelSummarizationUseCase } from './application/use-cases/cancel-summarization.usecase';
 import { CheckModelsUseCase } from './application/use-cases/check-models.usecase';
 import { CheckSystemAudioUseCase } from './application/use-cases/check-system-audio.usecase';
 import { DeleteMeetingUseCase } from './application/use-cases/delete-meeting.usecase';
+import { EditTranscriptSegmentUseCase } from './application/use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from './application/use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from './application/use-cases/get-app-version.usecase';
 import { GetSummaryUseCase } from './application/use-cases/get-summary.usecase';
+import { ImportAudioUseCase } from './application/use-cases/import-audio.usecase';
 import { ListAudioSourcesUseCase } from './application/use-cases/list-audio-sources.usecase';
 import { ListDevicesUseCase } from './application/use-cases/list-devices.usecase';
 import { ListMeetingsUseCase } from './application/use-cases/list-meetings.usecase';
@@ -34,6 +39,8 @@ import { ListSummaryLanguagesUseCase } from './application/use-cases/list-summar
 import { ListTemplatesUseCase } from './application/use-cases/list-templates.usecase';
 import { OpenMeetingUseCase } from './application/use-cases/open-meeting.usecase';
 import { RenameMeetingUseCase } from './application/use-cases/rename-meeting.usecase';
+import { RetranscribeMeetingUseCase } from './application/use-cases/retranscribe-meeting.usecase';
+import { SetMeetingArchivedUseCase } from './application/use-cases/set-meeting-archived.usecase';
 import { StartRecordingUseCase } from './application/use-cases/start-recording.usecase';
 import { StopRecordingUseCase } from './application/use-cases/stop-recording.usecase';
 import { SummarizeMeetingUseCase } from './application/use-cases/summarize-meeting.usecase';
@@ -57,6 +64,7 @@ export function provideMeetings(): EnvironmentProviders {
     { provide: FileDialogPort, useClass: TauriFileDialogAdapter },
     { provide: PreferencesPort, useClass: LocalStoragePreferencesAdapter },
     { provide: AppInfoPort, useClass: TauriAppInfoAdapter },
+    { provide: AudioImportPort, useClass: TauriAudioImportAdapter },
     StartRecordingUseCase,
     StopRecordingUseCase,
     CancelRecordingUseCase,
@@ -64,6 +72,8 @@ export function provideMeetings(): EnvironmentProviders {
     OpenMeetingUseCase,
     DeleteMeetingUseCase,
     RenameMeetingUseCase,
+    SetMeetingArchivedUseCase,
+    EditTranscriptSegmentUseCase,
     SummarizeMeetingUseCase,
     ListTemplatesUseCase,
     CheckModelsUseCase,
@@ -75,6 +85,9 @@ export function provideMeetings(): EnvironmentProviders {
     ListSummaryLanguagesUseCase,
     GetSummaryUseCase,
     GetAppVersionUseCase,
+    ImportAudioUseCase,
+    RetranscribeMeetingUseCase,
+    CancelImportUseCase,
     MeetingsStore,
     MeetingsFacade,
   ]);

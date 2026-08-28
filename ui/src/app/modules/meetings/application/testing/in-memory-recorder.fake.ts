@@ -47,6 +47,8 @@ export class InMemoryRecorderFake extends RecorderPort {
       createdAt: new Date(),
       durationSec: 0,
       summaries: [],
+      archived: false,
+      hasAudio: false,
     };
     this.currentState = 'recording';
     this.stateSubject.next(this.currentState);

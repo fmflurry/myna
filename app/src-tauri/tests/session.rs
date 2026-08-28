@@ -6,10 +6,11 @@
 
 use std::time::{Duration, Instant};
 
+use myna_app::domain::MeetingId;
 use myna_app::error::AppError;
 use myna_app::session::{
-    guard_start, guard_stop, resolve_capture_source, resolve_system_source_id, DecodeChannel,
-    LevelThrottle,
+    guard_not_recording, guard_start, guard_stop, resolve_capture_source, resolve_system_source_id,
+    DecodeChannel, LevelThrottle,
 };
 use myna_audio::{
     rms, rms_dbfs, CaptureSource, RecordingSpec, SystemAudioSource, SystemAudioStatus, WavRecorder,
@@ -373,4 +374,58 @@ fn omitted_system_source_id_resolves_to_all_output() {
 
     // Assert
     assert_eq!(effective, None);
+}
+
+#[test]
+fn rejects_archiving_the_meeting_currently_being_recorded() {
+    // Arrange
+    let target = MeetingId::new();
+
+    // Act
+    let result = guard_not_recording(Some(target), target);
+
+    // Assert
+    assert!(matches!(result, Err(AppError::Busy(_))));
+}
+
+#[test]
+fn allows_archiving_a_meeting_that_is_not_being_recorded() {
+    // Arrange
+    let active = MeetingId::new();
+    let target = MeetingId::new();
+
+    // Act
+    let result = guard_not_recording(Some(active), target);
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[test]
+fn allows_archiving_when_no_recording_is_in_progress() {
+    // Arrange
+    let target = MeetingId::new();
+
+    // Act
+    let result = guard_not_recording(None, target);
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+/// `guard_not_recording` is shared by `set_meeting_archived` and
+/// `edit_transcript_segment` — a mid-recording transcript edit would be
+/// silently destroyed once `stop_recording` persists the whole in-memory
+/// transcript over whatever is on disk, so editing the meeting currently
+/// being recorded into must be refused exactly like archiving it.
+#[test]
+fn rejects_editing_a_transcript_of_the_meeting_currently_being_recorded() {
+    // Arrange
+    let target = MeetingId::new();
+
+    // Act
+    let result = guard_not_recording(Some(target), target);
+
+    // Assert
+    assert!(matches!(result, Err(AppError::Busy(_))));
 }

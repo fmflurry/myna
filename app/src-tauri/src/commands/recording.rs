@@ -261,7 +261,7 @@ fn resolve_device(device: Option<String>) -> Result<DeviceInfo, AppError> {
     }
 }
 
-fn lock_session<'a>(
+pub(crate) fn lock_session<'a>(
     state: &'a State<'_, AppState>,
 ) -> Result<MutexGuard<'a, Option<RecordingSession>>, AppError> {
     state

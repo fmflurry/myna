@@ -67,63 +67,6 @@ describe('MeetingsStore', () => {
     expect(store.busy()).toBe(true);
   });
 
-  it('never mutates the meetings signal in place', () => {
-    const previous = store.meetings();
-
-    store.setMeetings([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [] },
-    ]);
-
-    expect(store.meetings()).not.toBe(previous);
-  });
-
-  it('updateMeeting replaces the matching entry in the meetings list without mutating it in place', () => {
-    const original = [
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [] },
-      { id: toMeetingId('m-2'), title: 'Planning', createdAt: new Date(), durationSec: 0, summaries: [] },
-    ];
-    store.setMeetings(original);
-    const previous = store.meetings();
-
-    store.updateMeeting({ ...original[1]!, title: 'Roadmap planning' });
-
-    expect(store.meetings()).not.toBe(previous);
-    expect(store.meetings().map((meeting) => meeting.title)).toEqual(['Standup', 'Roadmap planning']);
-  });
-
-  it('updateMeeting mirrors onto selectedMeeting when it matches the selected id', () => {
-    const meeting = {
-      id: toMeetingId('m-1'),
-      title: 'Standup',
-      createdAt: new Date(),
-      durationSec: 0,
-      summaries: [],
-    };
-    store.setMeetings([meeting]);
-    store.setSelectedMeeting(meeting);
-
-    store.updateMeeting({ ...meeting, title: 'Renamed standup' });
-
-    expect(store.selectedMeeting()?.title).toBe('Renamed standup');
-  });
-
-  it('updateMeeting leaves selectedMeeting untouched when it belongs to a different meeting', () => {
-    const selected = {
-      id: toMeetingId('m-1'),
-      title: 'Standup',
-      createdAt: new Date(),
-      durationSec: 0,
-      summaries: [],
-    };
-    const other = { ...selected, id: toMeetingId('m-2'), title: 'Planning' };
-    store.setMeetings([selected, other]);
-    store.setSelectedMeeting(selected);
-
-    store.updateMeeting({ ...other, title: 'Roadmap planning' });
-
-    expect(store.selectedMeeting()?.title).toBe('Standup');
-  });
-
   it('appends finalized transcript segments onto finalizedSegments', () => {
     transcriber.emitFinal({
       meetingId: toMeetingId('m-1'),

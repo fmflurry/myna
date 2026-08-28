@@ -11,6 +11,7 @@ describe('MeetingListItemComponent', () => {
     createdAt: new Date(2026, 7, 27, 14, 2),
     durationSec: 32 * 60,
     summaries: [],
+    archived: false,
   };
 
   const createFixture = (selected = false) => {
@@ -185,5 +186,137 @@ describe('MeetingListItemComponent', () => {
     fixture.nativeElement.querySelector('.row').click();
 
     expect(emitted).toEqual([]);
+  });
+
+  // --- "recording" row: the delete confirm must warn about discarding the
+  // in-progress recording instead of showing the generic "Delete?" prompt.
+  // Requires a new `recording = input(false)` on MeetingListItemComponent.
+
+  it('shows the standard Delete? confirm for a non-recording row', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recording', false);
+    fixture.detectChanges();
+
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.confirm-label').textContent).toBe('Delete?');
+  });
+
+  it('shows a stop-and-discard warning instead of Delete? when recording is true', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recording', true);
+    fixture.detectChanges();
+
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.confirm-label').textContent).toBe(
+      'Stop and discard this recording? The audio and transcript will be deleted.',
+    );
+  });
+
+  it('emits deleteRequested on confirm while recording', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recording', true);
+    fixture.detectChanges();
+    const emitted: string[] = [];
+    fixture.componentInstance.deleteRequested.subscribe((id) => emitted.push(id));
+
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('.confirm-yes').click();
+
+    expect(emitted).toEqual(['m1']);
+  });
+
+  it('emits nothing on No, and on Escape, while recording', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recording', true);
+    fixture.detectChanges();
+    const emitted: string[] = [];
+    fixture.componentInstance.deleteRequested.subscribe((id) => emitted.push(id));
+
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('.confirm-no').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.confirm')).toBeNull();
+    expect(emitted).toEqual([]);
+
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
+    fixture.nativeElement
+      .querySelector('.row')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.confirm')).toBeNull();
+    expect(emitted).toEqual([]);
+  });
+
+  // --- archive control: a reversible per-row toggle, no confirmation step.
+  // Requires `archiveToggleRequested = output<MeetingArchiveRequest>()` and
+  // an `.archive` button rendered next to `.delete`.
+
+  it('emits archiveToggleRequested with archived:true for an unarchived meeting', () => {
+    const fixture = createFixture();
+    const emitted: { id: string; archived: boolean }[] = [];
+    fixture.componentInstance.archiveToggleRequested.subscribe((request) => emitted.push(request));
+
+    fixture.nativeElement.querySelector('.archive').click();
+
+    expect(emitted).toEqual([{ id: 'm1', archived: true }]);
+  });
+
+  it('emits archiveToggleRequested with archived:false for an already-archived meeting', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', { ...meeting, archived: true });
+    fixture.detectChanges();
+    const emitted: { id: string; archived: boolean }[] = [];
+    fixture.componentInstance.archiveToggleRequested.subscribe((request) => emitted.push(request));
+
+    fixture.nativeElement.querySelector('.archive').click();
+
+    expect(emitted).toEqual([{ id: 'm1', archived: false }]);
+  });
+
+  it('does not emit opened when the archive button is clicked', () => {
+    const fixture = createFixture();
+    const openedEmitted: string[] = [];
+    fixture.componentInstance.opened.subscribe((id) => openedEmitted.push(id));
+
+    fixture.nativeElement.querySelector('.archive').click();
+
+    expect(openedEmitted.length).toBe(0);
+  });
+
+  it('hides the archive control while the row is recording', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recording', true);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.archive')).toBeNull();
+  });
+
+  it('flips the archive button label to Unarchive meeting for an archived row', () => {
+    const fixture = TestBed.createComponent(MeetingListItemComponent);
+    fixture.componentRef.setInput('meeting', { ...meeting, archived: true });
+    fixture.detectChanges();
+
+    const button: HTMLElement = fixture.nativeElement.querySelector('.archive');
+    expect(button.getAttribute('aria-label')).toBe('Unarchive meeting');
+  });
+
+  it('labels the archive button Archive meeting for an unarchived row', () => {
+    const fixture = createFixture();
+
+    const button: HTMLElement = fixture.nativeElement.querySelector('.archive');
+    expect(button.getAttribute('aria-label')).toBe('Archive meeting');
   });
 });

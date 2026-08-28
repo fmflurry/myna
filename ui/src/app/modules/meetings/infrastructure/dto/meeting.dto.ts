@@ -16,4 +16,6 @@ export interface MeetingDto {
   readonly audioPath: string | null;
   readonly transcript: TranscriptDto | null;
   readonly summaries: readonly SummaryRefDto[];
+  readonly archived: boolean;
+  readonly hasAudio: boolean;
 }

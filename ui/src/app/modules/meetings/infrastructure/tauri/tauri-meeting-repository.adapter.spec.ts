@@ -93,6 +93,31 @@ describe('TauriMeetingRepositoryAdapter', () => {
     expect(meeting.title).toBe('Renamed');
   });
 
+  it('setArchived() invokes set_meeting_archived and maps the returned MeetingDto', async () => {
+    let receivedCmd: string | undefined;
+    let receivedArgs: unknown;
+    installTauriInternalsStub((cmd, args) => {
+      receivedCmd = cmd;
+      receivedArgs = args;
+      return {
+        id: 'm-1',
+        title: 'Standup',
+        createdAt: '2026-01-15T09:00:00Z',
+        durationSec: 60,
+        audioPath: null,
+        transcript: null,
+        summaries: [],
+        archived: true,
+      };
+    });
+
+    const meeting = await adapter.setArchived(toMeetingId('m-1'), true);
+
+    expect(receivedCmd).toBe('set_meeting_archived');
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', archived: true });
+    expect(meeting.archived).toBe(true);
+  });
+
   it('export() maps the domain format to the Rust wire value', async () => {
     let receivedArgs: unknown;
     installTauriInternalsStub((_cmd, args) => {

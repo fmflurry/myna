@@ -13,6 +13,9 @@ export interface Meeting {
   readonly audioPath?: string;
   readonly transcript?: Transcript;
   readonly summaries: readonly Summary[];
+  readonly archived: boolean;
+  /** Derived server-side flag: whether `audio.wav` exists on disk for this meeting. */
+  readonly hasAudio: boolean;
 }
 
 export const withTranscript = (meeting: Meeting, transcript: Transcript): Meeting => ({
@@ -28,4 +31,9 @@ export const withSummary = (meeting: Meeting, summary: Summary): Meeting => ({
 export const withDuration = (meeting: Meeting, durationSec: number): Meeting => ({
   ...meeting,
   durationSec,
+});
+
+export const withArchived = (meeting: Meeting, archived: boolean): Meeting => ({
+  ...meeting,
+  archived,
 });

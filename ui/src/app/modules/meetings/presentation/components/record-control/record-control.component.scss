@@ -61,3 +61,38 @@
     transform: rotate(360deg);
   }
 }
+
+.cancel-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+.cancel-confirm .confirm-label {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.cancel-confirm .confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cancel-confirm .confirm-yes,
+.cancel-confirm .confirm-no {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.cancel-confirm .confirm-yes {
+  background: var(--color-danger);
+  color: var(--color-danger-contrast);
+}
+
+.cancel-confirm .confirm-no {
+  background: var(--color-border);
+}

@@ -19,6 +19,8 @@ export function mapMeetingDtoToDomain(dto: MeetingDto): Meeting {
     ...(dto.audioPath !== null ? { audioPath: dto.audioPath } : {}),
     ...(dto.transcript !== null ? { transcript: mapTranscriptDtoToDomain(dto.transcript) } : {}),
     summaries: dto.summaries.map(mapSummaryRefDtoToDomain),
+    archived: dto.archived,
+    hasAudio: dto.hasAudio,
   };
 }
 
