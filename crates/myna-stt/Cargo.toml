@@ -1,0 +1,21 @@
+[package]
+name = "myna-stt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "myna-stt"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+clap = { workspace = true }
+hound = { workspace = true }
+ctrlc = { workspace = true }
+sherpa-onnx = { workspace = true }
+myna-audio = { path = "../myna-audio" }
