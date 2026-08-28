@@ -33,3 +33,13 @@ data/
 *.db-shm
 *.sqlite-wal
 *.sqlite-shm
+
+# Model artifacts (additional, non-weight files)
+models/**/tokens.txt
+models/**/test_wavs/
+models/**/.cache/
+
+# Frontend (Angular UI)
+/node_modules
+/ui/.angular
+/lcov.info
