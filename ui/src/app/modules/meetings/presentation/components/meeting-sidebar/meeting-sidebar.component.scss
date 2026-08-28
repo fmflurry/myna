@@ -47,6 +47,7 @@
 
 .empty-state,
 .no-match {
+  flex: 1;
   padding: var(--space-4) var(--space-3);
   color: var(--color-text-muted);
 }
@@ -60,4 +61,37 @@
 .empty-state .hint {
   margin: 0;
   font-size: 0.85rem;
+}
+
+.archive {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.archive-toggle .chevron {
+  display: inline-block;
+  transition: transform var(--transition-fast);
+}
+
+.archive-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.archive .list {
+  flex: none;
+  max-height: 40vh;
 }

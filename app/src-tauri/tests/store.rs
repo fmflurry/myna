@@ -5,6 +5,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use myna_app::commands::meetings::apply_segment_edit;
 use myna_app::domain::{Meeting, MeetingId, SummaryRef};
 use myna_app::error::AppError;
 use myna_app::store::fs_store::FsMeetingStore;
@@ -149,6 +150,47 @@ fn list_skips_a_corrupt_meeting_json_without_erroring() {
 }
 
 #[test]
+fn edited_segment_text_and_timestamps_survive_a_save_and_get_json_round_trip() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let transcript = Transcript::default()
+        .with_segment(TranscriptSegment {
+            start_sec: 0.0,
+            end_sec: 1.5,
+            text: "hello team".to_string(),
+        })
+        .with_segment(TranscriptSegment {
+            start_sec: 1.5,
+            end_sec: 3.0,
+            text: "let's begin".to_string(),
+        });
+    let created = store.create("Needs an edit").expect("create");
+    let with_transcript = created.with_transcript(transcript);
+    store.save(&with_transcript).expect("save with transcript");
+
+    // Act: load, edit segment 0, save, reload.
+    let loaded = store.get(created.id).expect("get before edit");
+    let loaded_transcript = loaded.transcript.clone().expect("transcript present");
+    let edited_transcript =
+        apply_segment_edit(&loaded_transcript, 0, "hi everyone").expect("apply_segment_edit");
+    let updated = loaded.with_transcript(edited_transcript);
+    store.save(&updated).expect("save edited transcript");
+    let refetched = store.get(created.id).expect("get after edit");
+
+    // Assert
+    let refetched_transcript = refetched
+        .transcript
+        .expect("transcript present after reload");
+    assert_eq!(refetched_transcript.segments[0].text, "hi everyone");
+    assert_eq!(refetched_transcript.segments[0].start_sec, 0.0);
+    assert_eq!(refetched_transcript.segments[0].end_sec, 1.5);
+    assert_eq!(refetched_transcript.segments[1].text, "let's begin");
+    assert_eq!(refetched_transcript.segments[1].start_sec, 1.5);
+    assert_eq!(refetched_transcript.segments[1].end_sec, 3.0);
+}
+
+#[test]
 fn with_transcript_returns_a_new_meeting_and_leaves_the_original_untouched() {
     // Arrange
     let original = Meeting::new("Needs a transcript");
@@ -280,6 +322,64 @@ fn with_summary_replaces_only_the_matching_template_and_language_pair() {
         .find(|summary| summary.language == "en")
         .expect("en summary should still be present");
     assert_eq!(en_final, &en_ref_updated);
+}
+
+#[test]
+fn defaults_archived_to_false_for_a_legacy_meeting_json_without_the_field() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let meeting = Meeting::new("Legacy");
+    store.save(&meeting).expect("save");
+
+    let meeting_json_path = dir
+        .path()
+        .join("meetings")
+        .join(meeting.id.to_string())
+        .join("meeting.json");
+    let raw = fs::read_to_string(&meeting_json_path).expect("read meeting.json");
+    let mut value: serde_json::Value = serde_json::from_str(&raw).expect("parse meeting.json");
+    value
+        .as_object_mut()
+        .expect("meeting.json is an object")
+        .remove("archived");
+    fs::write(
+        &meeting_json_path,
+        serde_json::to_string(&value).expect("serialize meeting.json"),
+    )
+    .expect("rewrite meeting.json without archived field");
+
+    // Act
+    let fetched = store
+        .get(meeting.id)
+        .expect("get should succeed on a legacy meeting.json missing archived");
+
+    // Assert
+    assert!(!fetched.archived);
+}
+
+#[test]
+fn save_and_get_round_trip_the_archived_flag() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let created = store.create("Archivable meeting").expect("create");
+
+    // Act: archive it.
+    let archived = created.with_archived(true);
+    store.save(&archived).expect("save archived");
+    let fetched_archived = store.get(created.id).expect("get after archiving");
+
+    // Assert
+    assert!(fetched_archived.archived);
+
+    // Act: unarchive it.
+    let unarchived = fetched_archived.with_archived(false);
+    store.save(&unarchived).expect("save unarchived");
+    let fetched_unarchived = store.get(created.id).expect("get after unarchiving");
+
+    // Assert
+    assert!(!fetched_unarchived.archived);
 }
 
 #[test]

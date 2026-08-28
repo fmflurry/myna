@@ -9,6 +9,7 @@ pub mod domain;
 pub mod dto;
 pub mod error;
 pub mod events;
+pub mod ingest;
 pub mod paths;
 pub mod session;
 pub mod state;
@@ -46,6 +47,8 @@ pub fn run() {
             commands::meetings::delete_meeting,
             commands::meetings::get_transcript,
             commands::meetings::rename_meeting,
+            commands::meetings::set_meeting_archived,
+            commands::meetings::edit_transcript_segment,
             commands::templates::list_templates,
             commands::languages::list_summary_languages,
             commands::summary::summarize_meeting,

@@ -11,15 +11,21 @@
 use tauri::{AppHandle, Manager};
 use time::{Month, OffsetDateTime};
 
+use crate::commands::recording::lock_session;
 use crate::domain::MeetingId;
 use crate::dto::{MeetingDto, TranscriptDto};
 use crate::error::AppError;
+use crate::session::guard_not_recording;
 use crate::state::AppState;
 use crate::store::MeetingStore;
 
 /// Maximum length, in Unicode scalar values, a meeting title may have after
 /// renaming. Keeps the sidebar meeting list legible.
 pub const MAX_TITLE_LENGTH: usize = 200;
+
+/// Maximum length, in Unicode scalar values, a transcript segment's text may
+/// have after editing via [`edit_transcript_segment`].
+pub const MAX_SEGMENT_TEXT_LENGTH: usize = 2000;
 
 /// Lists every persisted meeting, newest first.
 #[tauri::command]
@@ -125,6 +131,101 @@ fn rename_meeting_blocking(
     Ok(MeetingDto::from(renamed))
 }
 
+/// Archives or unarchives a meeting.
+///
+/// Refuses with [`AppError::Busy`] when `meeting_id` is the meeting the
+/// active recording session (if any) is currently recording into — see
+/// [`guard_not_recording`]. Idempotent: when the meeting's `archived` flag
+/// already matches `archived`, this returns the meeting unchanged without
+/// writing to disk.
+#[tauri::command]
+pub async fn set_meeting_archived(
+    app: AppHandle,
+    meeting_id: String,
+    archived: bool,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || set_meeting_archived_blocking(&app, id, archived))
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::Store(
+                "set_meeting_archived worker thread panicked".to_string(),
+            ))
+        })
+}
+
+fn set_meeting_archived_blocking(
+    app: &AppHandle,
+    id: MeetingId,
+    archived: bool,
+) -> Result<MeetingDto, AppError> {
+    let state = app.state::<AppState>();
+    let active_meeting_id = lock_session(&state)?
+        .as_ref()
+        .map(|session| session.meeting_id);
+    guard_not_recording(active_meeting_id, id)?;
+
+    let meeting = state.store.get(id)?;
+    if meeting.archived == archived {
+        return Ok(MeetingDto::from(meeting));
+    }
+    let updated = meeting.with_archived(archived);
+    state.store.save(&updated)?;
+    Ok(MeetingDto::from(updated))
+}
+
+/// Edits the text of one transcript segment.
+///
+/// Refuses with [`AppError::Busy`] when `meeting_id` is the meeting the
+/// active recording session (if any) is currently recording into — see
+/// [`guard_not_recording`]. Idempotent: when the normalized `text` produces
+/// no change (either it's whitespace-only, via [`normalize_segment_text`],
+/// or it matches the segment's current text), this returns the meeting
+/// unchanged without writing to disk.
+#[tauri::command]
+pub async fn edit_transcript_segment(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    text: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        edit_transcript_segment_blocking(&app, id, segment_index, &text)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "edit_transcript_segment worker thread panicked".to_string(),
+        ))
+    })
+}
+
+fn edit_transcript_segment_blocking(
+    app: &AppHandle,
+    id: MeetingId,
+    segment_index: usize,
+    text: &str,
+) -> Result<MeetingDto, AppError> {
+    let state = app.state::<AppState>();
+    let active_meeting_id = lock_session(&state)?
+        .as_ref()
+        .map(|session| session.meeting_id);
+    guard_not_recording(active_meeting_id, id)?;
+
+    let meeting = state.store.get(id)?;
+    let Some(transcript) = &meeting.transcript else {
+        return Err(AppError::NotFound(format!("transcript for meeting {id}")));
+    };
+    let edited = apply_segment_edit(transcript, segment_index, text)?;
+    if &edited == transcript {
+        return Ok(MeetingDto::from(meeting));
+    }
+    let updated = meeting.with_transcript(edited);
+    state.store.save(&updated)?;
+    Ok(MeetingDto::from(updated))
+}
+
 /// Trims and length-caps a proposed meeting title.
 ///
 /// Returns `None` when the trimmed title is empty — callers treat that as
@@ -138,6 +239,49 @@ pub fn normalize_title(input: &str) -> Option<String> {
         return None;
     }
     Some(trimmed.chars().take(MAX_TITLE_LENGTH).collect())
+}
+
+/// Trims and length-caps a proposed transcript segment text.
+///
+/// Returns `None` when the trimmed text is empty — callers treat that as
+/// "no change" rather than persisting a blank segment. Otherwise returns the
+/// trimmed text, capped at [`MAX_SEGMENT_TEXT_LENGTH`] Unicode scalar values
+/// (`chars()`, not bytes, so multi-byte text such as `"Réunion d'équipe"` is
+/// never split mid-character). Mirrors [`normalize_title`].
+pub fn normalize_segment_text(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(MAX_SEGMENT_TEXT_LENGTH).collect())
+}
+
+/// Returns a new [`myna_stt::Transcript`] with the segment at `index`'s text
+/// replaced by the normalized form of `text` (see [`normalize_segment_text`]).
+///
+/// Pure: never touches `AppHandle` or the store, and never mutates
+/// `transcript` in place. `start_sec`, `end_sec`, and the order of every
+/// segment are copied verbatim. Yields [`AppError::NotFound`] when `index` is
+/// out of range. When `normalize_segment_text(text)` is `None` (empty or
+/// whitespace-only), returns a clone of `transcript` unchanged, mirroring
+/// `rename_meeting`'s "no-op on blank input" behavior.
+pub fn apply_segment_edit(
+    transcript: &myna_stt::Transcript,
+    index: usize,
+    text: &str,
+) -> Result<myna_stt::Transcript, AppError> {
+    if index >= transcript.segments.len() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let Some(normalized) = normalize_segment_text(text) else {
+        return Ok(transcript.clone());
+    };
+    let mut segments = transcript.segments.clone();
+    segments[index] = myna_stt::TranscriptSegment {
+        text: normalized,
+        ..segments[index].clone()
+    };
+    Ok(myna_stt::Transcript { segments })
 }
 
 /// Parses a meeting id from its string form, surfacing an invalid id as

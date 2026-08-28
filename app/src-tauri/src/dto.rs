@@ -162,6 +162,7 @@ pub struct MeetingDto {
     pub audio_path: Option<String>,
     pub transcript: Option<TranscriptDto>,
     pub summaries: Vec<SummaryRefDto>,
+    pub archived: bool,
 }
 
 impl From<Meeting> for MeetingDto {
@@ -176,6 +177,7 @@ impl From<Meeting> for MeetingDto {
                 .map(|path| path.to_string_lossy().into_owned()),
             transcript: meeting.transcript.map(TranscriptDto::from),
             summaries: meeting.summaries.into_iter().map(Into::into).collect(),
+            archived: meeting.archived,
         }
     }
 }

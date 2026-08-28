@@ -55,6 +55,8 @@ pub struct Meeting {
     pub audio_path: Option<PathBuf>,
     pub transcript: Option<myna_stt::Transcript>,
     pub summaries: Vec<SummaryRef>,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 impl Meeting {
@@ -68,6 +70,7 @@ impl Meeting {
             audio_path: None,
             transcript: None,
             summaries: Vec::new(),
+            archived: false,
         }
     }
 
@@ -119,6 +122,14 @@ impl Meeting {
     pub fn with_audio_path(&self, audio_path: PathBuf) -> Self {
         Self {
             audio_path: Some(audio_path),
+            ..self.clone()
+        }
+    }
+
+    /// Returns a copy of this meeting with `archived` replaced.
+    pub fn with_archived(&self, archived: bool) -> Self {
+        Self {
+            archived,
             ..self.clone()
         }
     }

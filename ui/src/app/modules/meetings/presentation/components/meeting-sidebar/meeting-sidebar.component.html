@@ -10,24 +10,55 @@
     />
   </div>
 
-  <div class="list" role="listbox" aria-label="Meetings">
-    @if (meetings().length === 0) {
-      <div class="empty-state">
-        <p class="headline">No meetings yet</p>
-        <p class="hint">Press Record to capture your first meeting.</p>
-      </div>
-    } @else if (filteredMeetings().length === 0) {
-      <p class="no-match">No meetings match &ldquo;{{ query() }}&rdquo;</p>
-    } @else {
-      @for (meeting of filteredMeetings(); track meeting.id) {
+  @if (meetings().length === 0) {
+    <div class="empty-state">
+      <p class="headline">No meetings yet</p>
+      <p class="hint">Press Record to capture your first meeting.</p>
+    </div>
+  } @else if (activeMeetings().length === 0 && archivedMeetings().length === 0) {
+    <p class="no-match">No meetings match &ldquo;{{ query() }}&rdquo;</p>
+  } @else {
+    <div class="list" role="listbox" aria-label="Meetings">
+      @for (meeting of activeMeetings(); track meeting.id) {
         <app-meeting-list-item
           [meeting]="meeting"
           [selected]="meeting.id === selectedId()"
           [disabled]="selectionDisabled()"
+          [recording]="meeting.id === recordingMeetingId()"
           (opened)="meetingSelected.emit($event)"
           (deleteRequested)="meetingDeleted.emit($event)"
+          (archiveToggleRequested)="meetingArchiveToggled.emit($event)"
         />
       }
+    </div>
+
+    @if (archivedMeetings().length > 0) {
+      <section class="archive">
+        <button
+          type="button"
+          class="archive-toggle"
+          [attr.aria-expanded]="archiveExpanded()"
+          aria-controls="archived-meetings"
+          (click)="toggleArchive()"
+        >
+          <span class="chevron" aria-hidden="true">&#9656;</span> Archive ({{ archivedMeetings().length }})
+        </button>
+        @if (archiveExpanded()) {
+          <div id="archived-meetings" class="list" role="listbox" aria-label="Archived meetings">
+            @for (meeting of archivedMeetings(); track meeting.id) {
+              <app-meeting-list-item
+                [meeting]="meeting"
+                [selected]="meeting.id === selectedId()"
+                [disabled]="selectionDisabled()"
+                [recording]="meeting.id === recordingMeetingId()"
+                (opened)="meetingSelected.emit($event)"
+                (deleteRequested)="meetingDeleted.emit($event)"
+                (archiveToggleRequested)="meetingArchiveToggled.emit($event)"
+              />
+            }
+          </div>
+        }
+      </section>
     }
-  </div>
+  }
 </div>
