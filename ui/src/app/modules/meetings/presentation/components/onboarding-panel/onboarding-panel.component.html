@@ -1,0 +1,36 @@
+<section class="onboarding">
+  <h1>Set up local models</h1>
+
+  @if (!status()) {
+    <p role="status" aria-live="polite" aria-busy="true">Checking installed models&hellip;</p>
+  } @else {
+    <p>Myna needs these local models before it can record and summarize meetings.</p>
+
+    @for (group of groups(); track group.label) {
+      <div class="group">
+        <h2>{{ group.label }}</h2>
+        <ul>
+          @for (file of group.slot.expectedFiles; track file) {
+            <li [class.present]="group.slot.present">
+              <span class="status">{{ group.slot.present ? '✓' : '✗' }}</span>
+              <code>{{ file }}</code>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+
+    <div class="download">
+      <code>{{ downloadCommand }}</code>
+      <button type="button" (click)="copyDownloadCommand()">
+        {{ copied() ? 'Copied!' : 'Copy' }}
+      </button>
+    </div>
+  }
+
+  <button type="button" class="recheck" (click)="recheck()">Re-check</button>
+
+  @if (error(); as err) {
+    <app-error-state [code]="err.code" (retryClicked)="recheck()" />
+  }
+</section>

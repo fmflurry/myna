@@ -1,0 +1,12 @@
+@if (transcript() && transcript()!.segments.length > 0) {
+  <ol class="transcript">
+    @for (segment of transcript()!.segments; track $index) {
+      <li>
+        <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
+        <span class="text">{{ segment.text }}</span>
+      </li>
+    }
+  </ol>
+} @else {
+  <p class="empty">No transcript available for this meeting.</p>
+}

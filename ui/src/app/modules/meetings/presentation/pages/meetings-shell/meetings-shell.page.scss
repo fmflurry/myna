@@ -1,0 +1,126 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.meetings-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100vh;
+}
+
+.title-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-1) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  min-height: 2.5rem;
+}
+
+/*
+ * Real Myna logo, swapped by theme via `prefers-color-scheme` (single
+ * element, no duplicated markup). `myna-logo-horizontal.svg` clear space is
+ * roughly the height of the lowercase `m` stem — the title-bar padding plus
+ * this margin approximates that on every side.
+ */
+.brand {
+  flex-shrink: 0;
+  width: 96px;
+  height: 28px;
+  margin: var(--space-1) var(--space-2) var(--space-1) 0;
+  background-image: url('/brand/myna-logo-horizontal.svg');
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+}
+
+@media (prefers-color-scheme: dark) {
+  .brand {
+    background-image: url('/brand/myna-logo-horizontal-dark.svg');
+  }
+}
+
+/* Below ~28px the horizontal wordmark logo doesn't read — fall back to the
+ * compact bird mark. The monochrome variant is masked with `--color-text`
+ * so it stays theme-correct without recoloring the yellow beak/eye. */
+@media (max-width: 640px) {
+  .brand {
+    width: 22px;
+    height: 22px;
+    background-image: none;
+    background-color: var(--color-text);
+    -webkit-mask: url('/brand/myna-monochrome.svg') no-repeat center / contain;
+    mask: url('/brand/myna-monochrome.svg') no-repeat center / contain;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .brand {
+      background-image: none;
+    }
+  }
+}
+
+.title-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.about-trigger {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.about-trigger:hover,
+.about-trigger:focus-visible {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+app-meeting-detail-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: var(--z-modal);
+}
+
+.modal {
+  max-width: 32rem;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}

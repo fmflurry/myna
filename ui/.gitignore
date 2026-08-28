@@ -1,0 +1,33 @@
+# Compiled output
+dist/
+tmp/
+out-tsc/
+.angular/
+
+# Dependencies
+node_modules/
+
+# Coverage
+coverage/
+
+# IDEs and editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/*
+
+# Miscellaneous
+.sass-cache/
+connect.lock
+typings/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log
+yarn-error.log

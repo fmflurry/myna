@@ -1,0 +1,16 @@
+@if (editing()) {
+  <input
+    #titleInput
+    type="text"
+    class="title-input"
+    aria-label="Meeting title"
+    [value]="draft()"
+    (input)="onInput($event)"
+    (keydown)="onKeydown($event)"
+    (blur)="commit()"
+  />
+} @else {
+  <button type="button" class="title-trigger" (click)="beginEdit()">
+    {{ title() }}
+  </button>
+}

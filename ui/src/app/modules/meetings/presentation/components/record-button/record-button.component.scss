@@ -1,0 +1,68 @@
+:host {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+button {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-4);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* Idle state uses the product accent — red/danger is reserved for the
+ * active-recording signal (the pulsing `.live-indicator` dot in
+ * app-record-control), so it stays a conventional, unmistakable cue rather
+ * than permanent decoration on a button that's visible at rest. */
+.record {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  border-color: var(--color-accent);
+}
+
+.record:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 88%, black);
+  border-color: color-mix(in srgb, var(--color-accent) 88%, black);
+}
+
+.stop {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  border-color: var(--color-accent);
+}
+
+.cancel {
+  background: transparent;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.cancel:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: var(--space-1);
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  vertical-align: -0.1rem;
+  animation: record-button-spin 0.7s linear infinite;
+}
+
+@keyframes record-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

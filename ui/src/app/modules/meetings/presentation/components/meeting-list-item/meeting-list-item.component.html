@@ -1,0 +1,30 @@
+<div
+  class="row"
+  [class.selected]="selected()"
+  [class.disabled]="disabled()"
+  [attr.aria-selected]="selected()"
+  [attr.aria-disabled]="disabled()"
+  [attr.title]="disabledHint()"
+  role="option"
+  [attr.tabindex]="disabled() ? -1 : 0"
+  (click)="activate()"
+  (keydown.enter)="activate()"
+  (keydown.space)="activate()"
+  (keydown.escape)="onEscapeKey($event)"
+>
+  @if (confirmingDelete()) {
+    <div class="confirm">
+      <span class="confirm-label">Delete?</span>
+      <span class="confirm-actions">
+        <button type="button" class="confirm-yes" (click)="confirmDelete($event)">Yes</button>
+        <button type="button" class="confirm-no" (click)="cancelDelete($event)">No</button>
+      </span>
+    </div>
+  } @else {
+    <span class="title">{{ displayTitle() }}</span>
+    <span class="meta">{{ meta() }}</span>
+    <button type="button" class="delete" aria-label="Delete meeting" (click)="requestDelete($event)">
+      &times;
+    </button>
+  }
+</div>

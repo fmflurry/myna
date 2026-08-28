@@ -1,0 +1,39 @@
+:host {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.title-trigger {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-trigger:hover,
+.title-trigger:focus-visible {
+  outline: 1px dashed var(--color-border);
+  outline-offset: 2px;
+}
+
+.title-input {
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--color-accent);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
+.title-input:focus {
+  outline: none;
+}

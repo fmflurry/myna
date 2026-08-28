@@ -1,0 +1,15 @@
+<label class="picker" for="summary-language" title="Summary language">
+  <span class="label visually-hidden">Summary language</span>
+  <select
+    id="summary-language"
+    aria-label="Summary output language"
+    [disabled]="disabled() || languages().length === 0"
+    (change)="onChange($event)"
+  >
+    @for (language of languages(); track language.code) {
+      <option [value]="language.code" [selected]="language.code === selectedLanguage()">
+        {{ language.label }}
+      </option>
+    }
+  </select>
+</label>

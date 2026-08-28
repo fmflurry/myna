@@ -1,0 +1,19 @@
+<section class="attribution" aria-label="Third-party licence attribution">
+  <header>
+    <div>
+      <h2>Licences &amp; attribution</h2>
+      @if (version(); as appVersion) {
+        <p class="version">Myna v{{ appVersion }}</p>
+      }
+    </div>
+    <button type="button" class="close" (click)="closed.emit()">Close</button>
+  </header>
+  <dl>
+    @for (entry of entries; track entry.name) {
+      <div class="entry">
+        <dt>{{ entry.name }} &mdash; {{ entry.licence }}</dt>
+        <dd>{{ entry.note }}</dd>
+      </div>
+    }
+  </dl>
+</section>

@@ -1,0 +1,54 @@
+<div class="capture-settings">
+  <button
+    type="button"
+    class="trigger"
+    [attr.aria-expanded]="expanded()"
+    [disabled]="disabled()"
+    (click)="toggle()"
+  >
+    {{ triggerLabel() }}
+    <span class="chevron" aria-hidden="true">&#9662;</span>
+  </button>
+
+  @if (expanded()) {
+    <div class="popover" role="group" aria-label="Audio capture settings">
+      <label class="device-label" for="capture-device">Microphone</label>
+      <select
+        id="capture-device"
+        class="device-select"
+        aria-label="Microphone"
+        (change)="onDeviceChange($event)"
+        [disabled]="disabled() || captureSource() === 'system'"
+      >
+        @for (device of devices(); track device.name) {
+          <option [value]="device.name" [selected]="device.name === selectedDevice()?.name">
+            {{ device.name }}
+          </option>
+        }
+      </select>
+
+      <label class="device-label" for="capture-audio-source">System audio</label>
+      <select
+        id="capture-audio-source"
+        class="audio-source-select"
+        aria-label="System audio"
+        (change)="onAudioSourceChange($event)"
+        [disabled]="disabled() || captureSource() === 'microphone'"
+      >
+        @for (source of audioSources(); track source.id) {
+          <option [value]="source.id" [selected]="source.id === selectedAudioSource()">
+            {{ source.name }}
+          </option>
+        }
+      </select>
+
+      <app-capture-source-picker
+        [captureSource]="captureSource()"
+        [systemAudioStatus]="systemAudioStatus()"
+        [disabled]="disabled()"
+        (sourceSelected)="onSourceSelected($event)"
+        (permissionRequested)="permissionRequested.emit()"
+      />
+    </div>
+  }
+</div>

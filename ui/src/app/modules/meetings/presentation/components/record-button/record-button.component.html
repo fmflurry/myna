@@ -1,0 +1,39 @@
+@if (state() === 'idle') {
+  <button
+    type="button"
+    class="record"
+    [disabled]="disabled() || startingRecording()"
+    [attr.aria-busy]="startingRecording()"
+    (click)="recordClicked.emit()"
+  >
+    @if (startingRecording()) {
+      <span class="spinner" aria-hidden="true"></span>
+      Preparing&hellip;
+    } @else {
+      Record
+    }
+  </button>
+} @else {
+  <button
+    type="button"
+    class="stop"
+    [disabled]="state() === 'stopping'"
+    [attr.aria-busy]="state() === 'stopping'"
+    (click)="stopClicked.emit()"
+  >
+    @if (state() === 'stopping') {
+      <span class="spinner" aria-hidden="true"></span>
+      Finalizing&hellip;
+    } @else {
+      Stop
+    }
+  </button>
+  <button
+    type="button"
+    class="cancel"
+    [disabled]="state() === 'stopping'"
+    (click)="cancelClicked.emit()"
+  >
+    Cancel
+  </button>
+}

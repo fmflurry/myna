@@ -1,0 +1,33 @@
+<div class="sidebar">
+  <div class="search">
+    <span class="icon" aria-hidden="true">&#9906;</span>
+    <input
+      type="search"
+      placeholder="Search"
+      aria-label="Search meetings"
+      [value]="query()"
+      (input)="onQueryInput($event)"
+    />
+  </div>
+
+  <div class="list" role="listbox" aria-label="Meetings">
+    @if (meetings().length === 0) {
+      <div class="empty-state">
+        <p class="headline">No meetings yet</p>
+        <p class="hint">Press Record to capture your first meeting.</p>
+      </div>
+    } @else if (filteredMeetings().length === 0) {
+      <p class="no-match">No meetings match &ldquo;{{ query() }}&rdquo;</p>
+    } @else {
+      @for (meeting of filteredMeetings(); track meeting.id) {
+        <app-meeting-list-item
+          [meeting]="meeting"
+          [selected]="meeting.id === selectedId()"
+          [disabled]="selectionDisabled()"
+          (opened)="meetingSelected.emit($event)"
+          (deleteRequested)="meetingDeleted.emit($event)"
+        />
+      }
+    }
+  </div>
+</div>

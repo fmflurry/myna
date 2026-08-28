@@ -1,0 +1,167 @@
+/* You can add global styles to this file, and also import other style files */
+
+/*
+ * Myna brand fonts, self-hosted (see ui/public/fonts/). No CDN fetch —
+ * the app CSP is `default-src 'self'` and Myna is local-first, so runtime
+ * requests to Google Fonts (or any remote host) are forbidden.
+ * Poppins and Inter are both licensed under the SIL Open Font License 1.1;
+ * see ui/public/fonts/OFL-Poppins.txt and OFL-Inter.txt.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/poppins-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/poppins-latin-600-normal.woff2') format('woff2');
+}
+
+:root {
+  /* Myna brand palette. Ink + Off White are the UI foundation; Yellow is
+   * reserved for small accents (focus marks) — never a large fill or page
+   * background. #6366F1 is the interactive/product accent. */
+  --myna-ink: #0f1115;
+  --myna-yellow: #ffc300;
+  --myna-off-white: #f7f7f5;
+  --myna-accent: #6366f1;
+
+  --color-bg: var(--myna-off-white);
+  --color-surface: #ffffff;
+  --color-text: var(--myna-ink);
+  --color-text-muted: #5b5e66;
+  --color-border: #e4e3de;
+  --color-accent: var(--myna-accent);
+  --color-accent-contrast: #ffffff;
+  --color-danger: #c73a3a;
+  --color-danger-contrast: #ffffff;
+  --color-danger-soft: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  --color-success: #2f8a4d;
+
+  /* Product UI / body text: Inter. Brand / display (logo, headings): Poppins. */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-display: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Consolas', monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --line-height-relaxed: 1.7;
+  --measure-reading: 70ch;
+  --sidebar-width: 14rem;
+  --z-modal: 100;
+  --z-popover: 50;
+
+  --transition-fast: 120ms ease-out;
+  --transition-medium: 220ms ease-out;
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, black 8%, transparent);
+  --shadow-md: 0 4px 16px color-mix(in srgb, black 12%, transparent);
+
+  /* Focus/active marks are the one place small Myna Yellow accents belong. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--myna-yellow);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: var(--myna-ink);
+    --color-surface: #1a1c22;
+    --color-text: var(--myna-off-white);
+    --color-text-muted: #a0a3ac;
+    --color-border: #2a2d34;
+    --color-accent: var(--myna-accent);
+    --color-accent-contrast: #ffffff;
+    --color-danger: #e0685f;
+    --color-danger-contrast: #1c1c1f;
+    --color-success: #4cbf74;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+h1,
+h2,
+h3,
+.myna-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+/* The `myna` wordmark treatment, for any text fallback of the logo. */
+.myna-wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}

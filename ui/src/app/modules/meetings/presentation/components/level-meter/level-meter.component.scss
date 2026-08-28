@@ -1,0 +1,18 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.track {
+  height: 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-success));
+  transition: width 180ms ease-out;
+}

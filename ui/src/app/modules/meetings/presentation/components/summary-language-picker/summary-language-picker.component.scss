@@ -1,0 +1,38 @@
+.picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 0.85rem;
+}
+
+select:hover:not(:disabled),
+select:focus-visible {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

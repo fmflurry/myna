@@ -1,0 +1,12 @@
+{
+  "name": "myna",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "ui:dev": "npm --prefix ui run start",
+    "ui:build": "npm --prefix ui run build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

@@ -1,0 +1,130 @@
+@if (!modelsReady()) {
+  <app-onboarding-panel
+    [status]="modelsStatus()"
+    [error]="error()"
+    (recheckRequested)="recheckModelsRequested.emit()"
+  />
+} @else if (!meeting()) {
+  <div class="empty-pane">
+    <p>Select a meeting, or press Record to start one.</p>
+  </div>
+} @else {
+  <header class="detail-heading">
+    <h1>
+      <app-editable-title [title]="displayTitle()" (titleChanged)="renameRequested.emit($event)" />
+      &mdash; {{ headingDate() }}
+    </h1>
+    <p class="meta">{{ metaLine() }}</p>
+  </header>
+
+  <nav class="tab-row" role="tablist" aria-label="Meeting content">
+    <button
+      type="button"
+      role="tab"
+      class="tab"
+      [class.active]="activeTab() === transcriptTab"
+      [attr.aria-selected]="activeTab() === transcriptTab"
+      title="Transcript"
+      (click)="selectTab(transcriptTab)"
+    >
+      {{ transcriptTabLabel() }}
+    </button>
+    @for (template of templates(); track template.name) {
+      <button
+        type="button"
+        role="tab"
+        class="tab"
+        [class.active]="activeTab() === template.name"
+        [attr.aria-selected]="activeTab() === template.name"
+        [title]="template.description"
+        (click)="selectTab(template.name)"
+      >
+        {{ templateLabel(template) }}
+      </button>
+    }
+  </nav>
+
+  <div class="actions-row">
+    @if (activeTab() !== transcriptTab) {
+      <!-- Meaningless on Transcript: Parakeet auto-detects the spoken
+           language and there is no re-transcribing in another one. This
+           picker only ever governs the OUTPUT language of a generated
+           summary. -->
+      <app-summary-language-picker
+        [languages]="summaryLanguages()"
+        [selectedLanguage]="selectedSummaryLanguage()"
+        [disabled]="summarizing()"
+        (languageSelected)="onSummaryLanguageSelected($event)"
+      />
+    }
+    <div class="export-controls">
+      <select
+        class="export-format"
+        aria-label="Export format"
+        title="Export format"
+        (change)="onExportFormatChange($event)"
+      >
+        @for (format of exportFormats; track format) {
+          <option [value]="format" [selected]="format === exportFormat()">{{ format }}</option>
+        }
+      </select>
+      <button
+        type="button"
+        class="export"
+        title="Export meeting"
+        [disabled]="exporting()"
+        [attr.aria-busy]="exporting()"
+        (click)="export()"
+      >
+        @if (exporting()) {
+          <span class="spinner" aria-hidden="true"></span> Exporting&hellip;
+        } @else {
+          <span aria-hidden="true">⬇️</span> Export
+        }
+      </button>
+    </div>
+  </div>
+
+  <div class="tab-content">
+    @if (activeTab() === transcriptTab) {
+      @if (isLive()) {
+        <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
+      } @else {
+        <app-transcript-view [transcript]="meeting()!.transcript" />
+      }
+    } @else if (existingSummary(); as summary) {
+      <app-summary-panel [markdown]="summary.markdown" [generating]="false" />
+    } @else if (summaryLoading()) {
+      <app-summary-panel [markdown]="''" [generating]="false" [loading]="true" />
+    } @else if (isGeneratingActiveTab()) {
+      <app-summary-panel
+        [markdown]="summaryStream()"
+        [generating]="true"
+        (cancelClicked)="cancelSummaryRequested.emit()"
+      />
+    } @else {
+      <div class="generate">
+        <p class="headline">No {{ activeTemplateLabel() }} summary yet.</p>
+        <p class="hint">Generate one from the transcript in {{ activeLanguageLabel() }}.</p>
+        @if (generatingElsewhereLabel(); as busyLabel) {
+          <button
+            type="button"
+            class="generate-button"
+            disabled
+            [attr.aria-disabled]="true"
+            [title]="'Generating ' + busyLabel + '…'"
+          >
+            Generate
+          </button>
+          <p class="hint busy-hint">Generating {{ busyLabel }}&hellip;</p>
+        } @else {
+          <button type="button" class="generate-button" (click)="generateSummary()">Generate</button>
+        }
+      </div>
+    }
+  </div>
+
+  @if (error(); as err) {
+    <app-error-state [code]="err.code" (retryClicked)="retryRequested.emit()" />
+  }
+}

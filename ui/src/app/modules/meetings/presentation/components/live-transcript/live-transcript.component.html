@@ -1,0 +1,17 @@
+<div class="live-transcript" #scrollContainer (scroll)="onScroll($event)">
+  @for (segment of finalizedSegments(); track $index) {
+    <p class="final">
+      <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
+      <span class="text">{{ segment.text }}</span>
+    </p>
+  }
+  @if (partialText()) {
+    <p class="partial">
+      <span class="timestamp" aria-hidden="true"></span>
+      <span class="text">{{ partialText() }}</span>
+    </p>
+  }
+  @if (isEmpty()) {
+    <p class="empty">Listening&hellip;</p>
+  }
+</div>

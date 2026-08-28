@@ -1,0 +1,19 @@
+<div class="summary-panel">
+  @if (generating()) {
+    <div class="status" role="status" aria-live="polite" aria-busy="true">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Generating summary&hellip;</span>
+      <button type="button" class="cancel" (click)="cancelClicked.emit()">Cancel</button>
+    </div>
+  } @else if (loading() && !markdown()) {
+    <div class="status loading" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Loading summary&hellip;</span>
+    </div>
+  }
+  @if (markdown()) {
+    <pre class="markdown">{{ markdown() }}</pre>
+  } @else if (!generating() && !loading()) {
+    <p class="empty">No summary yet. Pick a template to generate one.</p>
+  }
+</div>

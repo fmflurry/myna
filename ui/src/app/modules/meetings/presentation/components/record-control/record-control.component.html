@@ -1,0 +1,49 @@
+<div class="record-control">
+  @if (recordingState() === 'idle') {
+    <app-capture-settings
+      [devices]="devices()"
+      [selectedDevice]="selectedDevice()"
+      [captureSource]="captureSource()"
+      [systemAudioStatus]="systemAudioStatus()"
+      [audioSources]="audioSources()"
+      [selectedAudioSource]="selectedAudioSource()"
+      [disabled]="disabled() || startingRecording()"
+      (deviceChanged)="deviceChanged.emit($event)"
+      (sourceSelected)="sourceSelected.emit($event)"
+      (audioSourceSelected)="audioSourceSelected.emit($event)"
+      (permissionRequested)="permissionRequested.emit()"
+    />
+    @if (startingRecording()) {
+      <span class="preparing" role="status" aria-live="polite" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        Preparing to record&hellip;
+      </span>
+    }
+  } @else if (recordingState() === 'stopping') {
+    <span class="finalizing" role="status" aria-live="polite" aria-busy="true">
+      <span class="spinner" aria-hidden="true"></span>
+      Finalizing recording&hellip;
+    </span>
+  } @else {
+    <span class="live-indicator" aria-hidden="true"></span>
+    <span class="timer">{{ elapsedLabel() }}</span>
+    @if (effectiveSystemSource(); as source) {
+      <span class="effective-source" title="Effective system audio source">{{ source.name }}</span>
+    } @else if (degradedToMicOnly()) {
+      <span
+        class="degraded-source"
+        title="System audio permission was not granted — recording microphone only."
+      >Mic only</span>
+    }
+    <app-level-meter [level]="level()" />
+  }
+
+  <app-record-button
+    [state]="recordingState()"
+    [disabled]="disabled()"
+    [startingRecording]="startingRecording()"
+    (recordClicked)="recordClicked.emit()"
+    (stopClicked)="stopClicked.emit()"
+    (cancelClicked)="cancelClicked.emit()"
+  />
+</div>

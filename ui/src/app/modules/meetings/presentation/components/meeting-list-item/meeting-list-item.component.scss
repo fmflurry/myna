@@ -1,0 +1,114 @@
+:host {
+  display: block;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.15rem;
+  width: 100%;
+  /* Matches the title+meta two-line stack so swapping to the (shorter)
+     delete-confirm content never shifts the sidebar list's layout. */
+  min-height: 2.7rem;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.row:hover {
+  background: var(--color-bg);
+}
+
+.row.selected {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.row.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.row.disabled:hover {
+  background: transparent;
+}
+
+.title {
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.meta {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.delete {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0;
+  padding: 0.1rem 0.35rem;
+}
+
+.row:hover .delete,
+.row:focus-within .delete {
+  opacity: 1;
+}
+
+.delete:hover {
+  color: var(--color-danger);
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.confirm-label {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.confirm-yes,
+.confirm-no {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.confirm-yes {
+  background: var(--color-danger);
+  color: var(--color-danger-contrast);
+}
+
+.confirm-no {
+  background: var(--color-border);
+}

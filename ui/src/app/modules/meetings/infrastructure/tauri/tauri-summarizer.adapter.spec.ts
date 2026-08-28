@@ -1,0 +1,134 @@
+import { TestBed } from '@angular/core/testing';
+
+import { toMeetingId } from '../../core/models/meeting.model';
+import {
+  flushMicrotasks,
+  installTauriInternalsStub,
+  uninstallTauriInternalsStub,
+} from './testing/tauri-internals.stub';
+import { TauriSummarizerAdapter } from './tauri-summarizer.adapter';
+
+describe('TauriSummarizerAdapter', () => {
+  let adapter: TauriSummarizerAdapter;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ providers: [TauriSummarizerAdapter] });
+    adapter = TestBed.inject(TauriSummarizerAdapter);
+  });
+
+  afterEach(() => uninstallTauriInternalsStub());
+
+  it('summarize() sends the template name and language, and maps the returned SummaryDto', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return { template: 'key-points', markdown: '# Key Points', createdAt: '2026-01-15T10:00:00Z', language: 'fr' };
+    });
+
+    const summary = await adapter.summarize(
+      toMeetingId('m-1'),
+      { name: 'key-points', description: 'desc', prompt: 'prompt' },
+      'fr',
+    );
+
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', template: 'key-points', language: 'fr' });
+    expect(summary.markdown).toBe('# Key Points');
+    expect(summary.language).toBe('fr');
+  });
+
+  it('summarize() omits language from the invoke args when not given', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return { template: 'key-points', markdown: '# Key Points', createdAt: '2026-01-15T10:00:00Z', language: 'en' };
+    });
+
+    await adapter.summarize(toMeetingId('m-1'), { name: 'key-points', description: 'desc', prompt: 'prompt' });
+
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', template: 'key-points' });
+  });
+
+  it('listLanguages() maps every SummaryLanguageDto to the domain shape', async () => {
+    let receivedCmd: string | undefined;
+    installTauriInternalsStub((cmd) => {
+      receivedCmd = cmd;
+      return [
+        { code: 'en', label: 'English' },
+        { code: 'fr', label: 'French' },
+      ];
+    });
+
+    const languages = await adapter.listLanguages();
+
+    expect(receivedCmd).toBe('list_summary_languages');
+    expect(languages).toEqual([
+      { code: 'en', label: 'English' },
+      { code: 'fr', label: 'French' },
+    ]);
+  });
+
+  it('tokens() maps the summary://token event payload', async () => {
+    const stub = installTauriInternalsStub((cmd) => {
+      throw new Error(`unexpected command '${cmd}'`);
+    });
+
+    const results: unknown[] = [];
+    adapter.tokens().subscribe((token) => results.push(token));
+    await flushMicrotasks();
+
+    stub.emit('summary://token', { meetingId: 'm-1', template: 'key-points', token: 'foo' });
+
+    expect(results).toEqual([{ meetingId: toMeetingId('m-1'), template: 'key-points', token: 'foo' }]);
+  });
+
+  it('done() maps the summary://done event payload, stamping a receipt-time createdAt', async () => {
+    const stub = installTauriInternalsStub((cmd) => {
+      throw new Error(`unexpected command '${cmd}'`);
+    });
+
+    const results: { template: string; markdown: string; createdAt: Date; language: string }[] = [];
+    adapter.done().subscribe((summary) => results.push(summary));
+    await flushMicrotasks();
+
+    stub.emit('summary://done', { meetingId: 'm-1', template: 'key-points', markdown: '# Done', language: 'fr' });
+
+    expect(results.length).toBe(1);
+    expect(results[0]?.template).toBe('key-points');
+    expect(results[0]?.markdown).toBe('# Done');
+    expect(results[0]?.createdAt).toBeInstanceOf(Date);
+    expect(results[0]?.language).toBe('fr');
+  });
+
+  it('cancel() invokes cancel_summarization', async () => {
+    let receivedCmd: string | undefined;
+    installTauriInternalsStub((cmd) => {
+      receivedCmd = cmd;
+      return undefined;
+    });
+
+    await adapter.cancel();
+
+    expect(receivedCmd).toBe('cancel_summarization');
+  });
+
+  it('getSummary() sends meetingId, template and language, and maps a non-null result', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return { template: 'key-points', markdown: '# Key Points', createdAt: '2026-01-15T10:00:00Z', language: 'en' };
+    });
+
+    const summary = await adapter.getSummary(toMeetingId('m-1'), 'key-points', 'en');
+
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', template: 'key-points', language: 'en' });
+    expect(summary?.markdown).toBe('# Key Points');
+  });
+
+  it('getSummary() resolves null when the command resolves null', async () => {
+    installTauriInternalsStub(() => null);
+
+    const summary = await adapter.getSummary(toMeetingId('m-1'), 'key-points', 'en');
+
+    expect(summary).toBeNull();
+  });
+});

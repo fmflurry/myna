@@ -1,0 +1,84 @@
+<div class="meetings-shell">
+  <header class="title-bar">
+    <div class="brand" role="img" aria-label="Myna"></div>
+
+    <div class="title-bar-actions">
+      <app-record-control
+        [recordingState]="facade.recordingState()"
+        [devices]="facade.devices()"
+        [selectedDevice]="facade.selectedDevice()"
+        [captureSource]="facade.captureSource()"
+        [systemAudioStatus]="systemAudioStatus()"
+        [audioSources]="facade.audioSources()"
+        [selectedAudioSource]="facade.selectedAudioSource()"
+        [effectiveSystemSource]="facade.effectiveSystemSource()"
+        [level]="facade.level()"
+        [elapsedLabel]="elapsedLabel()"
+        [disabled]="!modelsReady()"
+        [startingRecording]="facade.startingRecording()"
+        (deviceChanged)="onDeviceChanged($event)"
+        (sourceSelected)="onSourceSelected($event)"
+        (audioSourceSelected)="onAudioSourceSelected($event)"
+        (permissionRequested)="onPermissionRequested()"
+        (recordClicked)="onRecord()"
+        (stopClicked)="onStop()"
+        (cancelClicked)="onCancel()"
+      />
+      <button type="button" class="about-trigger" aria-label="About Myna" title="About" (click)="toggleAbout()">
+        <span aria-hidden="true">ℹ️</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <app-meeting-sidebar
+      [meetings]="facade.meetings()"
+      [selectedId]="facade.selectedMeeting()?.id"
+      [selectionDisabled]="facade.busy()"
+      (meetingSelected)="onMeetingSelected($event)"
+      (meetingDeleted)="onMeetingDeleted($event)"
+    />
+
+    <app-meeting-detail-pane
+      [meeting]="facade.selectedMeeting()"
+      [modelsReady]="modelsReady()"
+      [modelsStatus]="facade.modelsStatus()"
+      [recordingState]="facade.recordingState()"
+      [finalizedSegments]="facade.finalizedSegments()"
+      [partialText]="facade.partialText()"
+      [templates]="facade.templates()"
+      [summaryStream]="facade.summaryStream()"
+      [summarizing]="facade.summarizing()"
+      [summarizingKey]="facade.summarizingKey()"
+      [error]="facade.error()"
+      [captureSource]="facade.captureSource()"
+      [summaryLanguages]="facade.summaryLanguages()"
+      [selectedSummaryLanguage]="facade.selectedSummaryLanguage()"
+      [summaryCache]="facade.summaryCache()"
+      [exporting]="exporting()"
+      (renameRequested)="onMeetingRenamed($event)"
+      (summarizeRequested)="summarize($event)"
+      (cancelSummaryRequested)="cancelSummary()"
+      (exportRequested)="exportMeeting($event)"
+      (retryRequested)="reload()"
+      (recheckModelsRequested)="recheckModels()"
+      (summaryLanguageSelected)="onSummaryLanguageSelected($event)"
+      (summaryLoadRequested)="onSummaryLoadRequested($event)"
+    />
+  </div>
+</div>
+
+@if (showAbout()) {
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close dialog"
+    (click)="onBackdropActivate($event)"
+    (keydown)="onBackdropKeydown($event)"
+  >
+    <div class="modal">
+      <app-attribution [version]="facade.appVersion()" (closed)="toggleAbout()" />
+    </div>
+  </div>
+}
