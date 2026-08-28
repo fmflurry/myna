@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for the Myna main window.","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-save","opener:allow-open-url"]}}

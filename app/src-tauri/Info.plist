@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Myna records meeting audio locally to produce transcripts. Audio never leaves your device.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Myna records the audio your meeting app is playing so remote participants appear in your transcript. Myna never captures your screen. Audio is transcribed on this Mac and never leaves your device.</string>
+</dict>
+</plist>
