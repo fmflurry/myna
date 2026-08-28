@@ -1,0 +1,22 @@
+[package]
+name = "myna-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+cpal = { workspace = true }
+hound = { workspace = true }
+rubato = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+myna-coreaudio-tap = { path = "../myna-coreaudio-tap" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
