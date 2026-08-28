@@ -1,0 +1,16 @@
+@if (editing()) {
+  <textarea
+    #segmentInput
+    class="segment-input"
+    rows="1"
+    aria-label="Transcript segment text"
+    [value]="draft()"
+    (input)="onInput($event)"
+    (keydown)="onKeydown($event)"
+    (blur)="commit()"
+  ></textarea>
+} @else if (editable()) {
+  <button type="button" class="segment-trigger" (click)="beginEdit()">{{ text() }}</button>
+} @else {
+  <span class="segment-text">{{ text() }}</span>
+}

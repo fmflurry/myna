@@ -1,0 +1,43 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.segment-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.segment-trigger:hover,
+.segment-trigger:focus-visible {
+  outline: 1px dashed var(--color-border);
+  outline-offset: 2px;
+}
+
+.segment-input {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--color-accent);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+}
+
+.segment-input:focus {
+  outline: none;
+}
+
+.segment-text {
+  display: block;
+}
