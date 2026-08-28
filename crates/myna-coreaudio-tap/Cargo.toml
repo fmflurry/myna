@@ -1,0 +1,47 @@
+[package]
+name = "myna-coreaudio-tap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Deliberately does NOT opt into `[lints] workspace = true`. The workspace
+# forbids `unsafe_code` everywhere (`unsafe_code = "forbid"` in the root
+# Cargo.toml, and `forbid` cannot be locally overridden with `#[allow]`), and
+# this crate is the one deliberate exception to that: a safe wrapper around
+# Core Audio's process-tap C API needs real `unsafe` FFI calls underneath it.
+# Staying off `workspace = true` keeps `forbid` fully intact, unweakened, for
+# every other crate (myna-audio, myna-stt, myna-llm, app/src-tauri) — none of
+# them may add their own `#[allow(unsafe_code)]` either; they call into this
+# crate's safe surface instead.
+[lints.rust]
+unsafe_code = "allow"
+
+[dependencies]
+thiserror = { workspace = true }
+objc2 = "0.6"
+block2 = "0.6"
+objc2-core-audio = { version = "0.3.2", features = [
+    "AudioHardware",
+    "objc2",
+    "block2",
+    "dispatch2",
+    "objc2-core-audio-types",
+] }
+objc2-core-audio-types = "0.3.2"
+objc2-core-foundation = { version = "0.3.2", features = [
+    "CFDictionary",
+    "CFArray",
+    "CFString",
+    "CFNumber",
+    "CFBase",
+    "CFUUID",
+] }
+objc2-foundation = { version = "0.3.2", features = [
+    "NSString",
+    "NSArray",
+    "NSObject",
+    "NSValue",
+    "NSGeometry",
+    "NSUUID",
+    "NSProcessInfo",
+] }
