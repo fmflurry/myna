@@ -8,6 +8,7 @@
 //! GREEN step fills in real bodies. Do not add real logic here — that is the
 //! `coder` agent's job, driven by these tests.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use myna_stt::Transcript;
@@ -23,13 +24,23 @@ pub const INGEST_CHUNK_SEC: f32 = 1.0;
 /// compared case-insensitively.
 pub const SUPPORTED_IMPORT_EXTENSIONS: &[&str] = &["wav"];
 
+/// Filename [`backup_transcript`] writes under a meeting's directory.
+const TRANSCRIPT_BACKUP_FILE: &str = "transcript.previous.json";
+
 /// Pure guard for starting an audio import: `Busy` when an import is already
 /// running, or when a recording is active (importing while recording would
 /// race the recording's own `audio.wav` write). Mirrors
 /// `crate::session::guard_start` / `guard_stop`.
 pub fn guard_import(import_in_flight: bool, recording_active: bool) -> Result<(), AppError> {
-    let _ = (import_in_flight, recording_active);
-    unimplemented!("guard_import: RED-step stub, implemented in the GREEN step")
+    if import_in_flight {
+        Err(AppError::Busy("an import is already in progress"))
+    } else if recording_active {
+        Err(AppError::Busy(
+            "cannot import while a recording is in progress",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Canonicalizes and validates a user-supplied source path for import.
@@ -39,8 +50,47 @@ pub fn guard_import(import_in_flight: bool, recording_active: bool) -> Result<()
 /// path resolves inside `meetings_root` (which would mean reading the very
 /// `audio.wav` the import is about to overwrite).
 pub fn validate_source_path(path: &Path, meetings_root: &Path) -> Result<PathBuf, AppError> {
-    let _ = (path, meetings_root);
-    unimplemented!("validate_source_path: RED-step stub, implemented in the GREEN step")
+    if !path.exists() || !path.is_file() {
+        return Err(AppError::Path(format!(
+            "source path does not exist or is not a file: {}",
+            path.display()
+        )));
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase());
+    match extension {
+        Some(ext) if SUPPORTED_IMPORT_EXTENSIONS.contains(&ext.as_str()) => {}
+        Some(ext) => {
+            return Err(AppError::Path(format!(
+                "unsupported source extension \"{ext}\"; supported extensions: {}",
+                SUPPORTED_IMPORT_EXTENSIONS.join(", ")
+            )));
+        }
+        None => {
+            return Err(AppError::Path(format!(
+                "source path has no extension: {}",
+                path.display()
+            )));
+        }
+    }
+
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|err| AppError::Path(format!("failed to canonicalize source path: {err}")))?;
+    if let Ok(canonical_root) = meetings_root.canonicalize() {
+        if canonical_path.starts_with(&canonical_root) {
+            return Err(AppError::Path(format!(
+                "source path {} is inside the meetings root {} and would be overwritten by the import",
+                canonical_path.display(),
+                canonical_root.display()
+            )));
+        }
+    }
+
+    Ok(canonical_path)
 }
 
 /// Converts any WAV (any sample rate, any channel count, int or float PCM)
@@ -51,24 +101,75 @@ pub fn validate_source_path(path: &Path, meetings_root: &Path) -> Result<PathBuf
 /// `dest`, so a failed conversion never destroys an existing `audio.wav`.
 /// Returns the destination's duration in seconds.
 pub fn convert_to_canonical_wav(src: &Path, dest: &Path) -> Result<f32, AppError> {
-    let _ = (src, dest);
-    unimplemented!("convert_to_canonical_wav: RED-step stub, implemented in the GREEN step")
+    let tmp_path = dest.with_extension("wav.tmp");
+
+    match convert_to_canonical_wav_inner(src, dest, &tmp_path) {
+        Ok(frames_written) => Ok(frames_written as f32 / myna_audio::TARGET_SAMPLE_RATE as f32),
+        Err(err) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(err)
+        }
+    }
+}
+
+/// Does the actual conversion work, writing to `tmp_path` and renaming over
+/// `dest` only once every block has been written and the recorder has been
+/// finalized. Returns the number of frames written. Any error here is
+/// translated by [`convert_to_canonical_wav`] into cleanup of `tmp_path`
+/// without touching `dest`.
+fn convert_to_canonical_wav_inner(
+    src: &Path,
+    dest: &Path,
+    tmp_path: &Path,
+) -> Result<u64, AppError> {
+    let mut reader = myna_stt::WavBlockReader::open(src)?;
+    let block_frames = (reader.sample_rate() as f32 * INGEST_CHUNK_SEC) as usize;
+
+    let mut resampler =
+        myna_audio::Resampler::new(reader.sample_rate(), myna_audio::TARGET_SAMPLE_RATE)?;
+
+    let recording_spec = myna_audio::RecordingSpec {
+        sample_rate: myna_audio::TARGET_SAMPLE_RATE,
+        channels: 1,
+    };
+    let mut recorder = myna_audio::WavRecorder::create(tmp_path, recording_spec)?;
+
+    while let Some(block) = reader.next_block(block_frames)? {
+        let resampled = resampler.process(&block);
+        if !resampled.is_empty() {
+            recorder.write(&resampled)?;
+        }
+    }
+    let tail = resampler.flush();
+    if !tail.is_empty() {
+        recorder.write(&tail)?;
+    }
+
+    let stats = recorder.finalize()?;
+    fs::rename(tmp_path, dest)?;
+    Ok(stats.frames)
 }
 
 /// Derives whether a meeting has recorded/imported audio, from the
 /// filesystem rather than `Meeting::audio_path` (which currently has zero
 /// callers and is always `None` on disk).
 pub fn has_audio(audio_path: &Path) -> bool {
-    let _ = audio_path;
-    unimplemented!("has_audio: RED-step stub, implemented in the GREEN step")
+    audio_path.exists()
 }
 
 /// Backs up an existing transcript to `<meeting_dir>/transcript.previous.json`
 /// before a re-transcribe overwrites it, so a bad re-transcription doesn't
 /// silently destroy the previous result.
 pub fn backup_transcript(meeting_dir: &Path, transcript: &Transcript) -> Result<(), AppError> {
-    let _ = (meeting_dir, transcript);
-    unimplemented!("backup_transcript: RED-step stub, implemented in the GREEN step")
+    fs::create_dir_all(meeting_dir)?;
+
+    let json =
+        serde_json::to_string_pretty(transcript).map_err(|err| AppError::Store(err.to_string()))?;
+    let backup_path = meeting_dir.join(TRANSCRIPT_BACKUP_FILE);
+    let tmp_path = meeting_dir.join(format!("{TRANSCRIPT_BACKUP_FILE}.tmp"));
+    fs::write(&tmp_path, json)?;
+    fs::rename(&tmp_path, &backup_path)?;
+    Ok(())
 }
 
 /// Pure decision: resolves the source path a re-transcribe should read from.
@@ -80,8 +181,9 @@ pub fn resolve_reimport_source(
     existing_audio: Option<PathBuf>,
     supplied: Option<PathBuf>,
 ) -> Result<PathBuf, AppError> {
-    let _ = (existing_audio, supplied);
-    unimplemented!("resolve_reimport_source: RED-step stub, implemented in the GREEN step")
+    supplied
+        .or(existing_audio)
+        .ok_or_else(|| AppError::NotFound("no existing audio and no source path supplied".into()))
 }
 
 #[cfg(test)]
