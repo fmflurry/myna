@@ -1,0 +1,20 @@
+<div class="welcome">
+  <div class="mark" aria-hidden="true"></div>
+
+  <div class="welcome-content">
+    <h1>Welcome to Myna</h1>
+    <p class="hint">Everything stays on this device.</p>
+    <button
+      type="button"
+      class="start-meeting"
+      [disabled]="startingRecording()"
+      (click)="startRecordingRequested.emit()"
+    >
+      @if (startingRecording()) {
+        Preparing&hellip;
+      } @else {
+        Start a meeting
+      }
+    </button>
+  </div>
+</div>

@@ -5,9 +5,10 @@
     (recheckRequested)="recheckModelsRequested.emit()"
   />
 } @else if (!meeting()) {
-  <div class="empty-pane">
-    <p>Select a meeting, or press Record to start one.</p>
-  </div>
+  <app-welcome-panel
+    [startingRecording]="startingRecording()"
+    (startRecordingRequested)="startRecordingRequested.emit()"
+  />
 } @else {
   <header class="detail-heading">
     <h1>
@@ -17,25 +18,27 @@
     <p class="meta">{{ metaLine() }}</p>
   </header>
 
-  <nav class="tab-row" role="tablist" aria-label="Meeting content">
-    <button
-      type="button"
-      role="tab"
-      class="tab"
-      [class.active]="activeTab() === transcriptTab"
-      [attr.aria-selected]="activeTab() === transcriptTab"
-      title="Transcript"
-      (click)="selectTab(transcriptTab)"
-    >
-      {{ transcriptTabLabel() }}
-    </button>
+  <nav class="tab-row" role="tablist" [attr.aria-label]="isNarrow() ? 'Meeting content' : 'Summary type'">
+    @if (isNarrow()) {
+      <button
+        type="button"
+        role="tab"
+        class="tab"
+        [class.active]="activeTab() === transcriptTab"
+        [attr.aria-selected]="activeTab() === transcriptTab"
+        title="Transcript"
+        (click)="selectTab(transcriptTab)"
+      >
+        {{ transcriptTabLabel() }}
+      </button>
+    }
     @for (template of templates(); track template.name) {
       <button
         type="button"
         role="tab"
         class="tab"
-        [class.active]="activeTab() === template.name"
-        [attr.aria-selected]="activeTab() === template.name"
+        [class.active]="summarySelectionTab() === template.name"
+        [attr.aria-selected]="summarySelectionTab() === template.name"
         [title]="template.description"
         (click)="selectTab(template.name)"
       >
@@ -45,7 +48,7 @@
   </nav>
 
   <div class="actions-row">
-    @if (activeTab() !== transcriptTab) {
+    @if (summarySelectionTab() !== transcriptTab) {
       <!-- Meaningless on Transcript: Parakeet auto-detects the spoken
            language and there is no re-transcribing in another one. This
            picker only ever governs the OUTPUT language of a generated
@@ -85,14 +88,50 @@
     </div>
   </div>
 
-  <div class="tab-content">
-    @if (activeTab() === transcriptTab) {
-      @if (isLive()) {
-        <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
+  @if (isNarrow()) {
+    <div class="tab-content">
+      @if (activeTab() === transcriptTab) {
+        @if (isLive()) {
+          <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
+        } @else {
+          <app-transcript-view
+            [transcript]="meeting()!.transcript"
+            [editable]="!isLive()"
+            (segmentEdited)="segmentEdited.emit($event)"
+          />
+        }
       } @else {
-        <app-transcript-view [transcript]="meeting()!.transcript" />
+        <ng-container *ngTemplateOutlet="summaryContent" />
       }
-    } @else if (existingSummary(); as summary) {
+    </div>
+  } @else {
+    <app-split-workspace
+      class="workspace-split"
+      leftLabel="transcript"
+      [splitRatio]="splitRatio()"
+      [collapsed]="transcriptCollapsed()"
+      (splitRatioChanged)="splitRatioChanged.emit($event)"
+      (collapsedChanged)="transcriptCollapsedChanged.emit($event)"
+    >
+      <div left class="split-pane-content">
+        @if (isLive()) {
+          <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
+        } @else {
+          <app-transcript-view
+            [transcript]="meeting()!.transcript"
+            [editable]="!isLive()"
+            (segmentEdited)="segmentEdited.emit($event)"
+          />
+        }
+      </div>
+      <div right class="split-pane-content">
+        <ng-container *ngTemplateOutlet="summaryContent" />
+      </div>
+    </app-split-workspace>
+  }
+
+  <ng-template #summaryContent>
+    @if (existingSummary(); as summary) {
       <app-summary-panel [markdown]="summary.markdown" [generating]="false" />
     } @else if (summaryLoading()) {
       <app-summary-panel [markdown]="''" [generating]="false" [loading]="true" />
@@ -122,7 +161,7 @@
         }
       </div>
     }
-  </div>
+  </ng-template>
 
   @if (error(); as err) {
     <app-error-state [code]="err.code" (retryClicked)="retryRequested.emit()" />

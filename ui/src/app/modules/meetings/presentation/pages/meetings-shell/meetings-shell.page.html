@@ -1,6 +1,12 @@
 <div class="meetings-shell">
   <header class="title-bar">
-    <div class="brand" role="img" aria-label="Myna"></div>
+    <button
+      type="button"
+      class="brand"
+      aria-label="Myna — go to meetings"
+      title="Home"
+      (click)="onGoHome()"
+    ></button>
 
     <div class="title-bar-actions">
       <app-record-control
@@ -35,8 +41,10 @@
       [meetings]="facade.meetings()"
       [selectedId]="facade.selectedMeeting()?.id"
       [selectionDisabled]="facade.busy()"
+      [recordingMeetingId]="recordingMeetingId()"
       (meetingSelected)="onMeetingSelected($event)"
       (meetingDeleted)="onMeetingDeleted($event)"
+      (meetingArchiveToggled)="onMeetingArchiveToggled($event)"
     />
 
     <app-meeting-detail-pane
@@ -52,11 +60,16 @@
       [summarizingKey]="facade.summarizingKey()"
       [error]="facade.error()"
       [captureSource]="facade.captureSource()"
+      [effectiveSystemSource]="facade.effectiveSystemSource()"
       [summaryLanguages]="facade.summaryLanguages()"
       [selectedSummaryLanguage]="facade.selectedSummaryLanguage()"
       [summaryCache]="facade.summaryCache()"
       [exporting]="exporting()"
+      [splitRatio]="facade.splitRatio()"
+      [transcriptCollapsed]="facade.transcriptCollapsed()"
+      [startingRecording]="facade.startingRecording()"
       (renameRequested)="onMeetingRenamed($event)"
+      (segmentEdited)="onSegmentEdited($event)"
       (summarizeRequested)="summarize($event)"
       (cancelSummaryRequested)="cancelSummary()"
       (exportRequested)="exportMeeting($event)"
@@ -64,6 +77,9 @@
       (recheckModelsRequested)="recheckModels()"
       (summaryLanguageSelected)="onSummaryLanguageSelected($event)"
       (summaryLoadRequested)="onSummaryLoadRequested($event)"
+      (splitRatioChanged)="onSplitRatioChanged($event)"
+      (transcriptCollapsedChanged)="onTranscriptCollapsedChanged($event)"
+      (startRecordingRequested)="onRecord()"
     />
   </div>
 </div>

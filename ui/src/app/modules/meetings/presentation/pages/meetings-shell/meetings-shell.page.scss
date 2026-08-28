@@ -34,10 +34,19 @@
   width: 96px;
   height: 28px;
   margin: var(--space-1) var(--space-2) var(--space-1) 0;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
   background-image: url('/brand/myna-logo-horizontal.svg');
   background-repeat: no-repeat;
   background-position: left center;
   background-size: contain;
+  cursor: pointer;
+}
+
+.brand:focus-visible {
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
 @media (prefers-color-scheme: dark) {

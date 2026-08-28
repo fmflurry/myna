@@ -3,17 +3,9 @@
   flex-direction: column;
   min-width: 0;
   height: 100%;
-  overflow-y: auto;
+  min-height: 0;
   padding: var(--space-5);
   gap: var(--space-4);
-}
-
-.empty-pane {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--color-text-muted);
 }
 
 .detail-heading h1 {
@@ -27,7 +19,12 @@
   font-size: 0.85rem;
 }
 
+.detail-heading {
+  flex-shrink: 0;
+}
+
 .tab-row {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
@@ -52,6 +49,7 @@
 }
 
 .actions-row {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -110,6 +108,24 @@
 
 .tab-content {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* The wide two-column layout: fills the remaining vertical space below the
+ * fixed heading/tabs/actions above it, and hands independent scrolling off
+ * to `SplitWorkspaceComponent`'s own two panes — this element itself never
+ * scrolls, so a long transcript on the left never drags the right column's
+ * scroll position (or vice versa) with it. */
+.workspace-split {
+  flex: 1;
+  min-height: 0;
+}
+
+.split-pane-content {
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
