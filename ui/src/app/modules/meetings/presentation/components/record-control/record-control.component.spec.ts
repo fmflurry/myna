@@ -162,4 +162,54 @@ describe('RecordControlComponent', () => {
     expect(status.getAttribute('aria-busy')).toBe('true');
     expect(fixture.nativeElement.querySelector('.live-indicator')).toBeNull();
   });
+
+  // --- Header cancel (✕/Cancel) confirmation: today it discards the
+  // in-progress recording immediately with zero confirmation. Requires an
+  // inline two-step confirm on RecordControlComponent (mirroring
+  // MeetingListItemComponent's `confirmingDelete`): a `confirmingCancel`
+  // signal that intercepts the child record-button's `cancelClicked` and
+  // only forwards its own `cancelClicked` output once the warning is
+  // confirmed via a `.cancel-confirm` block with `.confirm-yes`/`.confirm-no`.
+
+  it('asks for confirmation before cancelling instead of emitting immediately', () => {
+    const fixture = createFixture('recording');
+    const emitted: void[] = [];
+    fixture.componentInstance.cancelClicked.subscribe(() => emitted.push(undefined));
+
+    (fixture.nativeElement.querySelector('app-record-button .cancel') as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(emitted.length).toBe(0);
+    const confirm = fixture.nativeElement.querySelector('.cancel-confirm');
+    expect(confirm).toBeTruthy();
+    expect(confirm.textContent).toContain(
+      'Stop and discard this recording? The audio and transcript will be deleted.',
+    );
+  });
+
+  it('emits cancelClicked once the discard warning is confirmed', () => {
+    const fixture = createFixture('recording');
+    const emitted: void[] = [];
+    fixture.componentInstance.cancelClicked.subscribe(() => emitted.push(undefined));
+
+    (fixture.nativeElement.querySelector('app-record-button .cancel') as HTMLElement).click();
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.cancel-confirm .confirm-yes') as HTMLElement).click();
+
+    expect(emitted.length).toBe(1);
+  });
+
+  it('emits nothing when the discard warning is dismissed', () => {
+    const fixture = createFixture('recording');
+    const emitted: void[] = [];
+    fixture.componentInstance.cancelClicked.subscribe(() => emitted.push(undefined));
+
+    (fixture.nativeElement.querySelector('app-record-button .cancel') as HTMLElement).click();
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('.cancel-confirm .confirm-no') as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(emitted.length).toBe(0);
+    expect(fixture.nativeElement.querySelector('.cancel-confirm')).toBeNull();
+  });
 });
