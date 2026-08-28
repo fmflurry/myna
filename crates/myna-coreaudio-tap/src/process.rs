@@ -21,6 +21,17 @@ use objc2_core_foundation::{CFRetained, CFString};
 /// pid) inside a property's raw byte buffer.
 const ID_SIZE: usize = std::mem::size_of::<u32>();
 
+/// Largest buffer `proc_pidpath` ever writes, per `<libproc.h>`
+/// (`PROC_PIDPATHINFO_MAXSIZE`, defined there as `4 * MAXPATHLEN`).
+const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
+
+extern "C" {
+    /// `int proc_pidpath(pid_t pid, void *buffer, uint32_t buffersize);`
+    /// from `<libproc.h>`, always available via libSystem — no extra
+    /// dependency needed to resolve a pid's executable path.
+    fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+}
+
 /// One process Core Audio's HAL currently tracks: anything that has opened
 /// an input or output audio stream. Unlike ScreenCaptureKit's
 /// per-application enumeration, this includes headless helper processes —
@@ -49,6 +60,50 @@ impl AudioProcess {
             .filter_map(describe_process)
             .collect()
     }
+}
+
+/// Resolves the full executable path for a running process via libproc's
+/// `proc_pidpath`.
+///
+/// This is the sole `proc_pidpath` call site; [`executable_name`] derives its
+/// (final-path-component) result from it rather than calling `proc_pidpath`
+/// a second time. Callers that need to locate the outermost `.app` bundle a
+/// process runs from (e.g. to group an app's helper processes together, even
+/// when each ships under its own distinct bundle id) need the full path,
+/// which [`executable_name`] alone discards.
+///
+/// Returns `None` when the pid has already exited or its path can't be read
+/// (e.g. a sandboxed or root-owned process) — never panics.
+pub fn executable_path(pid: i32) -> Option<String> {
+    let mut buffer = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+    // Safety: `buffer` is sized to `PROC_PIDPATHINFO_MAXSIZE`, the maximum
+    // number of bytes this API ever writes (per `<libproc.h>`), so the call
+    // cannot write past the end of it.
+    let written =
+        unsafe { proc_pidpath(pid, buffer.as_mut_ptr() as *mut c_void, buffer.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    buffer.truncate(written as usize);
+    let path = String::from_utf8(buffer).ok()?;
+    (!path.is_empty()).then_some(path)
+}
+
+/// Resolves the executable name (final path component, no directory) for a
+/// running process, via [`executable_path`].
+///
+/// This is the fallback display name for a process with no bundle id at all
+/// (e.g. a bare CLI tool like `afplay`), and is also tried *first* for
+/// bundled apps — a packaged app's own executable name usually already
+/// matches its user-visible name (e.g. `Microsoft Outlook`), which is a
+/// better label than anything derivable from its bundle id alone.
+///
+/// Returns `None` when the pid has already exited or its path can't be read
+/// (e.g. a sandboxed or root-owned process) — never panics.
+pub fn executable_name(pid: i32) -> Option<String> {
+    let path = executable_path(pid)?;
+    let name = path.rsplit('/').next().unwrap_or(path.as_str());
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Translates a pid to the [`AudioObjectID`] Core Audio uses to refer to it,
