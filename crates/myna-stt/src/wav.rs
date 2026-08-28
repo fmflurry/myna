@@ -136,3 +136,231 @@ fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_mono16_wav(path: &Path, sample_rate: u32, samples: &[i16]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).expect("create wav");
+        for &s in samples {
+            writer.write_sample(s).expect("write sample");
+        }
+        writer.finalize().expect("finalize wav");
+    }
+
+    fn write_stereo16_wav(path: &Path, sample_rate: u32, frames: &[(i16, i16)]) {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).expect("create wav");
+        for &(l, r) in frames {
+            writer.write_sample(l).expect("write left sample");
+            writer.write_sample(r).expect("write right sample");
+        }
+        writer.finalize().expect("finalize wav");
+    }
+
+    fn write_mono_f32_wav(path: &Path, sample_rate: u32, samples: &[f32]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).expect("create wav");
+        for &s in samples {
+            writer.write_sample(s).expect("write sample");
+        }
+        writer.finalize().expect("finalize wav");
+    }
+
+    #[test]
+    fn block_reader_passes_through_16khz_mono_samples_unchanged() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mono16k.wav");
+        let raw_i16: Vec<i16> = vec![
+            0, 8192, -8192, 16384, -16384, 100, -100, 32767, -32768, 5000,
+        ];
+        write_mono16_wav(&path, 16_000, &raw_i16);
+
+        // Act
+        let mut reader = WavBlockReader::open(&path).expect("open");
+        let mut collected = Vec::new();
+        while let Some(block) = reader.next_block(4).expect("next_block") {
+            assert!(block.len() <= 4, "block must never exceed block_frames");
+            collected.extend(block);
+        }
+
+        // Assert
+        assert_eq!(reader.sample_rate(), 16_000);
+        assert_eq!(reader.total_frames(), raw_i16.len() as u64);
+        let expected: Vec<f32> = raw_i16.iter().map(|&s| s as f32 / 32_768.0).collect();
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn block_reader_reports_native_rate_and_downmixes_stereo_to_mono() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("stereo48k.wav");
+        let frames: Vec<(i16, i16)> = vec![
+            (1000, -1000),
+            (2000, 6000),
+            (-32768, 32767),
+            (0, 0),
+            (500, 1500),
+        ];
+        write_stereo16_wav(&path, 48_000, &frames);
+
+        // Act
+        let mut reader = WavBlockReader::open(&path).expect("open");
+        let mut collected = Vec::new();
+        while let Some(block) = reader.next_block(2).expect("next_block") {
+            collected.extend(block);
+        }
+
+        // Assert
+        assert_eq!(
+            reader.sample_rate(),
+            48_000,
+            "must report the file's native rate — this reader never resamples"
+        );
+        assert_eq!(reader.total_frames(), frames.len() as u64);
+        let expected: Vec<f32> = frames
+            .iter()
+            .map(|&(l, r)| ((l as f32 / 32_768.0) + (r as f32 / 32_768.0)) / 2.0)
+            .collect();
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn block_reader_concatenated_output_matches_read_wav_to_f32() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mixed.wav");
+        let frames: Vec<(i16, i16)> = (0..13i16)
+            .map(|i| (i * 1000 - 6000, -(i * 500) + 3000))
+            .collect();
+        write_stereo16_wav(&path, 44_100, &frames);
+        let (expected_samples, expected_rate) =
+            read_wav_to_f32(&path).expect("read_wav_to_f32 baseline");
+
+        // Act
+        let mut reader = WavBlockReader::open(&path).expect("open");
+        let mut collected = Vec::new();
+        while let Some(block) = reader.next_block(5).expect("next_block") {
+            collected.extend(block);
+        }
+
+        // Assert
+        assert_eq!(reader.sample_rate(), expected_rate);
+        assert_eq!(
+            collected, expected_samples,
+            "block-reader output must equal read_wav_to_f32 sample-for-sample"
+        );
+    }
+
+    #[test]
+    fn block_reader_reads_ieee_float_pcm_wav() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("float.wav");
+        let samples: Vec<f32> = vec![0.0, 0.125, -0.25, 0.999, -0.999, 0.333, -0.5];
+        write_mono_f32_wav(&path, 16_000, &samples);
+
+        // Act
+        let mut reader = WavBlockReader::open(&path).expect("open");
+        let mut collected = Vec::new();
+        while let Some(block) = reader.next_block(3).expect("next_block") {
+            collected.extend(block);
+        }
+
+        // Assert
+        assert_eq!(collected, samples);
+    }
+
+    #[test]
+    fn block_reader_final_block_is_shorter_when_frame_count_is_not_a_multiple() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("short_tail.wav");
+        let raw_i16: Vec<i16> = (0..10i16).map(|i| i * 100).collect(); // 10 frames
+
+        write_mono16_wav(&path, 16_000, &raw_i16);
+
+        // Act
+        let mut reader = WavBlockReader::open(&path).expect("open");
+        let mut blocks = Vec::new();
+        while let Some(block) = reader.next_block(4).expect("next_block") {
+            blocks.push(block);
+        }
+
+        // Assert
+        assert_eq!(
+            blocks.len(),
+            3,
+            "10 frames at block_frames=4 must yield 3 blocks (4, 4, 2)"
+        );
+        assert_eq!(blocks[0].len(), 4);
+        assert_eq!(blocks[1].len(), 4);
+        assert_eq!(
+            blocks[2].len(),
+            2,
+            "final block must be shorter than block_frames"
+        );
+        assert!(
+            reader
+                .next_block(4)
+                .expect("next_block after eof")
+                .is_none(),
+            "must return Ok(None) once every frame has been yielded"
+        );
+    }
+
+    #[test]
+    fn total_frames_counts_frames_not_interleaved_samples() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("count_check.wav");
+        let frame_count: i16 = 37;
+        let frames: Vec<(i16, i16)> = (0..frame_count).map(|i| (i, -i)).collect();
+        write_stereo16_wav(&path, 48_000, &frames);
+
+        // Act
+        let reader = WavBlockReader::open(&path).expect("open");
+
+        // Assert
+        assert_eq!(
+            reader.total_frames(),
+            frame_count as u64,
+            "must report frame count, not interleaved sample count (2x for stereo)"
+        );
+    }
+
+    #[test]
+    fn open_on_a_missing_path_returns_an_error_not_a_panic() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist.wav");
+
+        // Act
+        let result = WavBlockReader::open(&missing);
+
+        // Assert
+        assert!(
+            result.is_err(),
+            "opening a missing path must error, not panic"
+        );
+    }
+}

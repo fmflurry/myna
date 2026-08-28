@@ -830,4 +830,98 @@ mod tests {
         assert_eq!(join_committed("committed", ""), "committed");
         assert_eq!(join_committed("committed", "tail"), "committed tail");
     }
+
+    #[test]
+    fn streamer_options_default_preserves_existing_always_emit_partials_behaviour() {
+        // Regression guard: existing callers (`app/src-tauri/src/session.rs`,
+        // `crates/myna-stt/src/main.rs`) build a streamer without opting into
+        // this new option, so the default must reproduce today's
+        // always-emit-partials behaviour exactly.
+        let options = StreamerOptions::default();
+
+        assert!(
+            options.emit_partials,
+            "default StreamerOptions must keep partial emission on for existing callers"
+        );
+    }
+
+    #[test]
+    fn should_emit_partial_returns_true_when_enabled_and_both_existing_gates_pass() {
+        let options = StreamerOptions {
+            emit_partials: true,
+        };
+
+        assert!(should_emit_partial(&options, true, true));
+    }
+
+    #[test]
+    fn should_emit_partial_returns_false_when_emit_partials_is_disabled_even_if_other_gates_pass() {
+        let options = StreamerOptions {
+            emit_partials: false,
+        };
+
+        assert!(
+            !should_emit_partial(&options, true, true),
+            "emit_partials=false must suppress partials regardless of speech/throttle state"
+        );
+    }
+
+    #[test]
+    fn should_emit_partial_still_respects_the_pre_existing_speech_and_throttle_gates_when_enabled()
+    {
+        let options = StreamerOptions {
+            emit_partials: true,
+        };
+
+        assert!(
+            !should_emit_partial(&options, false, true),
+            "no partial before speech has started"
+        );
+        assert!(
+            !should_emit_partial(&options, true, false),
+            "no partial while the throttle has not elapsed"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a downloaded Silero VAD + Parakeet-TDT model to construct a real \
+                SttEngine/SimulatedStreamer; the model-free guarantee is covered by the \
+                should_emit_partial tests above. Run manually after ./scripts/download-models.sh \
+                with `cargo test -p myna-stt --locked -- --ignored`."]
+    // RED-phase placeholder, intentionally unfinished: the `todo!()` below is meant to
+    // diverge until the StreamerOptions/emit_partials cycle loads a real SttEngine from
+    // downloaded model artifacts. The `#[allow]` below exists only to keep the workspace
+    // clippy gate (`-D warnings`) green while this test stays `#[ignore]`d; delete both
+    // the `#[allow]` and this comment once that cycle is completed.
+    #[allow(unreachable_code, unused_variables, clippy::diverging_sub_expression)]
+    fn with_options_emit_partials_false_suppresses_partial_events_end_to_end() {
+        // Documents the expected integration behaviour once GREEN: with
+        // emit_partials=false, push() must never return SttEvent::Partial,
+        // even for input that would otherwise trigger one.
+        let engine: Arc<SttEngine> = todo!("load a real SttEngine from downloaded model artifacts");
+        let vad_cfg = VadConfig {
+            model_path: std::path::PathBuf::from("models/silero-vad/silero_vad.onnx"),
+            ..VadConfig::default()
+        };
+        let options = StreamerOptions {
+            emit_partials: false,
+        };
+
+        let mut streamer =
+            SimulatedStreamer::with_options(engine, &vad_cfg, options).expect("construct streamer");
+
+        let chunk = vec![0.05_f32; TARGET_SAMPLE_RATE as usize];
+        let mut saw_partial = false;
+        for _ in 0..10 {
+            let events = streamer.push(&chunk).expect("push");
+            if events.iter().any(|e| matches!(e, SttEvent::Partial { .. })) {
+                saw_partial = true;
+            }
+        }
+
+        assert!(
+            !saw_partial,
+            "emit_partials=false must suppress all Partial events"
+        );
+    }
 }

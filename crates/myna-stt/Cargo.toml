@@ -19,3 +19,6 @@ hound = { workspace = true }
 ctrlc = { workspace = true }
 sherpa-onnx = { workspace = true }
 myna-audio = { path = "../myna-audio" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
