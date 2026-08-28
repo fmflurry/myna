@@ -12,9 +12,9 @@ dist/
 # Rust
 target/
 
-# Model artifacts (downloaded via `hf download`)
-models/**/*.gguf
-models/**/*.onnx
+# Model artifacts (downloaded via `hf download`) — only README.md tracked
+models/*
+!models/README.md
 
 # Logs
 *.log
@@ -33,11 +33,6 @@ data/
 *.db-shm
 *.sqlite-wal
 *.sqlite-shm
-
-# Model artifacts (additional, non-weight files)
-models/**/tokens.txt
-models/**/test_wavs/
-models/**/.cache/
 
 # Frontend (Angular UI)
 /node_modules
