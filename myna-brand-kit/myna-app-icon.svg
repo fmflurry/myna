@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Myna app icon</title>
+  <desc id="desc">Rounded dark app icon with the Myna bird head mark.</desc>
+  <rect width="512" height="512" rx="112" fill="#0F1115"/>
+  <g transform="translate(80 86) scale(1.85)">
+    <path fill="#F7F7F5" d="M24 104c0-42 31-74 70-74 36 0 66 26 72 60l-23 2c-4-21-23-36-45-36-27 0-49 22-49 49 0 26 21 47 47 48l-6 18c-38-2-66-31-66-67Z"/>
+    <path fill="#F7F7F5" d="M35 93 16 100l17 7-14 11 24 2 12-28-20 1Z"/>
+    <path fill="#FFC300" d="M77 83c8-10 19-15 31-14 13 1 23 9 28 20-8 8-18 13-30 12-12-1-22-8-29-18Z"/>
+    <ellipse cx="106" cy="84" rx="14" ry="16" fill="#0F1115"/>
+    <circle cx="111" cy="78" r="5" fill="#F7F7F5"/>
+    <path fill="#FFC300" d="M134 88c14-6 30-7 44-2l-24 18 24 18c-14 4-30 4-44-2l14-16-14-16Z"/>
+  </g>
+</svg>

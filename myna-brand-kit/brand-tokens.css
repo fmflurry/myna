@@ -1,0 +1,29 @@
+:root {
+  --myna-ink: #0F1115;
+  --myna-yellow: #FFC300;
+  --myna-off-white: #F7F7F5;
+  --myna-accent: #6366F1;
+
+  --myna-font-display: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --myna-font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --myna-logo-weight: 600;
+  --myna-heading-weight: 600;
+  --myna-body-weight: 400;
+}
+
+.myna-wordmark {
+  font-family: var(--myna-font-display);
+  font-weight: var(--myna-logo-weight);
+  letter-spacing: -0.045em;
+}
+
+h1, h2, h3, .myna-heading {
+  font-family: var(--myna-font-display);
+  font-weight: var(--myna-heading-weight);
+  letter-spacing: -0.025em;
+}
+
+body, button, input, textarea, select {
+  font-family: var(--myna-font-body);
+}
