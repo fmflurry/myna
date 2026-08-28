@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myna.local/templates/schema.json",
+  "title": "Myna Summary Template",
+  "description": "Schema for a Myna summary template: a prompt template plus an optional intended output shape.",
+  "type": "object",
+  "required": ["name", "description", "prompt"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path to this schema file, for editor tooling."
+    },
+    "name": {
+      "type": "string",
+      "description": "Kebab-case template id; must match the template's filename (without extension).",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable summary of what this template produces."
+    },
+    "label": {
+      "type": "string",
+      "description": "Optional short (1-2 word) display label for compact UI tabs, e.g. 'Notes'. Absent means the UI falls back to a title-cased name.",
+      "maxLength": 24
+    },
+    "emoji": {
+      "type": "string",
+      "description": "Optional single display emoji for compact UI tabs, e.g. '📝'. Absent means the UI falls back to a generic emoji. At most 2 Unicode scalar values (covers a plain emoji or a base character plus a variation selector).",
+      "minLength": 1
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Prompt template. May contain the placeholders {title}, {duration}, {transcript}, and {language}. If {language} is omitted, a directive sentence naming the requested output language is appended automatically when the prompt is rendered."
+    },
+    "section_schema": {
+      "type": "object",
+      "description": "JSON Schema describing the intended shape of the model's output. Not enforced on generated output; advisory only."
+    }
+  },
+  "additionalProperties": false
+}

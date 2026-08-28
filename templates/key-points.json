@@ -1,0 +1,18 @@
+{
+  "$schema": "./schema.json",
+  "name": "key-points",
+  "label": "Key Points",
+  "emoji": "🔑",
+  "description": "Extract the key points discussed in the meeting as a concise bullet list.",
+  "prompt": "You are summarizing a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and extract the key points that were discussed. Each key point should be a short, self-contained sentence. Do not include filler, small talk, or restate the entire transcript. Respond with the key points only, one per line.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nKey Points:",
+  "section_schema": {
+    "type": "object",
+    "required": ["key_points"],
+    "properties": {
+      "key_points": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

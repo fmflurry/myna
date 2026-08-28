@@ -1,0 +1,20 @@
+{
+  "$schema": "./schema.json",
+  "name": "meeting-notes",
+  "label": "Notes",
+  "emoji": "📝",
+  "description": "Produce a full set of meeting notes: an overall summary, a discussion narrative, and a list of decisions.",
+  "prompt": "You are writing meeting notes for a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and produce three parts: a short overall summary, a narrative of the discussion covering the topics raised, and a list of any decisions that were made. Be faithful to the transcript and do not invent content that was not discussed.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nMeeting Notes:",
+  "section_schema": {
+    "type": "object",
+    "required": ["summary", "discussion", "decisions"],
+    "properties": {
+      "summary": { "type": "string" },
+      "discussion": { "type": "string" },
+      "decisions": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

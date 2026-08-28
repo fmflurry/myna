@@ -1,0 +1,25 @@
+{
+  "$schema": "./schema.json",
+  "name": "decisions",
+  "label": "Decisions",
+  "emoji": "⚖️",
+  "description": "Extract the decisions that were made in the meeting along with the reasoning behind each one.",
+  "prompt": "You are reviewing a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and extract every decision that was made. For each decision, note what was decided and, if it was discussed, the rationale behind it. Do not include options that were merely discussed but not decided. Respond with one decision per line.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nDecisions:",
+  "section_schema": {
+    "type": "object",
+    "required": ["decisions"],
+    "properties": {
+      "decisions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["decision"],
+          "properties": {
+            "decision": { "type": "string" },
+            "rationale": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

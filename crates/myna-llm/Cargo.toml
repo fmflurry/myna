@@ -1,0 +1,25 @@
+[package]
+name = "myna-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "myna-llm"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+llama-cpp-2 = { workspace = true }
+encoding_rs = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+ctrlc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

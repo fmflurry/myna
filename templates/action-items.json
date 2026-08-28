@@ -1,0 +1,26 @@
+{
+  "$schema": "./schema.json",
+  "name": "action-items",
+  "label": "Action Items",
+  "emoji": "✅",
+  "description": "Extract concrete action items with an owner and due date where mentioned.",
+  "prompt": "You are reviewing a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and extract every concrete action item that was agreed on. For each action item, note the task, the owner if one was named, and the due date if one was mentioned. If an owner or due date was not mentioned, leave it blank. Do not invent details that are not in the transcript. Respond with one action item per line.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nAction Items:",
+  "section_schema": {
+    "type": "object",
+    "required": ["action_items"],
+    "properties": {
+      "action_items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["task"],
+          "properties": {
+            "task": { "type": "string" },
+            "owner": { "type": "string" },
+            "due_date": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
