@@ -63,6 +63,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
   const audioSources = signal<readonly AudioSource[]>([]);
   const selectedAudioSource = signal('system:all');
   const effectiveSystemSource = signal<AudioSource | null>(null);
+  const splitRatio = signal(0.4);
+  const transcriptCollapsed = signal(false);
 
   const loadMeetings = vi.fn(async () => undefined);
   const loadTemplates = vi.fn(async () => undefined);
@@ -116,6 +118,12 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     void source;
   });
   const requestSystemAudioPermission = vi.fn(async () => undefined);
+  const setSplitRatio = vi.fn((ratio: number) => {
+    void ratio;
+  });
+  const setTranscriptCollapsed = vi.fn((collapsed: boolean) => {
+    void collapsed;
+  });
 
   const facadeStub = {
     meetings,
@@ -143,6 +151,10 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     audioSources,
     selectedAudioSource,
     effectiveSystemSource,
+    splitRatio,
+    transcriptCollapsed,
+    setSplitRatio,
+    setTranscriptCollapsed,
     loadMeetings,
     loadTemplates,
     checkModels,

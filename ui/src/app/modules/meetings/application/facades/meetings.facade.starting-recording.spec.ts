@@ -72,6 +72,7 @@ describe('MeetingsFacade startingRecording', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
+      hasAudio: false,
     });
     await pending;
 

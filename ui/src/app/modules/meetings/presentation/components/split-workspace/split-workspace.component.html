@@ -1,0 +1,35 @@
+<div class="split-workspace" #container>
+  @if (!internalCollapsed()) {
+    <div class="pane pane-left" [style.width.%]="leftWidthPercent()">
+      <ng-content select="[left]" />
+    </div>
+  }
+  <div
+    class="divider-zone"
+    [class.collapsed]="internalCollapsed()"
+    [attr.role]="internalCollapsed() ? null : 'separator'"
+    [attr.aria-orientation]="internalCollapsed() ? null : 'vertical'"
+    [attr.aria-valuenow]="internalCollapsed() ? null : ariaValueNow()"
+    [attr.aria-valuemin]="internalCollapsed() ? null : 0"
+    [attr.aria-valuemax]="internalCollapsed() ? null : 100"
+    [attr.tabindex]="internalCollapsed() ? null : 0"
+    (pointerdown)="onDividerPointerDown($event)"
+    (keydown)="onDividerKeydown($event)"
+  >
+    <button
+      type="button"
+      class="collapse-toggle"
+      [attr.aria-expanded]="!internalCollapsed()"
+      [attr.aria-label]="toggleLabel()"
+      (click)="onToggleClick($event)"
+    >
+      <span class="chevron" aria-hidden="true">{{ internalCollapsed() ? '›' : '‹' }}</span>
+      @if (internalCollapsed()) {
+        <span class="rail-label">{{ leftLabel() }}</span>
+      }
+    </button>
+  </div>
+  <div class="pane pane-right">
+    <ng-content select="[right]" />
+  </div>
+</div>

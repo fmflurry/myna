@@ -24,7 +24,7 @@ describe('OpenMeetingUseCase', () => {
 
   it('returns the meeting matching the given id', async () => {
     const id = toMeetingId('m-42');
-    repository.seed([{ id, title: 'Retro', createdAt: new Date(), durationSec: 120, summaries: [], archived: false }]);
+    repository.seed([{ id, title: 'Retro', createdAt: new Date(), durationSec: 120, summaries: [], archived: false, hasAudio: false }]);
 
     const meeting = await useCase.open(id);
 

@@ -18,6 +18,7 @@ describe('MeetingDetailPaneComponent', () => {
     durationSec: 32 * 60,
     transcript: { segments: [{ startSec: 4, endSec: 6, text: 'On commence.' }] },
     summaries: [],
+    archived: false,
   };
 
   const createFixture = () => {
@@ -43,11 +44,8 @@ describe('MeetingDetailPaneComponent', () => {
     expect(fixture.nativeElement.querySelector('.detail-heading')).toBeNull();
   });
 
-  it('shows an empty-pane prompt when no meeting is selected', () => {
-    const fixture = createFixture();
-
-    expect(fixture.nativeElement.querySelector('.empty-pane')).toBeTruthy();
-  });
+  // The empty-pane prompt was replaced by <app-welcome-panel>; that
+  // behavior is covered in meeting-detail-pane.component.welcome.spec.ts.
 
   it('renders the heading, meta line, and defaults to the Transcript tab', () => {
     const fixture = createFixture();
@@ -90,17 +88,33 @@ describe('MeetingDetailPaneComponent', () => {
     expect(meta).not.toMatch(/\bfr\b|\ben\b|\bde\b|\bes\b/i);
   });
 
-  it('shows the live transcript, and the capture source, while recording', () => {
+  it('shows the live transcript, and the effective capture source, while recording', () => {
     const fixture = createFixture();
     fixture.componentRef.setInput('meeting', meeting);
     fixture.componentRef.setInput('recordingState', 'recording');
     fixture.componentRef.setInput('captureSource', 'system');
+    fixture.componentRef.setInput('effectiveSystemSource', { id: 'system:all', name: 'All System Audio' });
     fixture.componentRef.setInput('finalizedSegments', [{ startSec: 0, endSec: 1, text: 'Hi' }]);
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('app-live-transcript')).toBeTruthy();
     expect(fixture.nativeElement.querySelector('app-transcript-view')).toBeNull();
     expect(fixture.nativeElement.querySelector('.meta').textContent).toContain('System audio');
+  });
+
+  it('shows the EFFECTIVE source, not the requested one, when the recorder degraded to mic-only — never both at once', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('recordingState', 'recording');
+    fixture.componentRef.setInput('captureSource', 'mixed');
+    // effectiveSystemSource left at its default (null): the tap silently
+    // fell back to microphone only, mirroring what the title-bar's own
+    // degraded-source hint ("Mic only") already reports.
+    fixture.detectChanges();
+
+    const meta: string = fixture.nativeElement.querySelector('.meta').textContent;
+    expect(meta).toContain('Mic only');
+    expect(meta).not.toContain('Mic + system');
   });
 
   it('switches to a template tab and offers to generate when no summary exists yet', () => {

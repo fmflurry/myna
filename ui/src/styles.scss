@@ -86,7 +86,13 @@
   --radius-lg: 14px;
 
   --line-height-relaxed: 1.7;
-  --measure-reading: 70ch;
+  /* Comfortable reading-column cap for transcript/summary text — wide
+   * enough to use the pane on large displays without letting lines run
+   * uncomfortably long. Never centred against it (see live-transcript /
+   * transcript-view): the column hugs the left edge and the leftover
+   * width on wide windows sits as ordinary trailing whitespace, not a
+   * mirrored dead-space gutter on both sides. */
+  --measure-reading: 96ch;
   --sidebar-width: 14rem;
   --z-modal: 100;
   --z-popover: 50;

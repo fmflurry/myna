@@ -50,6 +50,8 @@ describe('MeetingsShellPage', () => {
   const audioSources = signal<readonly AudioSource[]>([]);
   const selectedAudioSource = signal('system:all');
   const effectiveSystemSource = signal<AudioSource | null>(null);
+  const splitRatio = signal(0.4);
+  const transcriptCollapsed = signal(false);
 
   const loadMeetings = vi.fn(async () => undefined);
   const loadTemplates = vi.fn(async () => undefined);
@@ -103,6 +105,8 @@ describe('MeetingsShellPage', () => {
     void source;
   });
   const requestSystemAudioPermission = vi.fn(async () => undefined);
+  const setSplitRatio = vi.fn((ratio: number) => void ratio);
+  const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
 
   const facadeStub = {
     meetings,
@@ -130,6 +134,10 @@ describe('MeetingsShellPage', () => {
     audioSources,
     selectedAudioSource,
     effectiveSystemSource,
+    splitRatio,
+    transcriptCollapsed,
+    setSplitRatio,
+    setTranscriptCollapsed,
     loadMeetings,
     loadTemplates,
     checkModels,
@@ -170,6 +178,7 @@ describe('MeetingsShellPage', () => {
       startRecording, stopRecording, cancelRecording, deleteMeeting, renameMeeting,
       summarizeMeeting, cancelSummarization, exportMeeting, selectDevice, selectCaptureSource,
       selectAudioSource, selectSummaryLanguage, requestSystemAudioPermission,
+      setSplitRatio, setTranscriptCollapsed,
     }).forEach((fn) => fn.mockClear());
 
     TestBed.configureTestingModule({
@@ -211,6 +220,10 @@ describe('MeetingsShellPage', () => {
     expect(selectAudioSource).toHaveBeenCalledWith('app:teams');
   });
 
+  // Split-workspace layout forwarding (splitRatio/transcriptCollapsed) is
+  // covered in `meetings-shell.page.split-layout.spec.ts` to keep this file
+  // under the project's max-lines limit.
+
   it('forwards a summary-load request from the detail pane to the facade', () => {
     const fixture = createFixture();
 
@@ -247,8 +260,8 @@ describe('MeetingsShellPage', () => {
     const fixture = createFixture();
 
     const brand = fixture.nativeElement.querySelector('.brand');
-    expect(brand.getAttribute('role')).toBe('img');
-    expect(brand.getAttribute('aria-label')).toBe('Myna');
+    expect(brand.getAttribute('type')).toBe('button');
+    expect(brand.getAttribute('aria-label')).toBe('Myna — go to meetings');
     expect(fixture.nativeElement.querySelector('app-record-control')).toBeTruthy();
   });
 
@@ -317,7 +330,8 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [],
+      summaries: [], archived: false,
+      hasAudio: false,
     };
     selectedMeeting.set(meeting);
     const fixture = createFixture();
@@ -353,7 +367,8 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [],
+      summaries: [], archived: false,
+      hasAudio: false,
     };
     selectedMeeting.set(meeting);
     templates.set([{ name: 'key-points', description: '', prompt: '' }]);
@@ -371,7 +386,8 @@ describe('MeetingsShellPage', () => {
       title: 'Standup',
       createdAt: new Date(),
       durationSec: 60,
-      summaries: [],
+      summaries: [], archived: false,
+      hasAudio: false,
     };
     selectedMeeting.set(meeting);
     const fixture = createFixture();

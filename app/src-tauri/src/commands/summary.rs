@@ -170,10 +170,18 @@ fn run_summarization(
 
     let meeting = state.store.get(id)?;
     let template = load_template(app, &template_name)?;
-    let prompt = render_prompt(&meeting, &template, language_label)?;
+    let render_ctx = build_render_context(&meeting, language_label)?;
     let summarizer = state.summarizer(app)?;
 
-    let markdown = run_inference(app, state, &id, &template_name, prompt, summarizer)?;
+    let markdown = run_inference(
+        app,
+        state,
+        &id,
+        &template_name,
+        &template,
+        &render_ctx,
+        summarizer,
+    )?;
 
     let created_at = OffsetDateTime::now_utc();
     let path = state
@@ -203,8 +211,15 @@ fn run_summarization(
     }))
 }
 
-/// Runs the blocking `Summarizer::summarize` call, streaming each generated
-/// token back to the UI via [`SUMMARY_TOKEN`].
+/// Runs the blocking `Summarizer::summarize_transcript` call, streaming
+/// each generated token back to the UI via [`SUMMARY_TOKEN`].
+///
+/// `summarize_transcript` (rather than the lower-level `summarize`) is what
+/// keeps a long meeting from crashing the app: it checks up front whether
+/// the rendered prompt fits the model's context window and transparently
+/// falls back to map-reduce chunking when it doesn't, instead of ever
+/// handing llama.cpp a prompt large enough to abort the process. See
+/// `myna_llm::Summarizer::summarize_transcript` for the full algorithm.
 ///
 /// Called from inside the [`tauri::async_runtime::spawn_blocking`] closure
 /// in [`summarize_meeting`], so this already executes on a dedicated
@@ -216,15 +231,22 @@ fn run_inference(
     state: &State<'_, AppState>,
     id: &MeetingId,
     template_name: &str,
-    prompt: String,
+    template: &Template,
+    render_ctx: &RenderContext,
     summarizer: Arc<myna_llm::Summarizer>,
 ) -> Result<String, AppError> {
     let cancel = Arc::clone(&state.cancel_summary);
     let meeting_id_str = id.to_string();
 
-    let markdown = summarizer.summarize(&prompt, &SummaryOptions::default(), &cancel, |token| {
-        emit_token(app, &meeting_id_str, template_name, token);
-    })?;
+    let markdown = summarizer.summarize_transcript(
+        template,
+        render_ctx,
+        &SummaryOptions::default(),
+        &cancel,
+        |token| {
+            emit_token(app, &meeting_id_str, template_name, token);
+        },
+    )?;
 
     Ok(markdown)
 }
@@ -239,25 +261,24 @@ fn load_template(app: &AppHandle, template_name: &str) -> Result<Template, AppEr
 }
 
 /// Builds the render context from `meeting`'s transcript and the resolved
-/// output language, and renders `template`'s prompt, failing if the meeting
-/// has no transcript yet.
-fn render_prompt(
+/// output language, failing if the meeting has no transcript yet. Rendering
+/// against a template happens later, inside `summarize_transcript`, which
+/// needs the unrendered context to re-render per map-reduce chunk.
+fn build_render_context(
     meeting: &Meeting,
-    template: &Template,
     language_label: &str,
-) -> Result<String, AppError> {
+) -> Result<RenderContext, AppError> {
     let transcript = meeting
         .transcript
         .as_ref()
         .ok_or_else(|| AppError::NotFound(format!("transcript for meeting {}", meeting.id)))?;
 
-    let ctx = RenderContext {
+    Ok(RenderContext {
         transcript: transcript.full_text(),
         duration: format_duration(meeting.duration_sec),
         title: meeting.title.clone(),
         language: language_label.to_string(),
-    };
-    Ok(template.render(&ctx))
+    })
 }
 
 /// Formats `duration_sec` as `M:SS`, or `H:MM:SS` once past an hour.

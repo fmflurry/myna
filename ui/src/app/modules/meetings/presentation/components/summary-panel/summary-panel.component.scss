@@ -1,3 +1,19 @@
+/*
+ * A custom element defaults to `display: inline`, which lets the
+ * SUMMARY-panel host itself shrink-wrap to its content's intrinsic width
+ * instead of filling its column — the transcript column already got this
+ * right (`live-transcript`/`transcript-view` both explicitly block-ify
+ * themselves) but the summary panel was missed, which is why it used to
+ * render narrower than the column it sat in. Explicit here so the right
+ * column of the split workspace gets its own full-width fit, same as the
+ * left.
+ */
+:host {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
 .summary-panel {
   display: flex;
   flex-direction: column;

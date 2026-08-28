@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 
+import type { FileDialogFilter } from '../../core/ports/file-dialog.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 
 /** In-memory FileDialogPort implementation for specs and the placeholder providers. */
@@ -13,7 +14,12 @@ export class InMemoryFileDialogFake extends FileDialogPort {
     return this.nextPath;
   }
 
-  /** Test helper: control the next save() result (a path, or null to simulate cancel). */
+  override async open(filters: readonly FileDialogFilter[]): Promise<string | null> {
+    void filters;
+    return this.nextPath;
+  }
+
+  /** Test helper: control the next save()/open() result (a path, or null to simulate cancel). */
   seed(path: string | null): void {
     this.nextPath = path;
   }

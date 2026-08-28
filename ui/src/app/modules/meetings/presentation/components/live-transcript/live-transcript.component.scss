@@ -7,8 +7,13 @@
 .live-transcript {
   height: 100%;
   min-height: 14rem;
+  /* Capped, not centred: a `margin: 0 auto` here used to strand equal
+   * empty gutters on both sides at wide window widths. Flush-left keeps
+   * the reading column anchored where the eye already is (right under the
+   * heading/tabs above it) and lets any leftover width fall on the right
+   * as ordinary trailing space instead of a second dead-space margin. */
   max-width: var(--measure-reading);
-  margin: 0 auto;
+  width: 100%;
   overflow-y: auto;
   scroll-behavior: smooth;
   display: flex;

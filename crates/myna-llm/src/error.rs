@@ -38,6 +38,15 @@ pub enum LlmError {
     #[error("operation was cancelled")]
     Cancelled,
 
+    /// A prompt does not fit the model's context window even after
+    /// accounting for reserved generation headroom, and — for
+    /// transcript-driven prompts — even after map-reduce chunking. This is
+    /// the recoverable error the engine returns instead of letting
+    /// llama.cpp abort the process (`ggml_abort`) when a batch or context
+    /// budget would otherwise be exceeded.
+    #[error("prompt too long: {0}")]
+    PromptTooLong(String),
+
     /// A summary template failed to load, parse, or validate.
     #[error("template error: {0}")]
     Template(String),

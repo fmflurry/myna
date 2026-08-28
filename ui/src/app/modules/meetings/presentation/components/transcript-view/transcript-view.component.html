@@ -3,7 +3,12 @@
     @for (segment of transcript()!.segments; track $index) {
       <li>
         <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
-        <span class="text">{{ segment.text }}</span>
+        <app-editable-segment
+          class="text"
+          [text]="segment.text"
+          [editable]="editable()"
+          (textChanged)="onSegmentEdited($index, $event)"
+        />
       </li>
     }
   </ol>

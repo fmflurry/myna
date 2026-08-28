@@ -23,10 +23,10 @@ pub use engine::{
     MODIFIED_BEAM_SEARCH,
 };
 pub use error::SttError;
-pub use stream::{SimulatedStreamer, SttEvent};
+pub use stream::{SimulatedStreamer, StreamerOptions, SttEvent};
 pub use transcript::{Transcript, TranscriptSegment};
 pub use vad::{
     VadConfig, VadSegmenter, DEFAULT_MIN_SILENCE_SEC, TARGET_SAMPLE_RATE, VAD_BUFFER_SECS,
     VAD_WINDOW_SIZE,
 };
-pub use wav::read_wav_to_f32;
+pub use wav::{read_wav_to_f32, WavBlockReader};

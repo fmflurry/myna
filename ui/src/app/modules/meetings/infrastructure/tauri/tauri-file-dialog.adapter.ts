@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
-import { save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
+import type { FileDialogFilter } from '../../core/ports/file-dialog.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 
 /**
@@ -17,5 +18,14 @@ export class TauriFileDialogAdapter extends FileDialogPort {
       defaultPath: `${suggestedName}.${extension}`,
       filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
     });
+  }
+
+  override async open(filters: readonly FileDialogFilter[]): Promise<string | null> {
+    const result = await open({
+      multiple: false,
+      directory: false,
+      filters: filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] })),
+    });
+    return Array.isArray(result) ? (result[0] ?? null) : result;
   }
 }

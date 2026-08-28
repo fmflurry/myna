@@ -66,7 +66,7 @@ describe('MeetingsFacade', () => {
 
   it('loads meetings from the repository', async () => {
     repository.seed([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
     ]);
 
     await facade.loadMeetings();
@@ -75,7 +75,7 @@ describe('MeetingsFacade', () => {
   });
 
   it('renames a meeting, updating both the meetings list and the selected meeting', async () => {
-    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false };
+    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false };
     repository.seed([meeting]);
     await facade.loadMeetings();
     await facade.openMeeting(meeting.id);
@@ -88,7 +88,7 @@ describe('MeetingsFacade', () => {
   });
 
   it('surfaces an error and leaves the prior title on screen when renaming fails', async () => {
-    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false };
+    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false };
     repository.seed([meeting]);
     await facade.loadMeetings();
     await facade.openMeeting(meeting.id);

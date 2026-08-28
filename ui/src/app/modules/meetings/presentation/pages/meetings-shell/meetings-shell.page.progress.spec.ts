@@ -63,6 +63,8 @@ describe('MeetingsShellPage non-blocking summarization', () => {
   const audioSources = signal<readonly AudioSource[]>([]);
   const selectedAudioSource = signal('system:all');
   const effectiveSystemSource = signal<AudioSource | null>(null);
+  const splitRatio = signal(0.4);
+  const transcriptCollapsed = signal(false);
 
   const meeting: Meeting = {
     id: toMeetingId('m1'),
@@ -70,6 +72,8 @@ describe('MeetingsShellPage non-blocking summarization', () => {
     createdAt: new Date(),
     durationSec: 60,
     summaries: [],
+    archived: false,
+    hasAudio: false,
   };
 
   const noop = async (): Promise<void> => undefined;
@@ -96,12 +100,15 @@ describe('MeetingsShellPage non-blocking summarization', () => {
   const selectAudioSource = vi.fn();
   const selectSummaryLanguage = vi.fn();
   const requestSystemAudioPermission = vi.fn(noop);
+  const setSplitRatio = vi.fn();
+  const setTranscriptCollapsed = vi.fn();
 
   const facadeStub = {
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
     finalizedSegments, partialText, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
+    splitRatio, transcriptCollapsed, setSplitRatio, setTranscriptCollapsed,
     loadMeetings, loadTemplates, checkModels, loadDevices, checkSystemAudio, loadSummaryLanguages,
     loadAppVersion, loadAudioSources, loadSummary, openMeeting, startRecording, stopRecording,
     cancelRecording, deleteMeeting, renameMeeting, summarizeMeeting, cancelSummarization,

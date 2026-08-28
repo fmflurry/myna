@@ -27,7 +27,7 @@ describe('ListMeetingsUseCase', () => {
 
   it('returns every seeded meeting', async () => {
     repository.seed([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 60, summaries: [], archived: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 60, summaries: [], archived: false, hasAudio: false },
     ]);
 
     const meetings = await useCase.list();

@@ -23,7 +23,7 @@ describe('RenameMeetingUseCase', () => {
 
   it('returns the renamed meeting with the new title', async () => {
     const id = toMeetingId('m-7');
-    repository.seed([{ id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: false }]);
+    repository.seed([{ id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: false, hasAudio: false }]);
 
     const renamed = await useCase.rename(id, 'Roadmap planning');
 
@@ -35,8 +35,8 @@ describe('RenameMeetingUseCase', () => {
     const target = toMeetingId('target');
     const other = toMeetingId('other');
     repository.seed([
-      { id: target, title: 'Old name', createdAt: new Date(), durationSec: 10, summaries: [], archived: false },
-      { id: other, title: 'Untouched', createdAt: new Date(), durationSec: 10, summaries: [], archived: false },
+      { id: target, title: 'Old name', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false },
+      { id: other, title: 'Untouched', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false },
     ]);
 
     await useCase.rename(target, 'New name');

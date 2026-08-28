@@ -7,6 +7,7 @@ import type {
   SummaryDonePayloadDto,
   TokenPayloadDto,
 } from '../dto/event-payload.dto';
+import type { ImportProgressPayloadDto } from '../dto/import.dto';
 
 /**
  * The frozen Rust event surface (`app/src-tauri/src/events.rs`). Every
@@ -20,6 +21,7 @@ export const EVENT_NAMES = [
   'summary://token',
   'summary://done',
   'error://occurred',
+  'import://progress',
 ] as const;
 
 export type EventName = (typeof EVENT_NAMES)[number];
@@ -33,6 +35,7 @@ export interface EventSignatures {
   readonly 'summary://token': TokenPayloadDto;
   readonly 'summary://done': SummaryDonePayloadDto;
   readonly 'error://occurred': ErrorPayloadDto;
+  readonly 'import://progress': ImportProgressPayloadDto;
 }
 
 export type EventPayload<E extends EventName> = EventSignatures[E];

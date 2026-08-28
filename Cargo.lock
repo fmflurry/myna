@@ -2494,6 +2494,7 @@ dependencies = [
 name = "myna-app"
 version = "0.1.0"
 dependencies = [
+ "hound",
  "myna-audio",
  "myna-llm",
  "myna-stt",

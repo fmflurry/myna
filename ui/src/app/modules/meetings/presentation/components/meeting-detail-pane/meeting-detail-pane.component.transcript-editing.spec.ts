@@ -26,6 +26,7 @@ describe('MeetingDetailPaneComponent — transcript segment editing', () => {
     transcript: { segments: [{ startSec: 4, endSec: 6, text: 'On commence.' }] },
     summaries: [],
     archived: false,
+    hasAudio: false,
   };
 
   afterEach(() => {

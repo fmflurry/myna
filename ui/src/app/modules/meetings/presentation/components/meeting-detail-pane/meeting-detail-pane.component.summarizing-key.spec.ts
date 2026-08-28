@@ -30,6 +30,7 @@ describe('MeetingDetailPaneComponent summarizingKey', () => {
     createdAt: new Date(2026, 7, 27, 14, 2),
     durationSec: 32 * 60,
     summaries: [],
+    archived: false,
   };
 
   const findDecisionsTab = (fixture: ReturnType<typeof createFixture>): HTMLButtonElement | undefined => {

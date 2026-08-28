@@ -12,6 +12,7 @@ describe('MeetingListItemComponent', () => {
     durationSec: 32 * 60,
     summaries: [],
     archived: false,
+    hasAudio: false,
   };
 
   const createFixture = (selected = false) => {

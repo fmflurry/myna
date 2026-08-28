@@ -245,6 +245,36 @@ fn join_committed(committed: &str, tail: &str) -> String {
     }
 }
 
+/// Options controlling [`SimulatedStreamer`] behaviour.
+#[derive(Debug, Clone)]
+pub struct StreamerOptions {
+    /// When `false`, [`SimulatedStreamer::push`] never emits
+    /// [`SttEvent::Partial`] events — only finals. Defaults to `true` so
+    /// existing callers (`SimulatedStreamer::new`) keep today's
+    /// always-emit-partials behaviour unchanged.
+    pub emit_partials: bool,
+}
+
+impl Default for StreamerOptions {
+    fn default() -> Self {
+        Self {
+            emit_partials: true,
+        }
+    }
+}
+
+/// Pure gate answering "may [`SimulatedStreamer::maybe_partial`] emit a
+/// partial event right now?" — split out so it's unit-testable without a
+/// loaded [`SttEngine`], mirroring why [`PartialThrottle`] takes an injected
+/// `Instant` instead of calling `Instant::now()` itself.
+fn should_emit_partial(
+    options: &StreamerOptions,
+    speech_started: bool,
+    throttle_ready: bool,
+) -> bool {
+    options.emit_partials && speech_started && throttle_ready
+}
+
 /// An event emitted while streaming audio through [`SimulatedStreamer`].
 #[derive(Debug, Clone)]
 pub enum SttEvent {
@@ -274,6 +304,8 @@ pub struct SimulatedStreamer {
     partial_commit: PartialCommitState,
     /// Running count of samples seen since the streamer was created.
     total_samples: usize,
+    /// Behavioural options — see [`StreamerOptions`].
+    options: StreamerOptions,
 }
 
 impl SimulatedStreamer {
@@ -282,6 +314,16 @@ impl SimulatedStreamer {
     /// cache a single loaded engine (model load is seconds-scale) and reuse
     /// it across many streaming sessions.
     pub fn new(engine: Arc<SttEngine>, vad_cfg: &VadConfig) -> Result<Self, SttError> {
+        Self::with_options(engine, vad_cfg, StreamerOptions::default())
+    }
+
+    /// Builds a streamer with explicit [`StreamerOptions`] — see
+    /// [`Self::new`] for the default-options constructor most callers want.
+    pub fn with_options(
+        engine: Arc<SttEngine>,
+        vad_cfg: &VadConfig,
+        options: StreamerOptions,
+    ) -> Result<Self, SttError> {
         let vad = VadSegmenter::load(vad_cfg)?;
         Ok(Self {
             engine,
@@ -292,6 +334,7 @@ impl SimulatedStreamer {
             partial_throttle: PartialThrottle::new(PARTIAL_INTERVAL_SEC),
             partial_commit: PartialCommitState::default(),
             total_samples: 0,
+            options,
         })
     }
 
@@ -396,10 +439,8 @@ impl SimulatedStreamer {
     /// have scrolled behind the window into `committed_text` instead of
     /// ever re-decoding them.
     fn maybe_partial(&mut self) -> Result<Option<SttEvent>, SttError> {
-        if !self.speech_started {
-            return Ok(None);
-        }
-        if !self.partial_throttle.should_decode(Instant::now()) {
+        let throttle_ready = self.partial_throttle.should_decode(Instant::now());
+        if !should_emit_partial(&self.options, self.speech_started, throttle_ready) {
             return Ok(None);
         }
 

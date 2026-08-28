@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(npm test -- --watch=false)",
+      "Bash(npm run ui:build)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx tsc --noEmit --pretty false)",
+      "Bash(npx tsc -p tsconfig.json --noEmit)",
+      "Bash(npx tsc -p tsconfig.json --noEmit --pretty false)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo check *)",
+      "Bash(cargo build *)",
+      "Bash(cargo test *)",
+      "Bash(dotnet build *)",
+      "Bash(git fetch *)",
+      "mcp__code-memory__codememory_retrieve",
+      "mcp__code-memory__codememory_definitions",
+      "mcp__code-memory__codememory_callers",
+      "mcp__code-memory__codememory_callees",
+      "mcp__code-memory__codememory_importers",
+      "mcp__code-memory__codememory_dependencies",
+      "mcp__code-memory__codememory_health",
+      "mcp__code-memory__codememory_claims",
+      "mcp__code-memory__codememory_assert_claim",
+      "mcp__code-memory__codememory_record",
+      "mcp__code-memory__codememory_reingest",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs"
+    ]
+  }
+}

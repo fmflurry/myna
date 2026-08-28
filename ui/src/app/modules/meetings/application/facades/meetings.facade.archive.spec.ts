@@ -60,6 +60,7 @@ describe('MeetingsFacade archiving', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
+      hasAudio: false,
     };
     repository.seed([meeting]);
     await facade.loadMeetings();
@@ -80,6 +81,7 @@ describe('MeetingsFacade archiving', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
+      hasAudio: false,
     };
     repository.seed([meeting]);
     await facade.loadMeetings();

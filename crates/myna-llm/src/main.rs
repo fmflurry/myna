@@ -83,7 +83,9 @@ fn main() -> Result<()> {
         n_ctx,
     } = Cli::parse().command;
 
-    let rendered = render_prompt(&template, &transcript, title, duration, language)?;
+    let template = Template::load(&template)
+        .with_context(|| format!("loading template {}", template.display()))?;
+    let ctx = build_render_context(&transcript, title, duration, language)?;
     let opts = apply_overrides(SummaryOverrides {
         max_tokens,
         temperature,
@@ -105,35 +107,35 @@ fn main() -> Result<()> {
         let _ = std::io::stdout().flush();
     };
 
+    // `summarize_transcript` (not the lower-level `summarize`) so a long
+    // transcript that doesn't fit `opts.n_ctx` in one prompt transparently
+    // falls back to map-reduce chunking instead of aborting llama.cpp.
     summarizer
-        .summarize(&rendered, &opts, &cancel, on_token)
+        .summarize_transcript(&template, &ctx, &opts, &cancel, on_token)
         .context("running summarization")?;
     println!();
 
     Ok(())
 }
 
-/// Load `template_path`, read `transcript_path`, and render the prompt in
-/// the requested `language` (falling back to the default when `None` or
-/// unrecognized — see `myna_llm::resolve`).
-fn render_prompt(
-    template_path: &Path,
+/// Read `transcript_path` and build the render context for the requested
+/// `language` (falling back to the default when `None` or unrecognized —
+/// see `myna_llm::resolve`). The template itself is loaded separately by
+/// the caller and rendered later, inside `summarize_transcript`.
+fn build_render_context(
     transcript_path: &Path,
     title: Option<String>,
     duration: Option<String>,
     language: Option<String>,
-) -> Result<String> {
-    let template = Template::load(template_path)
-        .with_context(|| format!("loading template {}", template_path.display()))?;
+) -> Result<RenderContext> {
     let transcript = fs::read_to_string(transcript_path)
         .with_context(|| format!("reading transcript {}", transcript_path.display()))?;
 
     let (_, language_label) = myna_llm::resolve(language.as_deref());
-    let ctx = RenderContext {
+    Ok(RenderContext {
         transcript,
         duration: duration.unwrap_or_default(),
         title: title.unwrap_or_default(),
         language: language_label.to_string(),
-    };
-    Ok(template.render(&ctx))
+    })
 }

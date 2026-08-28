@@ -1,0 +1,104 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+.split-workspace {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  min-height: 0;
+}
+
+.pane {
+  height: 100%;
+  min-height: 0;
+  min-width: 280px;
+  overflow-y: auto;
+}
+
+.pane-left {
+  flex: 0 0 auto;
+}
+
+.pane-right {
+  flex: 1 1 auto;
+}
+
+.divider-zone {
+  flex: 0 0 auto;
+  width: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.divider-zone::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--color-border);
+  transform: translateX(-50%);
+}
+
+.divider-zone:hover::before,
+.divider-zone:focus-visible::before {
+  background: var(--color-accent);
+}
+
+.divider-zone.collapsed {
+  width: 2.25rem;
+  cursor: pointer;
+}
+
+.collapse-toggle {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 1.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.divider-zone.collapsed .collapse-toggle {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  padding-block: var(--space-3);
+}
+
+.chevron {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.rail-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.collapse-toggle:hover,
+.collapse-toggle:focus-visible {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}

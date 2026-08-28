@@ -73,6 +73,35 @@ scripts/generate-icons.sh
 The script fails loudly (non-zero exit, message on stderr) if a required
 tool can't be found, rather than silently producing a bad icon.
 
+## bench-stt-cpu.sh
+
+Runs the `#[ignore]`d `stt_streaming_cpu_benchmark` test
+(`tests/integration/tests/stt_cpu_bench.rs`) directly under `/usr/bin/time -l`
+and samples the benchmark process's thread count every 500ms while it runs.
+The benchmark decodes a fixed ~180s synthetic workload (the `en.wav` speech
+fixture repeated with inserted silence so the VAD segments it naturally)
+through `SimulatedStreamer` at maximum throughput (no artificial pacing), and
+prints one machine-readable line with the audio duration, wall-clock time,
+and real-time factor (RTF).
+
+Requires downloaded models (see `download-models.sh` above) — the benchmark
+self-skips, and this script then exits non-zero, if they're missing.
+
+```bash
+# Benchmark at the app's default 8 STT decode threads
+scripts/bench-stt-cpu.sh
+
+# Sweep thread count without rebuilding (forwarded as MYNA_BENCH_STT_THREADS)
+scripts/bench-stt-cpu.sh --threads 4
+```
+
+Prints a final block of `wall_sec`, `user_cpu_sec`, `sys_cpu_sec`, `cpu_pct`
+(`(user + sys) / wall * 100`), `peak_rss`, `max_threads`, and `rtf` — the
+numbers to compare across thread-count or tuning-constant sweeps. The
+underlying test binary is invoked directly rather than through `cargo test`
+so `/usr/bin/time -l` and the thread sampler observe the actual worker
+process, not the `cargo` wrapper process.
+
 ## verify.sh
 
 See `verify.sh` for its own usage; owned separately from this script.

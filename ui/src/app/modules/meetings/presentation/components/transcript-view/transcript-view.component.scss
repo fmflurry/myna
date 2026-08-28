@@ -1,3 +1,10 @@
+/* Explicit block-level fit within the transcript column, consistent with `live-transcript`'s own `:host` rule. */
+:host {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
 .transcript {
   list-style: none;
   margin: 0;

@@ -33,3 +33,4 @@ myna-llm = { path = "../../crates/myna-llm" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+hound = { workspace = true }

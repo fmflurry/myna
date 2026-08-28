@@ -240,6 +240,7 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     durationSec: 0,
     summaries: [],
     archived: false,
+    hasAudio: false,
   };
 
   it('routes deletion of the in-progress meeting through cancelRecording, not deleteMeeting', () => {
