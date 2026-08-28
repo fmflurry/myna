@@ -55,8 +55,7 @@
   color: var(--color-text-muted);
 }
 
-.device-select,
-.audio-source-select {
+.device-select {
   width: 100%;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border);
@@ -64,8 +63,13 @@
   background: var(--color-bg);
 }
 
-.audio-source-select:disabled,
 .device-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* `app-searchable-select` styles its own input/listbox; it just needs to
+ * take the same full width as the microphone `<select>` above it. */
+.audio-source-select {
+  width: 100%;
 }

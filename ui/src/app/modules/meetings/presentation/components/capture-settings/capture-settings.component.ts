@@ -4,6 +4,7 @@ import type { AudioDevice } from '../../../core/models/audio-device.model';
 import type { AudioSource } from '../../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
 import { CaptureSourcePickerComponent } from '../capture-source-picker/capture-source-picker.component';
+import { SearchableSelectComponent } from '../searchable-select/searchable-select.component';
 
 /** Fallback label for the "all system output" source, shown when no specific app is picked. */
 const ALL_SYSTEM_AUDIO_LABEL = 'System';
@@ -18,7 +19,7 @@ const ALL_SYSTEM_AUDIO_LABEL = 'System';
  */
 @Component({
   selector: 'app-capture-settings',
-  imports: [CaptureSourcePickerComponent],
+  imports: [CaptureSourcePickerComponent, SearchableSelectComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './capture-settings.component.html',
   styleUrl: './capture-settings.component.scss',
@@ -74,7 +75,7 @@ export class CaptureSettingsComponent {
     this.expanded.set(false);
   }
 
-  protected onAudioSourceChange(event: Event): void {
-    this.audioSourceSelected.emit((event.target as HTMLSelectElement).value);
+  protected onAudioSourceChange(id: string): void {
+    this.audioSourceSelected.emit(id);
   }
 }

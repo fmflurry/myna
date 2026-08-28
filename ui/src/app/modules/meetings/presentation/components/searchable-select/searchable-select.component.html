@@ -1,0 +1,50 @@
+<input
+  #inputEl
+  type="text"
+  class="ss-input"
+  role="combobox"
+  autocomplete="off"
+  spellcheck="false"
+  aria-autocomplete="list"
+  aria-haspopup="listbox"
+  [id]="instanceId + '-input'"
+  [attr.aria-label]="accessibleName()"
+  [attr.aria-expanded]="expanded()"
+  [attr.aria-controls]="listboxId"
+  [attr.aria-activedescendant]="activeOptionDomId()"
+  [placeholder]="placeholder()"
+  [disabled]="disabled()"
+  [value]="displayValue()"
+  (input)="onInput($event)"
+  (focus)="onFocus()"
+  (keydown)="onKeydown($event)"
+/>
+@if (expanded()) {
+  <ul
+    class="ss-listbox"
+    role="listbox"
+    [id]="listboxId"
+    [attr.aria-label]="accessibleName()"
+    style="max-height: var(--select-popup-max-height, 22.5rem); overflow-y: auto;"
+  >
+    @if (filteredOptions().length === 0) {
+      <li class="ss-empty" role="presentation">No matching applications</li>
+    } @else {
+      @for (option of filteredOptions(); track option.id; let i = $index) {
+        <li
+          #optionEl
+          class="ss-option"
+          role="option"
+          [id]="optionDomId(option.id)"
+          [attr.aria-selected]="option.id === selectedId()"
+          [class.active]="i === activeIndex()"
+          [class.selected]="option.id === selectedId()"
+          (mousedown)="onOptionMouseDown($event, option.id)"
+          (mouseenter)="onOptionMouseEnter(i)"
+        >
+          {{ option.name }}
+        </li>
+      }
+    }
+  </ul>
+}

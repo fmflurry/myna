@@ -1,0 +1,66 @@
+:host {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.ss-input {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.ss-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ss-listbox {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  z-index: var(--z-popover);
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.ss-option {
+  display: flex;
+  align-items: center;
+  min-height: var(--select-row-height, 2.25rem);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.ss-option.active {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.ss-option.selected {
+  font-weight: 600;
+}
+
+.ss-option.active.selected {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.ss-empty {
+  padding: var(--space-2);
+  color: var(--color-text-muted);
+  font-style: italic;
+  cursor: default;
+}

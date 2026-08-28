@@ -97,6 +97,12 @@
   --shadow-sm: 0 1px 2px color-mix(in srgb, black 8%, transparent);
   --shadow-md: 0 4px 16px color-mix(in srgb, black 12%, transparent);
 
+  /* Searchable-select popup (e.g. system-audio source combobox): cap at
+   * ~10 visible rows and scroll beyond that, so a long list (dozens of
+   * running apps) never grows the popup to fill the window. */
+  --select-row-height: 2.25rem;
+  --select-popup-max-height: calc(var(--select-row-height) * 10);
+
   /* Focus/active marks are the one place small Myna Yellow accents belong. */
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--myna-yellow);
 }

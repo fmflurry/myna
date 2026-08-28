@@ -84,25 +84,34 @@ describe('CaptureSettingsComponent', () => {
     expect(trigger.disabled).toBe(true);
   });
 
-  it('renders the system-audio source select next to the microphone select', () => {
+  it('renders the system-audio source as a searchable combobox next to the microphone select', () => {
     const fixture = createFixture('mixed');
     fixture.componentRef.setInput('audioSources', AUDIO_SOURCES);
     fixture.nativeElement.querySelector('.trigger').click();
     fixture.detectChanges();
 
-    const select: HTMLSelectElement = fixture.nativeElement.querySelector('.audio-source-select');
-    expect(select).toBeTruthy();
-    expect(Array.from(select.options).map((option) => option.value)).toEqual(['system:all', 'app:teams']);
+    const combobox: HTMLElement = fixture.nativeElement.querySelector('app-searchable-select');
+    expect(combobox).toBeTruthy();
+    const searchInput: HTMLInputElement = combobox.querySelector('.ss-input')!;
+    searchInput.dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+
+    const optionNames = Array.from(combobox.querySelectorAll('.ss-option')).map((option) =>
+      option.textContent?.trim(),
+    );
+    expect(optionNames).toEqual(['All system audio', 'Teams']);
   });
 
-  it('disables the system-audio source select when the capture source is microphone-only', () => {
+  it('disables the system-audio source combobox when the capture source is microphone-only', () => {
     const fixture = createFixture('microphone');
     fixture.componentRef.setInput('audioSources', AUDIO_SOURCES);
     fixture.nativeElement.querySelector('.trigger').click();
     fixture.detectChanges();
 
-    const select: HTMLSelectElement = fixture.nativeElement.querySelector('.audio-source-select');
-    expect(select.disabled).toBe(true);
+    const searchInput: HTMLInputElement = fixture.nativeElement.querySelector(
+      'app-searchable-select .ss-input',
+    );
+    expect(searchInput.disabled).toBe(true);
   });
 
   it('disables the microphone select when the capture source is system-only', () => {
@@ -114,7 +123,7 @@ describe('CaptureSettingsComponent', () => {
     expect(select.disabled).toBe(true);
   });
 
-  it('emits audioSourceSelected when the system-audio source select changes', () => {
+  it('emits audioSourceSelected when a system-audio source is chosen from the combobox', () => {
     const fixture = createFixture('mixed');
     fixture.componentRef.setInput('audioSources', AUDIO_SOURCES);
     fixture.nativeElement.querySelector('.trigger').click();
@@ -122,9 +131,17 @@ describe('CaptureSettingsComponent', () => {
     const emitted: string[] = [];
     fixture.componentInstance.audioSourceSelected.subscribe((value) => emitted.push(value));
 
-    const select: HTMLSelectElement = fixture.nativeElement.querySelector('.audio-source-select');
-    select.value = 'app:teams';
-    select.dispatchEvent(new Event('change'));
+    const searchInput: HTMLInputElement = fixture.nativeElement.querySelector(
+      'app-searchable-select .ss-input',
+    );
+    searchInput.dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    const options: HTMLElement[] = Array.from(
+      fixture.nativeElement.querySelectorAll('app-searchable-select .ss-option'),
+    );
+    const teamsOption = options.find((option) => option.textContent?.trim() === 'Teams');
+    teamsOption?.dispatchEvent(new Event('mousedown'));
+    fixture.detectChanges();
 
     expect(emitted).toEqual(['app:teams']);
   });

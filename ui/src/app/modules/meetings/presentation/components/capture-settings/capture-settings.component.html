@@ -27,20 +27,16 @@
         }
       </select>
 
-      <label class="device-label" for="capture-audio-source">System audio</label>
-      <select
-        id="capture-audio-source"
+      <span class="device-label">System audio</span>
+      <app-searchable-select
         class="audio-source-select"
-        aria-label="System audio"
-        (change)="onAudioSourceChange($event)"
+        [options]="audioSources()"
+        [selectedId]="selectedAudioSource()"
+        placeholder="Search apps…"
+        ariaLabel="System audio"
         [disabled]="disabled() || captureSource() === 'microphone'"
-      >
-        @for (source of audioSources(); track source.id) {
-          <option [value]="source.id" [selected]="source.id === selectedAudioSource()">
-            {{ source.name }}
-          </option>
-        }
-      </select>
+        (selectionChange)="onAudioSourceChange($event)"
+      />
 
       <app-capture-source-picker
         [captureSource]="captureSource()"
