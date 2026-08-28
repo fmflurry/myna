@@ -296,6 +296,7 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
       durationSec: 3480,
       summaries: [],
       archived: false,
+      hasAudio: false,
     };
     meetings.set([inProgressMeeting, otherMeeting]);
     selectedMeeting.set(inProgressMeeting);
