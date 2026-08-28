@@ -111,6 +111,7 @@ describe('MeetingsShellPage — transcript segment editing', () => {
       transcript: { segments: [{ startSec: 0, endSec: 1, text: 'Hi' }] },
       summaries: [],
       archived: false,
+      hasAudio: false,
     });
     const fixture = createFixture();
 

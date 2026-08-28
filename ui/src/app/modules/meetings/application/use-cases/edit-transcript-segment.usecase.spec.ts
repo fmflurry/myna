@@ -31,6 +31,7 @@ describe('EditTranscriptSegmentUseCase', () => {
         durationSec: 30,
         summaries: [],
         archived: false,
+        hasAudio: false,
         transcript: {
           segments: [
             { startSec: 0, endSec: 5, text: 'first' },
