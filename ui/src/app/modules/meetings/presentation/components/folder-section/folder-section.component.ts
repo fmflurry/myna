@@ -53,6 +53,8 @@ export class FolderSectionComponent {
   readonly dropAccepting = input(false);
   /** True to make every row in this folder a row-level reorder drop target — forwarded uniformly to each row; see `MeetingListItemComponent.dropIndicatorEnabled`. */
   readonly rowDropEnabled = input(false);
+  /** All folders, forwarded uniformly to each row's kebab menu — see `MeetingListItemComponent.folders`. */
+  readonly folders = input<readonly Folder[]>([]);
 
   readonly toggled = output<FolderId>();
   readonly renamed = output<{ id: FolderId; name: string }>();
@@ -67,6 +69,10 @@ export class FolderSectionComponent {
   readonly meetingDropOnRow = output<{ id: MeetingId; edge: DropEdge }>();
   /** Forwards an Alt+Arrow keyboard reorder request from a row. */
   readonly meetingReorderRequested = output<{ id: MeetingId; direction: 'up' | 'down' }>();
+  /** Re-emits a row's kebab-menu Archive/Unarchive action — see `MeetingListItemComponent.archiveToggled`. */
+  readonly meetingArchiveToggled = output<{ id: MeetingId; archived: boolean }>();
+  /** Re-emits a row's kebab-menu "move to folder" action — see `MeetingListItemComponent.folderChanged`. */
+  readonly meetingFolderChanged = output<{ id: MeetingId; folderId: FolderId | null }>();
 
   protected readonly mode = signal<FolderSectionMode>('idle');
   protected readonly renameDraft = signal('');

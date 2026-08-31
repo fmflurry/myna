@@ -34,8 +34,46 @@
     @if (importing()) {
       <span class="status-badge importing" aria-label="Importing">Importing&hellip;</span>
     }
+    <button
+      type="button"
+      class="menu-trigger"
+      [attr.aria-label]="menuTriggerLabel()"
+      aria-haspopup="menu"
+      [attr.aria-expanded]="menuOpen()"
+      (click)="toggleMenu($event)"
+      (keydown.enter)="toggleMenu($event)"
+      (keydown.space)="toggleMenu($event)"
+    >
+      &#8942;
+    </button>
     <button type="button" class="delete" aria-label="Delete meeting" (click)="requestDelete($event)">
       &times;
     </button>
+    @if (menuOpen()) {
+      <div class="menu" role="menu">
+        <button
+          type="button"
+          class="menu-item menu-item-archive"
+          role="menuitem"
+          (click)="selectArchive($event)"
+          (keydown.enter)="selectArchive($event)"
+          (keydown.space)="selectArchive($event)"
+        >
+          {{ archiveLabel() }}
+        </button>
+        @for (option of folderMenuOptions(); track option.id) {
+          <button
+            type="button"
+            class="menu-item menu-item-folder"
+            role="menuitem"
+            (click)="selectFolder(option.id, $event)"
+            (keydown.enter)="selectFolder(option.id, $event)"
+            (keydown.space)="selectFolder(option.id, $event)"
+          >
+            {{ option.name }}
+          </button>
+        }
+      </div>
+    }
   }
 </div>

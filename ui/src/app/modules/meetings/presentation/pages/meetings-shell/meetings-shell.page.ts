@@ -13,9 +13,9 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { distinctUntilChanged, map } from 'rxjs';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
-import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
+import type { CaptureSource } from '../../../core/models/capture-source.model';
 import type { FolderId } from '../../../core/models/folder.model';
-import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
+import type { MeetingId } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { MeetingExportFormat } from '../../../core/ports/meeting-repository.port';
 import { AttributionComponent } from '../../components/attribution/attribution.component';
@@ -26,21 +26,7 @@ import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meetin
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
 import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-
-/**
- * Shown to the capture-source-picker before `checkSystemAudio()` has
- * resolved. `unknown`, not `unavailable` — there is no preflight API for
- * the audio permission, so the system/mixed options must stay selectable
- * even during this brief window, not just once the check settles.
- */
-const CHECKING_SYSTEM_AUDIO: SystemAudioStatus = { kind: 'unknown' };
-
-const ISO_DATE_LENGTH = 10;
-
-const buildExportFilename = (meeting: Meeting): string => {
-  const isoDate = meeting.createdAt.toISOString().slice(0, ISO_DATE_LENGTH);
-  return `${meeting.title} - ${isoDate}`;
-};
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, runMeetingDeleted, runMeetingMoveRequested } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -219,52 +205,33 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onMeetingDeleted(id: MeetingId): void {
-    if (this.facade.busy() && this.facade.selectedMeeting()?.id === id) {
-      // There is no finished recording session on disk to stop first —
-      // `cancelRecording()` stops the session and wipes the meeting dir,
-      // including audio.wav, instead of `deleteMeeting()`.
-      void this.facade.cancelRecording().then(() => this.router.navigate(['/meetings']));
-      return;
-    }
-    void this.facade.deleteMeeting(id).then(() => {
-      if (this.facade.selectedMeeting() === undefined) {
-        void this.router.navigate(['/meetings']);
-      }
-    });
+    runMeetingDeleted(this.facade, this.router, id);
   }
 
   /**
-   * Drag-and-drop is the only way to move or archive a meeting — this is the
-   * sole handler for both; it routes by the drop target's `kind`, always via
+   * Drag-and-drop and the kebab menu's "move to folder" option are both
+   * first-class ways to move or archive a meeting; this is the drag-and-drop
+   * handler — it routes by the drop target's `kind`, always via
    * `facade.placeMeeting` with `previousId`/`nextId` both `null` (the backend
    * resolves that to `Placement::Keep` — container change only, matching
    * today's behaviour but as one write instead of two). Archiving preserves
    * the meeting's CURRENT folder — looked up from `facade.meetings()` — so a
-   * meeting dragged to the archive never loses its filing.
+   * meeting dragged to the archive never loses its filing. See
+   * `onMeetingArchiveToggled`/`onMeetingFolderChanged` for the kebab-menu
+   * equivalents.
    */
   onMeetingMoveRequested(request: MeetingDragMoveRequest): void {
-    const { target } = request;
-    if (target.kind === 'placement') {
-      const { container, previousId, nextId } = target;
-      if (container.kind === 'archive') {
-        void this.facade.placeMeeting(request.id, this.currentFolderId(request.id), true, previousId, nextId);
-        return;
-      }
-      const folderId = container.kind === 'folder' ? container.folderId : null;
-      void this.facade.placeMeeting(request.id, folderId, false, previousId, nextId);
-      return;
-    }
-    if (target.kind === 'archive') {
-      void this.facade.placeMeeting(request.id, this.currentFolderId(request.id), true, null, null);
-      return;
-    }
-    const folderId = target.kind === 'folder' ? target.folderId : null;
-    void this.facade.placeMeeting(request.id, folderId, false, null, null);
+    runMeetingMoveRequested(this.facade, this.facade.meetings(), request);
   }
 
-  /** The meeting's CURRENT folder (or `null`), looked up from `facade.meetings()` — used to preserve filing when archiving. */
-  private currentFolderId(id: MeetingId): FolderId | null {
-    return this.facade.meetings().find((meeting) => meeting.id === id)?.folderId ?? null;
+  /** Kebab-menu Archive/Unarchive — see `MeetingListItemComponent.archiveToggled`. */
+  onMeetingArchiveToggled(event: { id: MeetingId; archived: boolean }): void {
+    void this.facade.setMeetingArchived(event.id, event.archived);
+  }
+
+  /** Kebab-menu "move to folder" (including "No folder") — see `MeetingListItemComponent.folderChanged`. */
+  onMeetingFolderChanged(event: { id: MeetingId; folderId: FolderId | null }): void {
+    void this.facade.setMeetingFolder(event.id, event.folderId);
   }
 
   reload(): void {

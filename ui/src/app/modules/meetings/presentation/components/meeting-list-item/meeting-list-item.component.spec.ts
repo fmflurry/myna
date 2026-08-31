@@ -287,4 +287,9 @@ describe('MeetingListItemComponent', () => {
       'Cancel this import? The partially imported audio and transcript will be deleted.',
     );
   });
+
+  // --- Kebab (⋯) actions menu (archive + move to folder) coverage lives in
+  // `meeting-list-item.component.actions-menu.spec.ts` — split out to keep
+  // this file under the project's max-lines limit, mirroring
+  // `meetings.facade.capture-defaults.spec.ts`.
 });

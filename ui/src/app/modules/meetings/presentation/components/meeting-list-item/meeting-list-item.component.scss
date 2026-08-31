@@ -32,7 +32,11 @@
 
 .row.disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+}
+
+.row.disabled .title,
+.row.disabled .meta {
+  color: var(--color-text-disabled);
 }
 
 .row.disabled:hover {
@@ -88,6 +92,72 @@
   color: var(--color-danger);
 }
 
+/* Sits immediately to the left of `.delete`, same reveal-on-hover/focus treatment. */
+.menu-trigger {
+  position: absolute;
+  top: var(--space-2);
+  right: calc(var(--space-2) + 1.4rem);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0;
+  padding: 0.1rem 0.35rem;
+}
+
+.row:hover .menu-trigger,
+.row:focus-within .menu-trigger {
+  opacity: 1;
+}
+
+.menu-trigger:hover,
+.menu-trigger[aria-expanded='true'] {
+  opacity: 1;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+/*
+ * Kebab actions menu, positioned relative to `.row` (which is
+ * `position: relative`). Mirrors `.speaker-menu`/`.speaker-menu-item` in
+ * `transcript-view.component.scss` and the capture-settings popover.
+ */
+.menu {
+  position: absolute;
+  top: 100%;
+  right: var(--space-2);
+  z-index: var(--z-popover, 100);
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.15));
+  padding: 0.25rem;
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.85rem;
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.menu-item:hover {
+  background: var(--color-surface-hover);
+}
+
 .confirm {
   display: flex;
   align-items: center;
@@ -132,5 +202,5 @@
 .status-badge {
   font-size: 0.72rem;
   font-weight: 600;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }

@@ -56,6 +56,7 @@
             [recording]="meeting.id === recordingMeetingId()"
             [dragEnabled]="dragEnabled()"
             [dropIndicatorEnabled]="rowDropEnabled()"
+            [folders]="folders()"
             (opened)="meetingSelected.emit($event)"
             (deleteRequested)="meetingDeleted.emit($event)"
             (dragStarted)="meetingDragStarted.emit($event)"
@@ -63,6 +64,8 @@
             (dropOnRow)="meetingDropOnRow.emit({ id: meeting.id, edge: $event })"
             (keydown.alt.arrowdown)="meetingReorderRequested.emit({ id: meeting.id, direction: 'down' })"
             (keydown.alt.arrowup)="meetingReorderRequested.emit({ id: meeting.id, direction: 'up' })"
+            (archiveToggled)="meetingArchiveToggled.emit($event)"
+            (folderChanged)="meetingFolderChanged.emit($event)"
           />
         }
       }

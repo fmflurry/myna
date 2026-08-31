@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 
+import type { Folder, FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
 import { formatMeetingListMeta, formatMeetingTitle } from '../../utils/format-display.util';
 import type { DropEdge } from '../../utils/reorder-geometry.util';
@@ -8,18 +9,32 @@ import { resolveDropEdge } from '../../utils/reorder-geometry.util';
 /** Shown as a tooltip on a row while selection is disabled (e.g. mid-recording). */
 export const SELECTION_DISABLED_HINT = 'Selection is disabled while a recording is in progress';
 
+/** One selectable entry in the kebab menu's "move to folder" section — `id: null` is the "No folder" (top-level) option, always listed first. */
+interface FolderMenuOption {
+  readonly id: FolderId | null;
+  readonly name: string;
+}
+
 /**
  * One row in the sidebar meeting list, with an inline two-step delete
- * confirm. Drag-and-drop (see `dragEnabled`/`dragStarted`/`dragEnded`) is the
- * ONLY way to move a meeting to a folder or the archive — there is
- * deliberately no click affordance for either, so a user can never move or
- * archive a meeting without dragging it.
+ * confirm. Drag-and-drop (see `dragEnabled`/`dragStarted`/`dragEnded`) and the
+ * keyboard-accessible kebab (⋯) actions menu (see `archiveToggled`/
+ * `folderChanged`) are both first-class ways to archive a meeting or move it
+ * into/out of a folder.
  */
 @Component({
   selector: 'app-meeting-list-item',
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './meeting-list-item.component.html',
   styleUrl: './meeting-list-item.component.scss',
+  host: {
+    // Internal clicks (trigger, menu items) never reach `document` — see
+    // the per-handler `stopPropagation()` calls below — so this only fires
+    // for genuine "clicked outside" interactions. Mirrors
+    // `CaptureSettingsComponent`.
+    '(click)': '$event.stopPropagation()',
+    '(document:click)': 'closeMenu()',
+  },
 })
 export class MeetingListItemComponent {
   readonly meeting = input.required<Meeting>();
@@ -34,6 +49,8 @@ export class MeetingListItemComponent {
   readonly dragEnabled = input(false);
   /** True to make this row itself a row-level reorder drop target — false while reordering isn't legal for this row (e.g. mid-search). */
   readonly dropIndicatorEnabled = input(false);
+  /** Folders offered in the kebab menu's "move to folder" section, in display order. */
+  readonly folders = input<readonly Folder[]>([]);
 
   readonly opened = output<MeetingId>();
   readonly deleteRequested = output<MeetingId>();
@@ -41,6 +58,10 @@ export class MeetingListItemComponent {
   readonly dragEnded = output<void>();
   /** Emitted with the hovered edge when a reorder drop lands on this row. */
   readonly dropOnRow = output<DropEdge>();
+  /** Emitted when Archive/Unarchive is activated from the kebab menu. */
+  readonly archiveToggled = output<{ id: MeetingId; archived: boolean }>();
+  /** Emitted when a "move to folder" option (including "No folder") is activated from the kebab menu. */
+  readonly folderChanged = output<{ id: MeetingId; folderId: FolderId | null }>();
 
   protected readonly confirmingDelete = signal(false);
   /** True while this row is in EITHER busy state — recording or importing — the two states share the same "warn on delete" treatment. */
@@ -65,12 +86,22 @@ export class MeetingListItemComponent {
     this.dropIndicatorEnabled() ? this.dropEdge() : null,
   );
 
+  protected readonly menuOpen = signal(false);
+  protected readonly menuTriggerLabel = computed(() => `More actions for ${this.displayTitle()}`);
+  protected readonly archiveLabel = computed(() => (this.meeting().archived ? 'Unarchive' : 'Archive'));
+  /** "No folder" (top-level) always comes first, followed by `folders()` in display order. */
+  protected readonly folderMenuOptions = computed<readonly FolderMenuOption[]>(() => [
+    { id: null, name: 'No folder' },
+    ...this.folders().map((folder) => ({ id: folder.id, name: folder.name })),
+  ]);
+
   activate(): void {
     // Also guards the keyboard path: a `keydown.enter`/`keydown.space` fired
     // on the Yes/No buttons bubbles up to this row's own listeners, so
     // `confirmingDelete()` must be checked here too — not just relying on
-    // the buttons' `stopPropagation()` on `click`.
-    if (this.disabled() || this.confirmingDelete()) {
+    // the buttons' `stopPropagation()` on `click`. Same reasoning applies to
+    // the kebab menu trigger/items below: `menuOpen()` must be checked too.
+    if (this.disabled() || this.confirmingDelete() || this.menuOpen()) {
       return;
     }
     this.opened.emit(this.meeting().id);
@@ -92,12 +123,59 @@ export class MeetingListItemComponent {
     this.deleteRequested.emit(this.meeting().id);
   }
 
-  /** Escape backs out of the delete confirmation without deleting anything. */
+  /**
+   * Escape backs out of the delete confirmation without deleting anything —
+   * or, if the kebab menu is open, closes it without emitting any action.
+   * The trigger has no `keydown.escape` binding of its own: `KeyboardEvent`s
+   * dispatched on it with `bubbles: true` reach this row-level handler,
+   * which is why the menu check comes first.
+   */
   onEscapeKey(event: Event): void {
+    if (this.menuOpen()) {
+      this.closeMenu();
+      return;
+    }
     if (!this.confirmingDelete()) {
       return;
     }
     this.cancelDelete(event);
+  }
+
+  /**
+   * Opens/closes the kebab menu. Bound to both `(click)` and
+   * `(keydown.enter)`/`(keydown.space)` on the trigger `<button>`: jsdom
+   * never synthesizes a `click` from a `keydown`, so the explicit keyboard
+   * bindings are load-bearing for the RED specs, while `preventDefault()`
+   * keeps real browsers (which DO synthesize a `click` after `Enter`/`Space`
+   * on a focused `<button>`) from firing this twice. `stopPropagation()` is
+   * equally load-bearing: without it, the row's own
+   * `(keydown.enter)="activate()"`/`(keydown.space)="activate()"` would open
+   * the meeting right after toggling the menu.
+   */
+  toggleMenu(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.menuOpen.update((open) => !open);
+  }
+
+  closeMenu(): void {
+    this.menuOpen.set(false);
+  }
+
+  /** Same click/keyboard-dedup and propagation reasoning as `toggleMenu`. */
+  selectArchive(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.archiveToggled.emit({ id: this.meeting().id, archived: !this.meeting().archived });
+    this.closeMenu();
+  }
+
+  /** Same click/keyboard-dedup and propagation reasoning as `toggleMenu`. */
+  selectFolder(folderId: FolderId | null, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.folderChanged.emit({ id: this.meeting().id, folderId });
+    this.closeMenu();
   }
 
   /**

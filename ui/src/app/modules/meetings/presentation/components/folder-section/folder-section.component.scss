@@ -27,7 +27,7 @@
 }
 
 .drop-hint {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -87,7 +87,7 @@
 }
 
 .rename:hover {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .delete:hover {

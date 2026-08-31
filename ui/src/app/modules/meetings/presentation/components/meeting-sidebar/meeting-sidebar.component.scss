@@ -29,7 +29,8 @@
 }
 
 .import-button:disabled {
-  opacity: 0.6;
+  background: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 
@@ -55,6 +56,11 @@
 
 .search input:focus-visible {
   outline: none;
+}
+
+.search input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 .list {
@@ -101,7 +107,7 @@
 }
 
 .new-folder-trigger:hover {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .new-folder-form {
@@ -123,6 +129,11 @@
 .new-folder-input:focus-visible {
   outline: none;
   border-color: var(--color-accent);
+}
+
+.new-folder-input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 .archive {
@@ -180,7 +191,7 @@
 }
 
 .drop-hint {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-weight: 600;
 }
 

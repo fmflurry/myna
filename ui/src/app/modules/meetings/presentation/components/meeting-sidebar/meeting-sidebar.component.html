@@ -48,6 +48,7 @@
           [recording]="meeting.id === recordingMeetingId()"
           [dragEnabled]="true"
           [dropIndicatorEnabled]="rowDropEnabled(meeting.id)"
+          [folders]="folders()"
           (opened)="meetingSelected.emit($event)"
           (deleteRequested)="meetingDeleted.emit($event)"
           (dragStarted)="onRowDragStarted($event)"
@@ -55,6 +56,8 @@
           (dropOnRow)="onDropOnRow(meeting.id, $event, { kind: 'uncategorized' })"
           (keydown.alt.arrowdown)="onKeyboardReorder(meeting.id, 'down', { kind: 'uncategorized' })"
           (keydown.alt.arrowup)="onKeyboardReorder(meeting.id, 'up', { kind: 'uncategorized' })"
+          (archiveToggled)="meetingArchiveToggled.emit($event)"
+          (folderChanged)="meetingFolderChanged.emit($event)"
         />
       }
     </div>
@@ -70,6 +73,7 @@
         [dragEnabled]="true"
         [dropAccepting]="canDropInFolder(view.folder.id)"
         [rowDropEnabled]="dragActive() && query().trim().length === 0"
+        [folders]="folders()"
         (toggled)="folderToggled.emit($event)"
         (renamed)="folderRenamed.emit($event)"
         (deleted)="folderDeleted.emit($event)"
@@ -80,6 +84,8 @@
         (dropped)="onDropOnFolder($event)"
         (meetingDropOnRow)="onDropOnRow($event.id, $event.edge, { kind: 'folder', folderId: view.folder.id })"
         (meetingReorderRequested)="onKeyboardReorder($event.id, $event.direction, { kind: 'folder', folderId: view.folder.id })"
+        (meetingArchiveToggled)="meetingArchiveToggled.emit($event)"
+        (meetingFolderChanged)="meetingFolderChanged.emit($event)"
       />
     }
   }
@@ -140,6 +146,7 @@
               [recording]="meeting.id === recordingMeetingId()"
               [dragEnabled]="true"
               [dropIndicatorEnabled]="rowDropEnabled(meeting.id)"
+              [folders]="folders()"
               (opened)="meetingSelected.emit($event)"
               (deleteRequested)="meetingDeleted.emit($event)"
               (dragStarted)="onRowDragStarted($event)"
@@ -147,6 +154,8 @@
               (dropOnRow)="onDropOnRow(meeting.id, $event, { kind: 'archive' })"
               (keydown.alt.arrowdown)="onKeyboardReorder(meeting.id, 'down', { kind: 'archive' })"
               (keydown.alt.arrowup)="onKeyboardReorder(meeting.id, 'up', { kind: 'archive' })"
+              (archiveToggled)="meetingArchiveToggled.emit($event)"
+              (folderChanged)="meetingFolderChanged.emit($event)"
             />
           }
         </div>

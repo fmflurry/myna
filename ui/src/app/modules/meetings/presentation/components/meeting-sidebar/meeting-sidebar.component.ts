@@ -68,6 +68,10 @@ export class MeetingSidebarComponent {
   readonly folderToggled = output<FolderId>();
   /** Emitted once a drag-and-drop gesture resolves to a legal drop target. */
   readonly meetingMoveRequested = output<MeetingDragMoveRequest>();
+  /** Pass-through of a row's kebab-menu Archive/Unarchive action — see `MeetingListItemComponent.archiveToggled`. */
+  readonly meetingArchiveToggled = output<{ id: MeetingId; archived: boolean }>();
+  /** Pass-through of a row's kebab-menu "move to folder" action — see `MeetingListItemComponent.folderChanged`. */
+  readonly meetingFolderChanged = output<{ id: MeetingId; folderId: FolderId | null }>();
 
   protected readonly query = signal('');
   private readonly archiveManuallyExpanded = signal(false);
