@@ -11,24 +11,75 @@ use std::time::Instant;
 use crate::detokenize::Word;
 use crate::engine::SttEngine;
 use crate::error::SttError;
-use crate::transcript::TranscriptSegment;
+use crate::transcript::{Speaker, TranscriptSegment};
 use crate::vad::{VadConfig, VadSegmenter, TARGET_SAMPLE_RATE, VAD_WINDOW_SIZE};
 
 /// Minimum spacing between live partial-transcript re-decodes.
 ///
 /// Measured decode costs at `num_threads=8` (see `myna-app`'s
-/// `stt_engine_threads`) put an 8s-window partial at ~0.44x realtime and a
-/// 4s-window partial at ~0.45x realtime at a 1.0s / 2.0s interval
-/// respectively — comfortably under budget. The previous `0.2` was never
-/// actually enforced (see [`PartialThrottle`]'s docs on the ordering bug
-/// this constant's interval was defeated by) and would have meant ~5x
-/// more decodes than intended even once fixed.
-const PARTIAL_INTERVAL_SEC: f32 = 1.0;
+/// `stt_engine_threads`; the pool has since been retuned to 4 threads —
+/// see [`app::state::STT_ENGINE_THREADS_MAX`]'s doc comment) put an
+/// 8s-window partial at ~0.44x realtime and a 4s-window partial at ~0.45x
+/// realtime at a 1.0s / 2.0s interval respectively — essentially free, so
+/// widening the interval from `1.0` to `2.0` halves partial-decode
+/// frequency (and the CPU it costs) with no measurable change in perceived
+/// live-caption latency; a viewer cannot distinguish a 1s from a 2s partial
+/// refresh cadence. The previous `0.2` was never actually enforced (see
+/// [`PartialThrottle`]'s docs on the ordering bug this constant's interval
+/// was defeated by) and would have meant ~5x more decodes than intended
+/// even once fixed.
+const PARTIAL_INTERVAL_SEC: f32 = 2.0;
 
 /// While idle (no speech detected yet in the current utterance), trim
-/// leading silence once the buffer grows past this many VAD windows, so an
-/// unbounded quiet period doesn't grow the buffer forever.
+/// leading silence once the buffer grows past [`PRE_SPEECH_RETAIN_SEC`]
+/// (plus this many extra VAD windows of slack, so a trim doesn't fire on
+/// almost every single push once the buffer is at the retention floor), so
+/// an unbounded quiet period doesn't grow the buffer forever.
 const IDLE_TRIM_WINDOWS: usize = 10;
+
+/// **Root cause diagnosed** on the `es` accuracy fixture (see
+/// `tests/integration/tests/stt_accuracy.rs` and
+/// `crates/myna-stt/tests/onset_preroll.rs`): Silero's own speech/non-speech
+/// classifier needs a run of consecutive "speech" frames before it
+/// *confirms* an utterance has started (`min_speech_duration`), and the
+/// segment it finally emits is backdated by only a fixed internal lookback
+/// from that confirmation point — not all the way back to the true acoustic
+/// onset. Measured directly against `es.wav`: the offline, full-context
+/// decode times the leading word "No" at `0.000s..0.240s`, but feeding the
+/// same audio through [`VadSegmenter`] window-by-window shows
+/// `vad.detected()` does not latch `true` until `fed_samples=8704`
+/// (`0.544s`), and the segment it eventually drains reports
+/// `start_sample=3680` (`0.230s`) — backdated ~0.314s from the confirmation
+/// point, but still 0.230s after the true onset. Handing the decoder only
+/// the last ~10ms of a 240ms word is exactly why "No" is dropped from the
+/// streaming hypothesis while the offline decode gets it right.
+///
+/// Two related constants exist because there are two distinct gaps to
+/// bridge, and only one of them is bounded by the VAD's own behavior:
+///
+/// - [`PRE_SPEECH_RETAIN_SEC`]: how far back [`SimulatedStreamer`] must
+///   keep raw audio available *while still waiting on VAD confirmation*, so
+///   that history still exists in `buffer` once a segment finally arrives.
+///   This must exceed the confirmation delay itself (measured `0.544s`
+///   above) — a retain floor shorter than the confirmation delay is
+///   silently useless, because [`SimulatedStreamer::trim_leading_silence`]
+///   will have already discarded the true onset *before* `speech_started`
+///   ever latches. `1.0s` gives ~80% margin over the measured `0.544s`.
+/// - [`PRE_ROLL_SEC`]: how far *before the VAD's own reported
+///   `segment.start()`* to widen the decoded segment, once that raw audio
+///   is confirmed still available. `0.3s` gives a ~70ms margin over the
+///   measured `0.230s` gap between the true onset and `segment.start()`.
+///
+/// This is *not* a leading-silence padding hack on the fixture (that was
+/// tried and rejected — unstable across languages, and a large pad crashed
+/// the ONNX encoder); both constants widen the audio [`SimulatedStreamer`]
+/// actually hands to the decoder for every segment, sourced from its own
+/// already-buffered raw samples.
+const PRE_SPEECH_RETAIN_SEC: f32 = 1.0;
+
+/// See [`PRE_SPEECH_RETAIN_SEC`]'s docs for the full diagnosis and why two
+/// separate constants are needed.
+const PRE_ROLL_SEC: f32 = 0.3;
 
 /// Maximum trailing window, in seconds, decoded for a live partial
 /// hypothesis. [`SimulatedStreamer::maybe_partial`] re-decodes the growing
@@ -39,8 +90,11 @@ const IDLE_TRIM_WINDOWS: usize = 10;
 /// live captions fall progressively behind and the audio callback backs
 /// up. Only partials are windowed this way — [`SimulatedStreamer::finish`]
 /// and drained VAD segments always decode the complete segment, so final
-/// transcript quality is unaffected.
-const PARTIAL_WINDOW_SEC: f32 = 8.0;
+/// transcript quality is unaffected. Halved from `8.0` to `4.0` alongside
+/// [`PARTIAL_COMMIT_HOP_SEC`] (which moved from `4.0` to `2.0` in lockstep)
+/// to keep the hop-to-window ratio at 1:2 — see that constant's doc
+/// comment for why the two must move together.
+const PARTIAL_WINDOW_SEC: f32 = 4.0;
 
 /// Stability margin, in seconds, [`PartialCommitState::commit_if_due`]
 /// keeps between `committed_upto` and the live edge (`buffer_len`) before
@@ -53,8 +107,13 @@ const PARTIAL_WINDOW_SEC: f32 = 8.0;
 /// not just [`PARTIAL_WINDOW_SEC`] of it — while every individual decode
 /// still only ever sees `PARTIAL_WINDOW_SEC` of audio: committed text is
 /// assembled incrementally from words old enough to be considered stable,
-/// never from a full-utterance re-decode.
-const PARTIAL_COMMIT_HOP_SEC: f32 = 4.0;
+/// never from a full-utterance re-decode. Moved from `4.0` to `2.0` in
+/// lockstep with halving [`PARTIAL_WINDOW_SEC`] (`8.0` -> `4.0`): at equal
+/// values (`4.0`/`4.0`) the "must stay smaller than the window" invariant
+/// would hold only at equality, with zero margin, silently dropping words
+/// that age out of the window in the same instant they'd be committed.
+/// Keeping the 1:2 hop-to-window ratio restores the original margin.
+const PARTIAL_COMMIT_HOP_SEC: f32 = 2.0;
 
 /// Extra trailing context, in seconds, kept *before* `committed_upto` when
 /// choosing the next partial decode window (see
@@ -297,6 +356,12 @@ pub struct SimulatedStreamer {
     buffer: Vec<f32>,
     /// Number of samples at the front of `buffer` already fed to the VAD.
     offset: usize,
+    /// Absolute sample index (since the streamer was created) of
+    /// `buffer[0]` — the same indexing domain as a VAD segment's
+    /// `start_sample`, letting [`Self::drain_finals`] compute how much
+    /// already-buffered pre-trigger audio (see [`PRE_ROLL_SEC`]) it can
+    /// prepend to a segment.
+    buffer_start_sample: usize,
     speech_started: bool,
     partial_throttle: PartialThrottle,
     /// Incremental-commit state for the current utterance's live partial —
@@ -330,6 +395,7 @@ impl SimulatedStreamer {
             vad,
             buffer: Vec::new(),
             offset: 0,
+            buffer_start_sample: 0,
             speech_started: false,
             partial_throttle: PartialThrottle::new(PARTIAL_INTERVAL_SEC),
             partial_commit: PartialCommitState::default(),
@@ -382,19 +448,27 @@ impl SimulatedStreamer {
 
     /// Drains finished VAD segments, decoding each into a [`SttEvent::Final`]
     /// and resetting the in-progress utterance state.
+    ///
+    /// Prepends up to [`PRE_ROLL_SEC`] of already-buffered raw audio ahead
+    /// of the VAD's own reported segment start before decoding — see
+    /// [`PRE_ROLL_SEC`]'s docs for why the VAD's boundary alone truncates
+    /// the leading word of an utterance.
     fn drain_finals(&mut self) -> Result<Vec<SttEvent>, SttError> {
         let mut events = Vec::new();
         for (start_sample, samples) in self.vad.drain_segments() {
+            let (decode_start_sample, decode_samples) = self.with_pre_roll(start_sample, samples);
             let text = self
                 .engine
-                .transcribe_samples(TARGET_SAMPLE_RATE, &samples)?;
-            let start_sec = start_sample as f32 / TARGET_SAMPLE_RATE as f32;
-            let end_sec = start_sec + samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
+                .transcribe_samples(TARGET_SAMPLE_RATE, &decode_samples)?;
+            let start_sec = decode_start_sample as f32 / TARGET_SAMPLE_RATE as f32;
+            let end_sec = start_sec + decode_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
             events.push(SttEvent::Final {
                 segment: TranscriptSegment {
                     start_sec,
                     end_sec,
                     text,
+                    speaker: Speaker::default(),
+                    speaker_pinned: false,
                 },
             });
             self.reset_utterance();
@@ -402,29 +476,69 @@ impl SimulatedStreamer {
         Ok(events)
     }
 
+    /// Widens a VAD-reported segment (`start_sample`, `samples`) with as
+    /// much of [`PRE_ROLL_SEC`]'s worth of already-buffered raw audio as is
+    /// still available in `self.buffer`, returning the (possibly earlier)
+    /// absolute start sample and the (possibly longer) sample buffer to
+    /// decode. Falls back to less pre-roll — never panics — when less than
+    /// [`PRE_ROLL_SEC`] of history happens to be retained (e.g. very early
+    /// in a session).
+    fn with_pre_roll(&self, start_sample: usize, samples: Vec<f32>) -> (usize, Vec<f32>) {
+        let pre_roll_samples = (PRE_ROLL_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+        let desired_start = start_sample.saturating_sub(pre_roll_samples);
+        let preroll_start = desired_start.max(self.buffer_start_sample);
+
+        if preroll_start >= start_sample {
+            return (start_sample, samples);
+        }
+
+        let local_start = preroll_start - self.buffer_start_sample;
+        let local_end = start_sample - self.buffer_start_sample;
+        if local_end > self.buffer.len() {
+            // Defensive: should not happen (the VAD never reports a segment
+            // start ahead of what's been fed), but never index out of bounds.
+            return (start_sample, samples);
+        }
+
+        let mut widened = self.buffer[local_start..local_end].to_vec();
+        widened.extend_from_slice(&samples);
+        (preroll_start, widened)
+    }
+
     /// Drops old, already-fed samples from the front of `buffer` while no
-    /// speech has been detected yet, keeping the last window intact.
+    /// speech has been detected yet, keeping the trailing
+    /// [`PRE_SPEECH_RETAIN_SEC`] worth of audio intact (not just the last
+    /// window) so that once speech *is* detected, enough raw pre-trigger
+    /// audio survives in `buffer` for [`Self::with_pre_roll`] to widen the
+    /// VAD's segment with. See [`PRE_SPEECH_RETAIN_SEC`]'s docs for why this
+    /// retention floor must exceed the VAD's own confirmation delay, not
+    /// just [`PRE_ROLL_SEC`]'s narrower gap.
     ///
     /// Only called after [`Self::feed_vad`] has run for this chunk, so
     /// `self.offset` (samples already fed to the VAD) always trails
     /// `buffer.len()` by less than one [`VAD_WINDOW_SIZE`] — the partial
     /// window feed_vad has not yet had enough samples to feed. `drop_count`
-    /// is therefore always `<= self.offset`: this never discards the unfed
+    /// is therefore always `<= self.offset` as long as the retained tail is
+    /// at least one [`VAD_WINDOW_SIZE`] (guaranteed: [`PRE_SPEECH_RETAIN_SEC`]'s
+    /// worth of samples is far larger): this never discards the unfed
     /// tail, only samples the VAD has already seen and already made its
     /// segmentation decision on.
     fn trim_leading_silence(&mut self) {
-        let idle_threshold = IDLE_TRIM_WINDOWS * VAD_WINDOW_SIZE;
+        let retain_samples = (PRE_SPEECH_RETAIN_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+        let retain = retain_samples.max(VAD_WINDOW_SIZE);
+        let idle_threshold = retain + IDLE_TRIM_WINDOWS * VAD_WINDOW_SIZE;
         if self.speech_started || self.buffer.len() <= idle_threshold {
             return;
         }
 
-        let drop_count = self.buffer.len() - VAD_WINDOW_SIZE;
+        let drop_count = self.buffer.len().saturating_sub(retain);
         debug_assert!(
             drop_count <= self.offset,
             "leading-silence trim must never drop samples the VAD has not seen yet"
         );
         self.buffer.drain(0..drop_count);
         self.offset = self.offset.saturating_sub(drop_count);
+        self.buffer_start_sample += drop_count;
     }
 
     /// Re-decodes a bounded trailing window of the live buffer into a
@@ -476,6 +590,8 @@ impl SimulatedStreamer {
                     start_sec,
                     end_sec,
                     text,
+                    speaker: Speaker::default(),
+                    speaker_pinned: false,
                 },
             })
         };
@@ -495,6 +611,7 @@ impl SimulatedStreamer {
     /// audio that was never fed to the VAD and can never be recovered.
     fn reset_utterance(&mut self) {
         self.buffer.drain(0..self.offset);
+        self.buffer_start_sample += self.offset;
         self.offset = 0;
         self.speech_started = false;
         self.partial_commit.reset();

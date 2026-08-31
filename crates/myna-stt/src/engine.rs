@@ -9,7 +9,7 @@ use sherpa_onnx::{
 
 use crate::detokenize::{detokenize, Word};
 use crate::error::SttError;
-use crate::transcript::{Transcript, TranscriptSegment};
+use crate::transcript::{Speaker, Transcript, TranscriptSegment};
 use crate::wav::read_wav_to_f32;
 
 const ENCODER_FILE: &str = "encoder.int8.onnx";
@@ -202,6 +202,8 @@ fn segments_from_result(
             start_sec: word.start_sec,
             end_sec: word.end_sec,
             text: word.text,
+            speaker: Speaker::default(),
+            speaker_pinned: false,
         })
         .collect()
 }

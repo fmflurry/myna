@@ -9,8 +9,10 @@
 
 mod cli;
 mod detokenize;
+mod diarize;
 mod engine;
 mod error;
+mod relabel;
 mod stream;
 mod transcript;
 mod vad;
@@ -18,13 +20,15 @@ mod wav;
 
 pub use cli::{Cli, DEFAULT_VAD_MODEL};
 pub use detokenize::{detokenize, Word};
+pub use diarize::{DiarizeConfig, DiarizeResult, DiarizeSegment, Diarizer};
 pub use engine::{
     SttConfig, SttEngine, ALLOWED_DECODING_METHODS, DEFAULT_BLANK_PENALTY, GREEDY_SEARCH,
     MODIFIED_BEAM_SEARCH,
 };
 pub use error::SttError;
+pub use relabel::{relabel_others, MIN_DIARIZED_SEGMENT_SEC, MIN_SPEAKER_COVERAGE};
 pub use stream::{SimulatedStreamer, StreamerOptions, SttEvent};
-pub use transcript::{Transcript, TranscriptSegment};
+pub use transcript::{Speaker, SpeakerRole, Transcript, TranscriptSegment};
 pub use vad::{
     VadConfig, VadSegmenter, DEFAULT_MIN_SILENCE_SEC, TARGET_SAMPLE_RATE, VAD_BUFFER_SECS,
     VAD_WINDOW_SIZE,
