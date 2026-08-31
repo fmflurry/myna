@@ -20,6 +20,10 @@ pub enum SttError {
     #[error("failed to initialize the voice activity detector")]
     VadInit,
 
+    /// `sherpa_onnx::OfflineSpeakerDiarization::create` returned `None`.
+    #[error("failed to initialize the offline speaker diarizer")]
+    DiarizeInit,
+
     /// A `decoding_method` outside `engine::ALLOWED_DECODING_METHODS` was
     /// requested. Rejected before reaching sherpa-onnx, which calls
     /// `exit(-1)` on an unrecognized value instead of returning an error.

@@ -210,6 +210,33 @@ fn mix_into_clamps_negative_full_scale_sum() {
 }
 
 #[test]
+#[should_panic(expected = "whole number of frames")]
+fn clear_to_panics_in_debug_on_a_frame_misaligned_drop_for_a_stereo_ring() {
+    // Arrange: an interleaved-stereo ring (frame_size 2) holding 4 frames.
+    let ring = SampleRing::with_frame_size(8, 0, 2);
+    ring.push(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+
+    // Act: dropping down to 1 sample means dropping 7 — not a whole number
+    // of 2-sample stereo frames, which would silently swap L/R for the one
+    // sample left behind. Must panic in a debug build rather than do that.
+    ring.clear_to(1);
+}
+
+#[test]
+fn clear_to_accepts_a_frame_aligned_drop_for_a_stereo_ring() {
+    // Arrange
+    let ring = SampleRing::with_frame_size(8, 0, 2);
+    ring.push(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+
+    // Act: dropping to 2 samples (1 stereo frame) is frame-aligned.
+    ring.clear_to(2);
+
+    // Assert
+    assert_eq!(ring.resync_count(), 1);
+    assert_eq!(ring.pop_into(2), vec![0.7, 0.8]);
+}
+
+#[test]
 fn drift_controller_keeps_ring_fill_bounded_under_500_ppm_drift_over_60_seconds() {
     // Arrange: prime the ring at the target fill so the assertion measures
     // steady-state drift correction, not startup transient.

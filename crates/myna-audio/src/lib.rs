@@ -22,9 +22,12 @@ mod system_stub;
 
 pub use capture::{
     capture, capture_sources, is_system_audio_stalled, CaptureConfig, CaptureRequest,
-    CaptureSource, RateLimitedQuery,
+    CaptureSource, RateLimitedQuery, TrackBlock,
 };
-pub use device::{default_input_device, list_input_devices, DeviceInfo};
+pub use device::{
+    default_input_device, default_output_device, list_input_devices, list_output_devices,
+    DeviceInfo,
+};
 pub use error::AudioError;
 pub use level::{rms, rms_dbfs, SILENCE_FLOOR_DBFS};
 pub use mixer::{

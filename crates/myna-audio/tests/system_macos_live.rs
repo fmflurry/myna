@@ -72,12 +72,15 @@ fn capture_for_duration(system_source: Option<&str>) -> Vec<f32> {
         capture_sources(
             &request,
             stop_for_capture,
-            move |samples| {
-                if let Ok(mut buffer) = collected_for_capture.lock() {
-                    buffer.extend_from_slice(samples);
+            move |block: &myna_audio::TrackBlock<'_>| {
+                if let Some(samples) = block.system {
+                    if let Ok(mut buffer) = collected_for_capture.lock() {
+                        buffer.extend_from_slice(samples);
+                    }
                 }
             },
             |resolved| println!("effective system-audio source: {resolved:?}"),
+            |rate: u32| println!("native playback rate: {rate}"),
         )
     });
 
@@ -415,6 +418,7 @@ fn run_one_capture_cycle(system_source: Option<&str>, duration: Duration) {
             stop_for_capture,
             |_samples| {},
             |resolved| println!("effective system-audio source: {resolved:?}"),
+            |_rate: u32| {},
         )
     });
 

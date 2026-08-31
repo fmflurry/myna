@@ -38,6 +38,36 @@ pub const MAX_DRIFT_ADJUST: f64 = 0.005;
 /// headroom.
 pub const MIX_GAIN: f32 = 0.7;
 
+/// Wall-clock duration [`SYSTEM_RING_CAPACITY`] encodes at 16kHz mono
+/// (4 seconds) — also the capacity every native-rate ring this module
+/// builds (via [`ring_capacity_and_target_frames`]) targets, so a ring's
+/// wall-clock slack against thread-scheduling jitter is identical
+/// regardless of which rate it's counted in.
+const RING_CAPACITY_SECONDS: f64 = 4.0;
+
+/// Wall-clock fill level [`TARGET_FILL_SAMPLES`] encodes at 16kHz mono
+/// (250 ms) — also the target every native-rate ring this module builds
+/// steers toward. See [`RING_CAPACITY_SECONDS`].
+const RING_TARGET_FILL_SECONDS: f64 = 0.25;
+
+/// Capacity and target-fill, in **frames**, for a ring sampled at
+/// `rate_hz` — matching [`SYSTEM_RING_CAPACITY`]/[`TARGET_FILL_SAMPLES`]'s
+/// wall-clock semantics (4s capacity / 250ms target) at whatever rate a
+/// system-audio tap actually reports.
+///
+/// Unlike the fixed-16kHz mono ring's constants, a native-rate ring's rate
+/// is only known once capture actually starts (see `crate::system`'s
+/// docs on why it can't be assumed ahead of time), so these can't be
+/// `const` — call this once `actual_rate` is known and build the ring
+/// from its result. Callers needing sample counts for an interleaved
+/// multi-channel ring (e.g. stereo) must multiply both results by the
+/// channel count themselves.
+pub fn ring_capacity_and_target_frames(rate_hz: u32) -> (usize, usize) {
+    let capacity = (rate_hz as f64 * RING_CAPACITY_SECONDS).round() as usize;
+    let target = (rate_hz as f64 * RING_TARGET_FILL_SECONDS).round() as usize;
+    (capacity, target)
+}
+
 /// How long the system-audio source may go without new samples *at all*
 /// before it is considered stalled outright — the cheap, fast trigger.
 pub const SYSTEM_STALL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -65,17 +95,35 @@ pub const RENDERING_QUERY_MIN_INTERVAL: Duration = Duration::from_secs(1);
 pub struct SampleRing {
     capacity: usize,
     target_fill: usize,
+    /// Interleaved samples per frame (`1` for mono, `2` for interleaved
+    /// stereo) — used only to assert, in debug builds, that
+    /// [`SampleRing::resync_locked`] and [`SampleRing::clear_to`] always
+    /// drop a whole number of frames from the front. Dropping an odd count
+    /// from an interleaved stereo ring silently and permanently swaps L and
+    /// R for every sample after it; every call site in this crate is
+    /// frame-aligned today (stereo capacities/targets are pre-multiplied by
+    /// 2), but nothing previously enforced that for a future caller.
+    frame_size: usize,
     buffer: Mutex<VecDeque<f32>>,
     resyncs: Mutex<u64>,
 }
 
 impl SampleRing {
-    /// Builds an empty ring holding at most `capacity` samples, resyncing
-    /// down to `target_fill` samples on overflow.
+    /// Builds an empty mono ring (`frame_size` 1) holding at most `capacity`
+    /// samples, resyncing down to `target_fill` samples on overflow.
     pub fn new(capacity: usize, target_fill: usize) -> Self {
+        Self::with_frame_size(capacity, target_fill, 1)
+    }
+
+    /// Builds a ring like [`SampleRing::new`], additionally recording
+    /// `frame_size` — pass `2` for a ring holding interleaved stereo
+    /// samples — so front-drops can be asserted frame-aligned. See
+    /// [`SampleRing::frame_size`]'s doc comment.
+    pub fn with_frame_size(capacity: usize, target_fill: usize, frame_size: usize) -> Self {
         Self {
             capacity,
             target_fill,
+            frame_size,
             buffer: Mutex::new(VecDeque::with_capacity(capacity)),
             resyncs: Mutex::new(0),
         }
@@ -123,6 +171,14 @@ impl SampleRing {
         let mut buffer = self.lock_buffer();
         if buffer.len() > target_len {
             let drop_count = buffer.len() - target_len;
+            debug_assert_eq!(
+                drop_count % self.frame_size,
+                0,
+                "clear_to must drop a whole number of frames (frame_size={}): \
+                 dropping a partial stereo frame silently and permanently \
+                 swaps L/R for every sample after it",
+                self.frame_size
+            );
             buffer.drain(..drop_count);
             *self.lock_resyncs() += 1;
         }
@@ -138,6 +194,14 @@ impl SampleRing {
     fn resync_locked(&self, buffer: &mut VecDeque<f32>) {
         let keep = self.target_fill.min(buffer.len());
         let drop_count = buffer.len() - keep;
+        debug_assert_eq!(
+            drop_count % self.frame_size,
+            0,
+            "resync must drop a whole number of frames (frame_size={}): \
+             dropping a partial stereo frame silently and permanently swaps \
+             L/R for every sample after it",
+            self.frame_size
+        );
         buffer.drain(..drop_count);
         *self.lock_resyncs() += 1;
     }
@@ -240,5 +304,35 @@ impl DriftController {
 pub fn mix_into(mic: &[f32], sys: &[f32], out: &mut [f32]) {
     for ((&mic_sample, &sys_sample), out_sample) in mic.iter().zip(sys.iter()).zip(out.iter_mut()) {
         *out_sample = (mic_sample * MIX_GAIN + sys_sample * MIX_GAIN).clamp(-1.0, 1.0);
+    }
+}
+
+/// Mixes an optional mono `mic` (duplicated to both channels, centered —
+/// there is no stereo image to preserve for a mono source) and an optional
+/// interleaved-stereo `sys` (native L/R preserved, never downmixed) into
+/// interleaved-stereo `out`, applying [`MIX_GAIN`] to each contributing
+/// source and clamping the per-channel sum to `[-1.0, 1.0]` — the same
+/// gain law [`mix_into`] applies to a mono sum, just applied per channel.
+///
+/// A missing source contributes silence to both channels rather than
+/// being omitted from the gain law, so `CaptureSource::Microphone`'s
+/// mic-only and `CaptureSource::System`'s system-only cases scale
+/// identically to `CaptureSource::Mixed`'s combined case.
+///
+/// `out.len()` must be even (one L/R pair per frame); any trailing odd
+/// sample is left untouched. Frames beyond either source's length mix
+/// against silence for that source (matching [`SampleRing::pop_into`]'s
+/// own zero-pad-on-underrun policy) rather than truncating `out`.
+pub fn mix_stereo_into(mic: Option<&[f32]>, sys: Option<&[f32]>, out: &mut [f32]) {
+    let frame_count = out.len() / 2;
+    for frame in 0..frame_count {
+        let mic_sample = mic.and_then(|m| m.get(frame)).copied().unwrap_or(0.0);
+        let sys_left = sys.and_then(|s| s.get(frame * 2)).copied().unwrap_or(0.0);
+        let sys_right = sys
+            .and_then(|s| s.get(frame * 2 + 1))
+            .copied()
+            .unwrap_or(0.0);
+        out[frame * 2] = (mic_sample * MIX_GAIN + sys_left * MIX_GAIN).clamp(-1.0, 1.0);
+        out[frame * 2 + 1] = (mic_sample * MIX_GAIN + sys_right * MIX_GAIN).clamp(-1.0, 1.0);
     }
 }

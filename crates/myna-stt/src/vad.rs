@@ -17,6 +17,19 @@ pub const TARGET_SAMPLE_RATE: i32 = 16_000;
 /// Size, in seconds, of the VAD's internal ring buffer of speech segments.
 pub const VAD_BUFFER_SECS: f32 = 60.0;
 
+/// Number of ORT intra-op threads the Silero VAD session runs with.
+///
+/// Silero processes [`VAD_WINDOW_SIZE`] (512) samples per internal window —
+/// far too small a unit of work to parallelize usefully. Before this
+/// constant existed, `VadModelConfig { .. VadModelConfig::default() }` left
+/// `num_threads` at its zero value, which ONNX Runtime does *not* treat as
+/// "one thread": `0` means "use the ORT default" (one pool per session,
+/// sized to the detected core count). That silently spun up a full-width
+/// thread pool for a workload too small to benefit from it. This is a
+/// latent-defect fix, not a tuning choice — pinning to `1` removes pool
+/// overhead with no accuracy or latency tradeoff.
+pub const VAD_NUM_THREADS: i32 = 1;
+
 /// Default minimum silence duration, in seconds, before the VAD closes a
 /// speech segment. Matches the upstream (k2-fsa/sherpa-onnx) recommended
 /// value. Lowering this fragments natural speech: a ~0.25s pause is
@@ -83,6 +96,7 @@ impl VadSegmenter {
         let config = VadModelConfig {
             silero_vad,
             sample_rate: TARGET_SAMPLE_RATE,
+            num_threads: VAD_NUM_THREADS,
             ..VadModelConfig::default()
         };
 

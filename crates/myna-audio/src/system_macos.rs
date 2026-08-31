@@ -40,11 +40,11 @@ use std::sync::Mutex;
 
 use myna_coreaudio_tap::{
     executable_name, executable_path, is_macos_at_least, is_process_running_output, translate_pid,
-    AudioObjectID, AudioProcess, ProcessTapCapture, TapError, TapScope,
+    AudioObjectID, AudioProcess, ProcessTapCapture, TapBlock, TapError, TapScope,
 };
 
 use crate::error::AudioError;
-use crate::system::{SystemAudioSource, SystemAudioStatus};
+use crate::system::{SystemAudioBlock, SystemAudioSource, SystemAudioStatus};
 
 /// Prefix for an id derived from a running application's bundle identifier.
 const APP_BUNDLE_ID_PREFIX: &str = "app:";
@@ -152,7 +152,7 @@ pub(crate) fn request_system_audio_permission() -> SystemAudioStatus {
         return unavailable;
     }
 
-    match ProcessTapCapture::start(TapScope::GlobalExcluding(&[]), |_samples| {}) {
+    match ProcessTapCapture::start(TapScope::GlobalExcluding(&[]), |_block: &TapBlock<'_>| {}) {
         Ok((capture, _format)) => {
             capture.stop();
             record_status(SystemAudioStatus::Available);
@@ -613,14 +613,16 @@ pub(crate) struct SystemAudioCapture {
 impl SystemAudioCapture {
     /// Starts capturing system audio.
     ///
-    /// Delivers mono f32 PCM to `on_pcm`, called from Core Audio's realtime
-    /// IO thread — never the calling thread — which must not block. Returns
-    /// the actual sample rate the tap's aggregate device reported (see this
-    /// module's docs on why that can't be assumed) alongside the capture
-    /// handle and the [`SystemAudioSource`] actually captured.
+    /// Delivers a [`SystemAudioBlock`] to `on_pcm` — the mono reduction (as
+    /// always) alongside genuine native-rate interleaved stereo — called
+    /// from Core Audio's realtime IO thread — never the calling thread —
+    /// which must not block. Returns the actual sample rate the tap's
+    /// aggregate device reported (see this module's docs on why that can't
+    /// be assumed) alongside the capture handle and the
+    /// [`SystemAudioSource`] actually captured.
     pub(crate) fn start(
         system_source: Option<&str>,
-        on_pcm: impl FnMut(&[f32]) + Send + 'static,
+        mut on_pcm: impl FnMut(&SystemAudioBlock<'_>) + Send + 'static,
     ) -> Result<(Self, SystemAudioSource, u32), AudioError> {
         if let Some(SystemAudioStatus::Unavailable { reason }) = macos_version_gate() {
             return Err(AudioError::SystemAudioUnavailable(reason));
@@ -629,12 +631,26 @@ impl SystemAudioCapture {
         let (scope_processes, effective_source) = resolve_scope(system_source);
         let current_pid = std::process::id() as i32;
 
+        // Translates `myna_coreaudio_tap`'s `TapBlock` to this crate's own
+        // `SystemAudioBlock` — a plain field-for-field aliasing, not a copy,
+        // so it adds no allocation on the realtime IO thread. Keeps
+        // `crate::system_stub` (non-macOS) decoupled from
+        // `myna_coreaudio_tap`, which it never depends on.
+        let on_tap_block = move |block: &TapBlock<'_>| {
+            on_pcm(&SystemAudioBlock {
+                mono: block.mono,
+                stereo: block.stereo,
+            });
+        };
+
         let start_result = match &scope_processes {
-            Some(processes) => ProcessTapCapture::start(TapScope::Processes(processes), on_pcm),
+            Some(processes) => {
+                ProcessTapCapture::start(TapScope::Processes(processes), on_tap_block)
+            }
             None => {
                 let exclude_self: Vec<AudioObjectID> =
                     translate_pid(current_pid).into_iter().collect();
-                ProcessTapCapture::start(TapScope::GlobalExcluding(&exclude_self), on_pcm)
+                ProcessTapCapture::start(TapScope::GlobalExcluding(&exclude_self), on_tap_block)
             }
         };
 

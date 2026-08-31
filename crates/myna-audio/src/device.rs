@@ -41,6 +41,37 @@ pub fn default_input_device() -> Result<DeviceInfo, AudioError> {
     Ok(DeviceInfo { name })
 }
 
+/// Lists all available audio output devices on the default host.
+pub fn list_output_devices() -> Result<Vec<DeviceInfo>, AudioError> {
+    let host = cpal::default_host();
+    let devices = host
+        .output_devices()
+        .map_err(|err| AudioError::Stream(err.to_string()))?;
+
+    let mut infos = Vec::new();
+    for device in devices {
+        let name = device
+            .name()
+            .map_err(|err| AudioError::Stream(err.to_string()))?;
+        infos.push(DeviceInfo { name });
+    }
+
+    Ok(infos)
+}
+
+/// Returns the host's default audio output device.
+pub fn default_output_device() -> Result<DeviceInfo, AudioError> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or(AudioError::NoDefaultDevice)?;
+    let name = device
+        .name()
+        .map_err(|err| AudioError::Stream(err.to_string()))?;
+
+    Ok(DeviceInfo { name })
+}
+
 /// Resolves a `cpal::Device` matching the given `DeviceInfo` by name.
 ///
 /// Used internally by `capture` to re-locate a device after it was

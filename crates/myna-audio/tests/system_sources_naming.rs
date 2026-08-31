@@ -8,7 +8,7 @@
 //! be on the machine, so assertions are limited to invariants that must hold
 //! regardless of which apps are running.
 
-use myna_audio::{list_system_audio_sources, ALL_OUTPUT_SOURCE_ID};
+use myna_audio::{default_output_device, list_system_audio_sources, ALL_OUTPUT_SOURCE_ID};
 
 /// A raw identifier the picker must never surface as a display name — see
 /// `myna_audio::system_macos::looks_like_identifier` (private; this is the
@@ -30,6 +30,27 @@ fn all_output_source_is_always_first() {
         sources.first().map(|source| source.id.as_str()),
         Some(ALL_OUTPUT_SOURCE_ID)
     );
+}
+
+/// Spec change: the all-output entry is labelled after the host's default
+/// output device — `Default system (<device name>)` — so the picker shows
+/// which hardware the capture follows. The generic `All system audio` name
+/// is only the fallback for a machine with no default output device.
+/// Asserting the composed form (on any machine that has a default output
+/// device) fails against the old always-generic naming.
+#[test]
+fn all_output_source_is_named_after_the_default_output_device() {
+    let sources = list_system_audio_sources();
+    let all_output = sources.first().expect("all-output source is always first");
+
+    match default_output_device() {
+        Ok(device) => {
+            assert_eq!(all_output.name, format!("Default system ({})", device.name));
+        }
+        Err(_) => {
+            assert_eq!(all_output.name, "All system audio");
+        }
+    }
 }
 
 #[test]

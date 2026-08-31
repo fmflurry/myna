@@ -1,12 +1,14 @@
 use std::time::Duration;
 
-use myna_stt::{Transcript, TranscriptSegment};
+use myna_stt::{Speaker, Transcript, TranscriptSegment};
 
 fn segment(start: f32, end: f32, text: &str) -> TranscriptSegment {
     TranscriptSegment {
         start_sec: start,
         end_sec: end,
         text: text.to_string(),
+        speaker: Speaker::default(),
+        speaker_pinned: false,
     }
 }
 

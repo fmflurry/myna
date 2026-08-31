@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use myna_audio::{capture_sources, rms, CaptureConfig, CaptureRequest, CaptureSource};
+use myna_audio::{capture_sources, rms, CaptureConfig, CaptureRequest, CaptureSource, TrackBlock};
 
 /// How long to run the probe capture before stopping and printing results.
 const CAPTURE_DURATION: Duration = Duration::from_secs(5);
@@ -47,12 +47,15 @@ fn main() {
         capture_sources(
             &request,
             stop_for_capture,
-            move |samples| {
-                if let Ok(mut buffer) = collected_for_capture.lock() {
-                    buffer.extend_from_slice(samples);
+            move |block: &TrackBlock<'_>| {
+                if let Some(samples) = block.system {
+                    if let Ok(mut buffer) = collected_for_capture.lock() {
+                        buffer.extend_from_slice(samples);
+                    }
                 }
             },
             |resolved| println!("effective system-audio source: {resolved:?}"),
+            |rate: u32| println!("native playback rate: {rate}"),
         )
     });
 

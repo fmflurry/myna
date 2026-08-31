@@ -25,6 +25,9 @@ const CHUNK_SIZE_FRAMES: usize = 1024;
 /// bound; [`Resampler::new_adjustable`] takes a wider one.
 const MAX_RESAMPLE_RATIO_RELATIVE: f64 = 1.0;
 const MONO_CHANNELS: usize = 1;
+/// Channel count for [`Resampler::new_adjustable_stereo`] — the only other
+/// channel count this module supports today, alongside [`MONO_CHANNELS`].
+const STEREO_CHANNELS: usize = 2;
 
 /// Converts mono f32 audio between sample rates.
 ///
@@ -43,7 +46,15 @@ enum ResamplerInner {
 
 struct SincState {
     resampler: Async<f32>,
+    /// Fixed input chunk size, in **frames** (one frame = [`SincState::channels`]
+    /// interleaved samples) — channel-count-independent, matching rubato's
+    /// own `input_frames_next`/`output_frames_max` units.
     chunk_size: usize,
+    /// Number of interleaved channels this instance was built for: `1` for
+    /// the mono path ([`Resampler::new`] / [`Resampler::new_adjustable`]),
+    /// `2` for [`Resampler::new_adjustable_stereo`]. Every sample-count
+    /// (as opposed to frame-count) bookkeeping below multiplies by this.
+    channels: usize,
     input_buffer: Vec<f32>,
     delay_to_trim: usize,
     /// Reused across [`SincState::process`]'s inner loop so splitting
@@ -97,6 +108,31 @@ impl Resampler {
         })
     }
 
+    /// Builds an adjustable **interleaved-stereo** resampler nominally
+    /// converting `rate_hz` to itself (ratio `1.0`), with `max_relative`
+    /// headroom so [`Resampler::set_ratio_relative`] can still nudge it —
+    /// used to keep a genuine native-rate stereo passthrough
+    /// (`crate::capture`'s playback track) mutually in sync with the
+    /// mono-at-16kHz system-audio track's own [`crate::mixer::DriftController`]
+    /// correction, without ever resampling away from the tap's true native
+    /// rate beyond that small adjustment.
+    ///
+    /// Like [`Resampler::new_adjustable`], this never takes the identity
+    /// fast path — an identity resampler has no ratio to adjust — so it
+    /// always builds a real sinc resampler, just with two interleaved
+    /// channels instead of one.
+    pub fn new_adjustable_stereo(rate_hz: u32, max_relative: f64) -> Result<Self, AudioError> {
+        let state = SincState::new_with_max_relative_and_channels(
+            rate_hz,
+            rate_hz,
+            max_relative,
+            STEREO_CHANNELS,
+        )?;
+        Ok(Self {
+            inner: ResamplerInner::Sinc(Box::new(state)),
+        })
+    }
+
     /// Adjusts the resample ratio by `relative` (e.g. `0.001` means "output
     /// 0.1% faster than the ratio this resampler was constructed with").
     ///
@@ -142,6 +178,15 @@ impl SincState {
         to_hz: u32,
         max_relative: f64,
     ) -> Result<Self, AudioError> {
+        Self::new_with_max_relative_and_channels(from_hz, to_hz, max_relative, MONO_CHANNELS)
+    }
+
+    fn new_with_max_relative_and_channels(
+        from_hz: u32,
+        to_hz: u32,
+        max_relative: f64,
+        channels: usize,
+    ) -> Result<Self, AudioError> {
         let params = SincInterpolationParameters::new(SINC_LEN, WindowFunction::BlackmanHarris2)
             .oversampling_factor(OVERSAMPLING_FACTOR)
             .interpolation(SincInterpolationType::Linear);
@@ -152,7 +197,7 @@ impl SincState {
             max_relative,
             &params,
             CHUNK_SIZE_FRAMES,
-            MONO_CHANNELS,
+            channels,
             FixedAsync::Input,
         )
         .map_err(|err| AudioError::Resample(err.to_string()))?;
@@ -163,9 +208,10 @@ impl SincState {
         Ok(Self {
             resampler,
             chunk_size,
+            channels,
             input_buffer: Vec::new(),
             delay_to_trim,
-            chunk_scratch: Vec::with_capacity(chunk_size),
+            chunk_scratch: Vec::with_capacity(chunk_size * channels),
         })
     }
 
@@ -181,11 +227,12 @@ impl SincState {
     fn process(&mut self, input: &[f32]) -> Vec<f32> {
         self.input_buffer.extend_from_slice(input);
 
+        let chunk_samples = self.chunk_size * self.channels;
         let mut output = Vec::new();
-        while self.input_buffer.len() >= self.chunk_size {
+        while self.input_buffer.len() >= chunk_samples {
             self.chunk_scratch.clear();
             self.chunk_scratch
-                .extend(self.input_buffer.drain(..self.chunk_size));
+                .extend(self.input_buffer.drain(..chunk_samples));
 
             // Temporarily move `chunk_scratch` out (leaving a non-allocating
             // `Vec::new()` placeholder) so it can be passed as a plain
@@ -204,17 +251,18 @@ impl SincState {
             return Vec::new();
         }
 
-        let valid = self.input_buffer.len();
+        let valid_samples = self.input_buffer.len();
+        let valid_frames = valid_samples / self.channels;
         let mut chunk = std::mem::take(&mut self.input_buffer);
-        chunk.resize(self.chunk_size, 0.0);
-        self.process_chunk(&chunk, Some(valid))
+        chunk.resize(self.chunk_size * self.channels, 0.0);
+        self.process_chunk(&chunk, Some(valid_frames))
     }
 
     fn process_chunk(&mut self, chunk: &[f32], partial_len: Option<usize>) -> Vec<f32> {
-        let input_adapter = InterleavedSlice::new(chunk, MONO_CHANNELS, self.chunk_size)
+        let input_adapter = InterleavedSlice::new(chunk, self.channels, self.chunk_size)
             .expect("chunk is sized to the resampler's fixed input length");
         let out_frames = self.resampler.output_frames_max();
-        let mut output_buffer = InterleavedOwned::<f32>::new(0.0, MONO_CHANNELS, out_frames);
+        let mut output_buffer = InterleavedOwned::<f32>::new(0.0, self.channels, out_frames);
         let indexing = partial_len.map(|len| Indexing::new().partial_len(len));
 
         let (_consumed, produced) = self
@@ -223,7 +271,7 @@ impl SincState {
             .expect("resampler input/output buffers satisfy trait invariants");
 
         let mut data = output_buffer.take_data();
-        data.truncate(produced * MONO_CHANNELS);
+        data.truncate(produced * self.channels);
 
         if self.delay_to_trim > 0 {
             let trim = self.delay_to_trim.min(data.len());

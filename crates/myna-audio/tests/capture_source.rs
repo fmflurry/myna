@@ -62,7 +62,7 @@ fn capture_sources_rejects_system_source_as_unavailable() {
     let stop = Arc::new(AtomicBool::new(true));
 
     // Act
-    let result = capture_sources(&request, stop, |_samples| {}, |_source| {});
+    let result = capture_sources(&request, stop, |_samples| {}, |_source| {}, |_rate: u32| {});
 
     // Assert
     assert!(matches!(result, Err(AudioError::SystemAudioUnavailable(_))));
@@ -87,7 +87,7 @@ fn capture_sources_for_system_source_matches_the_reported_status() {
     let stop = Arc::new(AtomicBool::new(true));
 
     // Act
-    let result = capture_sources(&request, stop, |_samples| {}, |_source| {});
+    let result = capture_sources(&request, stop, |_samples| {}, |_source| {}, |_rate: u32| {});
 
     // Assert
     match system_audio_status() {
@@ -118,7 +118,7 @@ fn capture_sources_rejects_mixed_source_as_unavailable() {
     let stop = Arc::new(AtomicBool::new(true));
 
     // Act
-    let result = capture_sources(&request, stop, |_samples| {}, |_source| {});
+    let result = capture_sources(&request, stop, |_samples| {}, |_source| {}, |_rate: u32| {});
 
     // Assert
     assert!(matches!(result, Err(AudioError::SystemAudioUnavailable(_))));
@@ -167,7 +167,7 @@ fn capture_sources_for_mixed_source_degrades_to_microphone_when_system_audio_is_
     let stop = Arc::new(AtomicBool::new(true));
 
     // Act
-    let result = capture_sources(&request, stop, |_samples| {}, |_source| {});
+    let result = capture_sources(&request, stop, |_samples| {}, |_source| {}, |_rate: u32| {});
 
     // Assert
     if system_audio_status() != SystemAudioStatus::Available {

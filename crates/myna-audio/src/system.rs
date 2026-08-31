@@ -43,11 +43,25 @@ pub enum SystemAudioStatus {
     Unknown,
 }
 
+/// One block of system audio as delivered by a platform backend: the mono
+/// reduction every caller has always received, alongside genuine
+/// native-rate interleaved stereo — computed independently by the backend,
+/// neither derived from the other. Mirrors
+/// [`myna_coreaudio_tap::TapBlock`] on macOS (this type exists so
+/// non-macOS platforms, whose [`crate::system_stub`] never depends on
+/// `myna_coreaudio_tap`, don't have to name that crate's type here).
+pub(crate) struct SystemAudioBlock<'a> {
+    pub mono: &'a [f32],
+    pub stereo: &'a [f32],
+}
+
 /// Stable id for the synthetic "capture all system output" source —
 /// [`list_system_audio_sources`]'s first entry, always.
 pub const ALL_OUTPUT_SOURCE_ID: &str = "system:all";
 
-/// Display name for [`ALL_OUTPUT_SOURCE_ID`].
+/// Fallback display name for [`ALL_OUTPUT_SOURCE_ID`], used only when no
+/// default output device exists to name the source after (see
+/// [`SystemAudioSource::all_output`]).
 pub(crate) const ALL_OUTPUT_SOURCE_NAME: &str = "All system audio";
 
 /// One system-audio source that can be captured: either the synthetic
@@ -65,12 +79,32 @@ pub struct SystemAudioSource {
 }
 
 impl SystemAudioSource {
-    /// The synthetic "capture all system output" source.
+    /// The synthetic "capture all system output" source, named after the
+    /// host's default output device so the picker shows which hardware the
+    /// capture follows — e.g. `Default system (MacBook Pro Speakers)` —
+    /// falling back to [`ALL_OUTPUT_SOURCE_NAME`] when no default output
+    /// device exists.
+    ///
+    /// This is the *only* place the all-output label is composed. Both
+    /// platform backends reach it through this constructor — the macOS
+    /// backend's `resolve_scope` fallbacks and the stub's (empty) source
+    /// list alike — so the label composes identically everywhere.
     pub(crate) fn all_output() -> Self {
         Self {
             id: ALL_OUTPUT_SOURCE_ID.to_string(),
-            name: ALL_OUTPUT_SOURCE_NAME.to_string(),
+            name: all_output_source_name(),
         }
+    }
+}
+
+/// Composes the all-output source's display name:
+/// `Default system (<default output device name>)`, or the generic
+/// [`ALL_OUTPUT_SOURCE_NAME`] when no default output device exists (e.g. a
+/// machine with no output hardware at all).
+fn all_output_source_name() -> String {
+    match crate::device::default_output_device() {
+        Ok(device) => format!("Default system ({})", device.name),
+        Err(_) => ALL_OUTPUT_SOURCE_NAME.to_string(),
     }
 }
 
@@ -100,13 +134,16 @@ pub fn list_system_audio_sources() -> Vec<SystemAudioSource> {
 }
 
 /// Starts capturing system audio on whatever backend this platform has,
-/// delivering mono f32 PCM to `on_pcm` at the sample rate reported in the
-/// returned `u32` — the backend's *actual* rate, discovered at capture
-/// start rather than assumed: a platform backend is never guaranteed to
-/// deliver any particular fixed rate (Core Audio process taps on macOS
-/// deliver whatever rate the tapped audio hardware natively runs at, which
-/// varies by machine). Callers must build any resampler from this returned
-/// value, not a compile-time constant.
+/// delivering a [`SystemAudioBlock`] to `on_pcm` per callback — the mono
+/// reduction (as always) alongside genuine native-rate interleaved
+/// stereo — at the sample rate reported in the returned `u32`: the
+/// backend's *actual* rate, discovered at capture start rather than
+/// assumed: a platform backend is never guaranteed to deliver any
+/// particular fixed rate (Core Audio process taps on macOS deliver
+/// whatever rate the tapped audio hardware natively runs at, which varies
+/// by machine). Callers must build any resampler from this returned
+/// value, not a compile-time constant. `SystemAudioBlock::stereo` is
+/// already at that same rate — it is never resampled by the backend.
 ///
 /// `system_source` selects which [`SystemAudioSource::id`] to capture from;
 /// `None` selects all system output. An id that can no longer be resolved
@@ -119,7 +156,7 @@ pub fn list_system_audio_sources() -> Vec<SystemAudioSource> {
 /// block.
 pub(crate) fn start_system_audio_capture(
     system_source: Option<&str>,
-    on_pcm: impl FnMut(&[f32]) + Send + 'static,
+    on_pcm: impl FnMut(&SystemAudioBlock<'_>) + Send + 'static,
 ) -> Result<(SystemAudioHandle, SystemAudioSource, u32), AudioError> {
     backend::SystemAudioCapture::start(system_source, on_pcm)
 }

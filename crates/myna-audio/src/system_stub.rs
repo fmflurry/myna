@@ -4,7 +4,7 @@
 //! swaps in [`crate::system_macos`] there instead.
 
 use crate::error::AudioError;
-use crate::system::{SystemAudioSource, SystemAudioStatus};
+use crate::system::{SystemAudioBlock, SystemAudioSource, SystemAudioStatus};
 
 /// Reason string reported while no platform backend is implemented.
 const NOT_IMPLEMENTED_REASON: &str = "system audio capture is not implemented on this platform";
@@ -35,7 +35,7 @@ pub(crate) struct SystemAudioCapture;
 impl SystemAudioCapture {
     pub(crate) fn start(
         _system_source: Option<&str>,
-        _on_pcm: impl FnMut(&[f32]) + Send + 'static,
+        _on_pcm: impl FnMut(&SystemAudioBlock<'_>) + Send + 'static,
     ) -> Result<(Self, SystemAudioSource, u32), AudioError> {
         Err(AudioError::SystemAudioUnavailable(
             NOT_IMPLEMENTED_REASON.to_string(),
