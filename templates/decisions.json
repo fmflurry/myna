@@ -4,7 +4,7 @@
   "label": "Decisions",
   "emoji": "⚖️",
   "description": "Extract the decisions that were made in the meeting along with the reasoning behind each one.",
-  "prompt": "You are reviewing a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and extract every decision that was made. For each decision, note what was decided and, if it was discussed, the rationale behind it. Do not include options that were merely discussed but not decided. Respond with one decision per line.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nDecisions:",
+  "prompt": "You are reviewing a meeting titled \"{title}\" that lasted {duration}. Read the transcript below and extract every decision that was made. For each decision, note what was decided and, if it was discussed, the rationale behind it. Do not include options that were merely discussed but not decided. In the transcript, 'Me:' lines are the user, 'Others:' are remote participants, and unprefixed lines are unattributed. Respond with one decision per line.\n\nTranscript:\n{transcript}\n\nWrite your entire response in {language}.\n\nDecisions:",
   "section_schema": {
     "type": "object",
     "required": ["decisions"],

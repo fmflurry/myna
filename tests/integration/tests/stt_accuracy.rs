@@ -47,14 +47,21 @@ const WER_BUDGETS: &[(&str, f32)] = &[
     ("en", 0.05),
     ("fr", 0.05),
     ("de", 0.05),
-    // es: 0.20, not 0.05. The VAD-segmented streaming path drops the
-    // leading word ("No") and loses accents (`qué` -> `que`) on this
-    // fixture; an offline, full-context decode of the same audio gets both
-    // right. This is a real streaming-onset defect in the VAD-segmented
-    // pipeline (tracked as follow-up tuning work), not a model accuracy
-    // limit — so it is recorded honestly here rather than hidden by
-    // loosening every language's budget or silently xfailing `es`.
-    ("es", 0.20),
+    // es: 0.15, not 0.05. Lowered from 0.20 (never raised — see the
+    // struct-level rule above) after fixing the streaming-onset defect: the
+    // VAD-segmented path used to drop the leading word ("No") because the
+    // VAD's own reported segment start lands after the true acoustic onset
+    // (diagnosed and fixed via `SimulatedStreamer`'s `PRE_SPEECH_RETAIN_SEC`
+    // / `PRE_ROLL_SEC` pre-roll in `crates/myna-stt/src/stream.rs`; see
+    // `crates/myna-stt/tests/onset_preroll.rs` for the dedicated
+    // regression test). Measured after the fix: `es` wer=0.1176 (down from
+    // 0.1765). `0.15` keeps headroom above that measurement without hiding
+    // a regression. A *separate*, unfixed defect remains on this fixture:
+    // both occurrences of `qué` lose their accent (`qué` -> `que`) in the
+    // streaming hypothesis despite sitting well inside the segment, far
+    // from the pre-roll boundary — this is not the same root cause as the
+    // dropped leading word and is not addressed here.
+    ("es", 0.15),
 ];
 
 /// Look up the WER budget for `lang`, panicking if `LANGUAGES` and

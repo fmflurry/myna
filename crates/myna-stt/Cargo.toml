@@ -22,3 +22,4 @@ myna-audio = { path = "../myna-audio" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+serde_json = { workspace = true }
