@@ -1,6 +1,6 @@
 # Myna — Stack Proposal
 
-> **Status**: Proposed · **Product**: Local-first AI meeting recorder/summarizer · **License**: MIT · **Targets**: macOS-first, Windows/Linux supported
+> **Status**: Proposed · **Product**: Local-first AI meeting recorder/summarizer · **License**: MIT · **Targets**: macOS-first; Windows/Linux planned
 >
 > Eight decision areas, the Phase 2 repository layout, and the Phase 3 commands. No code, configs, or manifests are created by this document.
 
@@ -31,7 +31,7 @@
 ## 4. GUI Framework
 
 - **Recommended**: **Tauri 2**.
-- **Rationale**: Tauri 2's Rust core + system webview (WKWebView / WebView2 / WebKitGTK) yields a small binary, is macOS-first while supporting Windows and Linux, and sits naturally next to the all-Rust/C stack (cpal, sherpa-onnx, llama.cpp) via the command/IPC bridge. v2 stabilized multi-window and webview management. MIT/Apache-2.0 dual-licensed.
+- **Rationale**: Tauri 2's Rust core + system webview (WKWebView / WebView2 / WebKitGTK) yields a small binary, is macOS-first, with Windows and Linux support planned, and sits naturally next to the all-Rust/C stack (cpal, sherpa-onnx, llama.cpp) via the command/IPC bridge. v2 stabilized multi-window and webview management. MIT/Apache-2.0 dual-licensed.
 - **Rejected alternatives**:
   - **Electron** — mature but ships a full Chromium/Node runtime (~100 MB+); heavier to distribute and update.
   - **Native SwiftUI** — best macOS experience but macOS-only; ruled out by the Windows/Linux requirement.

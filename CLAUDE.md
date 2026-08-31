@@ -8,7 +8,7 @@ Myna is a **local-first AI meeting recorder/summarizer**: capture meeting audio,
 - **Summarization**: Qwen2.5-Instruct (GGUF) via llama.cpp, templated.
 - **Fully local**: STT and summaries run on-device; **no data is sent to the cloud**.
 - **License**: MIT.
-- **Targets**: macOS-first; Windows/Linux supported.
+- **Targets**: macOS-first; Windows/Linux planned and untested — do not claim support.
 
 ## Stack & architecture
 
@@ -82,7 +82,7 @@ llama-server -m models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf -c 32
 ## Capture Sources
 
 Myna supports three recording modes (set via `start_recording { "source": "..." }`):
-- `"mic"` — microphone only (all platforms).
+- `"mic"` — microphone only.
 - `"system"` — system audio only (macOS 14.4+; silently degrades to mic on unsupported versions).
 - `"mixed"` — microphone + system audio as separate 16 kHz mono tracks with speaker attribution (macOS 14.4+; degrades to mic if permission denied).
 

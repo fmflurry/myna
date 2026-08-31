@@ -22,4 +22,4 @@ Myna records mic-only if:
 2. macOS version is below 14.4 (Core Audio taps not available).
 3. The Core Audio device enumeration fails at runtime.
 
-Mic-only mode uses the same `cpal`-based capture as all platforms. Users see a notification in the UI if system audio became unavailable.
+Mic-only mode uses the same `cpal`-based mic capture. Users see a notification in the UI if system audio became unavailable.

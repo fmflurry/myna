@@ -209,13 +209,13 @@ Myna requires microphone access. If you denied permission on first run:
 
 To speed up both, consider running on a machine with:
 - **Metal acceleration** (macOS) — automatically detected by llama.cpp.
-- **CUDA acceleration** (Windows/Linux with NVIDIA GPU) — compile llama.cpp with CUDA support (advanced; not in current Tauri build).
+- **CUDA acceleration** (Windows/Linux with NVIDIA GPU — not applicable to current macOS-only builds; advanced; not in current Tauri build).
 
 ### Recording Not Starting
 
 1. Verify microphone is connected and working (test in **System Preferences > Sound**).
 2. Ensure `~/myna/` directory is writable: `ls -ld ~/myna/` should show `drwx------` or similar with your username.
-3. Check Myna logs (Windows: `%APPDATA%\Myna\logs/`; macOS: `~/Library/Caches/com.myna/logs/`).
+3. Check Myna logs (macOS: `~/Library/Caches/com.myna/logs/`; when Windows builds ship: `%APPDATA%\Myna\logs/`).
 
 ## License
 
