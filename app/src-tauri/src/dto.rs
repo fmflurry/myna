@@ -10,7 +10,7 @@ use time::OffsetDateTime;
 use myna_audio::{SystemAudioSource, SystemAudioStatus};
 use myna_stt::{Transcript, TranscriptSegment};
 
-use crate::domain::{Meeting, Summary, SummaryRef};
+use crate::domain::{Folder, Meeting, Summary, SummaryRef};
 
 /// [`SystemAudioSource`], IPC-facing: a pickable system-audio capture
 /// source — either the synthetic all-output source or one running
@@ -74,6 +74,12 @@ pub struct TranscriptSegmentDto {
     pub start_sec: f32,
     pub end_sec: f32,
     pub text: String,
+    /// The flat stored speaker label (e.g. `"me"`, `"others"`,
+    /// `"others:2"`, `"unknown"`) — see [`myna_stt::Speaker`]. Any code that
+    /// parses this back from the UI must route it through
+    /// [`myna_stt::Speaker::parse`] so a malformed label degrades to
+    /// `"unknown"` rather than erroring.
+    pub speaker: String,
 }
 
 impl From<TranscriptSegment> for TranscriptSegmentDto {
@@ -81,6 +87,7 @@ impl From<TranscriptSegment> for TranscriptSegmentDto {
         Self {
             start_sec: segment.start_sec,
             end_sec: segment.end_sec,
+            speaker: segment.speaker.as_str().to_string(),
             text: segment.text,
         }
     }
@@ -117,6 +124,11 @@ pub struct SummaryRefDto {
     pub created_at: String,
     pub path: String,
     pub language: String,
+    /// Whether the transcript this summary was generated from has since
+    /// been replaced (e.g. by a re-transcribe). The markdown at `path` is
+    /// still readable — this only flags that it may no longer reflect the
+    /// current transcript.
+    pub stale: bool,
 }
 
 impl From<SummaryRef> for SummaryRefDto {
@@ -126,6 +138,7 @@ impl From<SummaryRef> for SummaryRefDto {
             created_at: rfc3339(summary_ref.created_at),
             path: summary_ref.path.to_string_lossy().into_owned(),
             language: summary_ref.language,
+            stale: summary_ref.stale,
         }
     }
 }
@@ -163,6 +176,46 @@ pub struct MeetingDto {
     pub transcript: Option<TranscriptDto>,
     pub summaries: Vec<SummaryRefDto>,
     pub archived: bool,
+    /// Count of audio chunks silently dropped during recording (see
+    /// `crate::session::DecodeChannel`). Non-zero means the transcript may
+    /// be missing audio even though the recording itself is intact — the
+    /// signal the UI uses to proactively offer a re-transcribe.
+    pub dropped_audio_chunks: u32,
+    /// Whether this meeting has recorded/imported audio on disk. Derived
+    /// from the filesystem (`crate::ingest::has_audio`), not from
+    /// `meeting.audio_path` — see that function's docs for why. Defaults to
+    /// `false` on the plain [`From<Meeting>`] impl below; callers that know
+    /// the meeting's on-disk audio state should build via
+    /// [`MeetingDto::from_meeting`] instead.
+    pub has_audio: bool,
+    /// Whether this meeting has a captured system-audio STT track
+    /// (`track-system.wav`) on disk. Derived from the filesystem
+    /// (`crate::ingest::has_audio`, applied to
+    /// `crate::store::MeetingStore::system_track_path`) exactly the way
+    /// `has_audio` is — same computation point, same default-`false`
+    /// fallback on the plain [`From<Meeting>`] impl below. Gates the
+    /// "Detect speakers" action in the UI: a mic-only recording (or a
+    /// legacy/imported meeting with no track separation) genuinely has
+    /// nothing for diarization to analyze. Callers that know the meeting's
+    /// on-disk track state should build via [`MeetingDto::from_meeting`]
+    /// instead.
+    pub has_system_track: bool,
+    /// The folder this meeting is filed under, if any, as its string id.
+    /// Always serialized (key-or-null), never omitted, so the UI can rely
+    /// on the key's presence.
+    pub folder_id: Option<String>,
+}
+
+impl MeetingDto {
+    /// Builds a full DTO including the filesystem-derived `has_audio` and
+    /// `has_system_track` flags.
+    pub fn from_meeting(meeting: Meeting, has_audio: bool, has_system_track: bool) -> Self {
+        Self {
+            has_audio,
+            has_system_track,
+            ..Self::from(meeting)
+        }
+    }
 }
 
 impl From<Meeting> for MeetingDto {
@@ -178,6 +231,31 @@ impl From<Meeting> for MeetingDto {
             transcript: meeting.transcript.map(TranscriptDto::from),
             summaries: meeting.summaries.into_iter().map(Into::into).collect(),
             archived: meeting.archived,
+            dropped_audio_chunks: meeting.dropped_audio_chunks,
+            has_audio: false,
+            has_system_track: false,
+            folder_id: meeting.folder_id.map(|id| id.to_string()),
+        }
+    }
+}
+
+/// A [`Folder`], IPC-facing.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderDto {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub position: u32,
+}
+
+impl From<Folder> for FolderDto {
+    fn from(folder: Folder) -> Self {
+        Self {
+            id: folder.id.to_string(),
+            name: folder.name,
+            created_at: rfc3339(folder.created_at),
+            position: folder.position,
         }
     }
 }

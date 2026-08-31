@@ -26,6 +26,7 @@ use std::time::Duration;
 use myna_app::error::AppError;
 use myna_app::session::guard_start;
 use myna_app::state::AppState;
+use myna_app::store::folder_store::FsFolderStore;
 use myna_app::store::fs_store::FsMeetingStore;
 
 const RACING_THREADS: usize = 8;
@@ -39,7 +40,7 @@ const RACING_THREADS: usize = 8;
 /// (device, STT model, worker threads).
 fn try_start(slot: &Mutex<Option<()>>) -> Result<(), AppError> {
     let mut guard = slot.lock().expect("lock poisoned");
-    guard_start(guard.is_some())?;
+    guard_start(guard.is_some(), false)?;
     // Hold the lock for a moment, like the real command does while it sets
     // up a session, so racing threads actually overlap instead of the OS
     // scheduler trivially serializing them one at a time.
@@ -88,7 +89,10 @@ fn concurrent_recording_starts_yield_busy_for_all_but_one() {
 fn concurrent_summarizations_yield_busy_for_all_but_one() {
     // Arrange: a fresh `AppState`, as if idle (no summarization running).
     let dir = tempfile::tempdir().expect("tempdir");
-    let state = Arc::new(AppState::new(FsMeetingStore::new(dir.path())));
+    let state = Arc::new(AppState::new(
+        FsMeetingStore::new(dir.path()),
+        FsFolderStore::new(dir.path().to_path_buf()),
+    ));
     let successes = Arc::new(AtomicUsize::new(0));
     let busy_rejections = Arc::new(AtomicUsize::new(0));
 
@@ -136,7 +140,10 @@ fn begin_summarization_resets_a_stale_cancel_flag_from_a_prior_run() {
     // Arrange: a prior run left the cancellation flag set (e.g. it was
     // cancelled and then finished).
     let dir = tempfile::tempdir().expect("tempdir");
-    let state = AppState::new(FsMeetingStore::new(dir.path()));
+    let state = AppState::new(
+        FsMeetingStore::new(dir.path()),
+        FsFolderStore::new(dir.path().to_path_buf()),
+    );
     state.cancel_summary.store(true, Ordering::SeqCst);
 
     // Act
@@ -163,7 +170,10 @@ fn cancelling_a_running_summarization_is_observed_by_the_shared_flag() {
     // in-flight — the state `summarize_meeting` is in while its worker
     // runs.
     let dir = tempfile::tempdir().expect("tempdir");
-    let state = AppState::new(FsMeetingStore::new(dir.path()));
+    let state = AppState::new(
+        FsMeetingStore::new(dir.path()),
+        FsFolderStore::new(dir.path().to_path_buf()),
+    );
     state
         .begin_summarization()
         .expect("begin_summarization should succeed when idle");

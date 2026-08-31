@@ -15,6 +15,7 @@ use crate::commands::recording::lock_session;
 use crate::domain::MeetingId;
 use crate::dto::{MeetingDto, TranscriptDto};
 use crate::error::AppError;
+use crate::ingest;
 use crate::session::guard_not_recording;
 use crate::state::AppState;
 use crate::store::MeetingStore;
@@ -32,7 +33,15 @@ pub const MAX_SEGMENT_TEXT_LENGTH: usize = 2000;
 pub async fn list_meetings(app: AppHandle) -> Result<Vec<MeetingDto>, AppError> {
     let store = app.state::<AppState>().store.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<MeetingDto>, AppError> {
-        Ok(store.list()?.into_iter().map(MeetingDto::from).collect())
+        Ok(store
+            .list()?
+            .into_iter()
+            .map(|meeting| {
+                let has_audio = ingest::has_audio(&store.audio_path(meeting.id));
+                let has_system_track = ingest::has_audio(&store.system_track_path(meeting.id));
+                MeetingDto::from_meeting(meeting, has_audio, has_system_track)
+            })
+            .collect())
     })
     .await
     .unwrap_or_else(|_| {
@@ -47,13 +56,22 @@ pub async fn list_meetings(app: AppHandle) -> Result<Vec<MeetingDto>, AppError> 
 pub async fn get_meeting(app: AppHandle, id: String) -> Result<MeetingDto, AppError> {
     let meeting_id = parse_meeting_id(&id)?;
     let store = app.state::<AppState>().store.clone();
-    tauri::async_runtime::spawn_blocking(move || Ok(MeetingDto::from(store.get(meeting_id)?)))
-        .await
-        .unwrap_or_else(|_| {
-            Err(AppError::Store(
-                "get_meeting worker thread panicked".to_string(),
-            ))
-        })
+    tauri::async_runtime::spawn_blocking(move || {
+        let meeting = store.get(meeting_id)?;
+        let has_audio = ingest::has_audio(&store.audio_path(meeting_id));
+        let has_system_track = ingest::has_audio(&store.system_track_path(meeting_id));
+        Ok(MeetingDto::from_meeting(
+            meeting,
+            has_audio,
+            has_system_track,
+        ))
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "get_meeting worker thread panicked".to_string(),
+        ))
+    })
 }
 
 /// Deletes a meeting and all of its associated files.
@@ -128,7 +146,13 @@ fn rename_meeting_blocking(
         }
         None => meeting,
     };
-    Ok(MeetingDto::from(renamed))
+    let has_audio = ingest::has_audio(&store.audio_path(id));
+    let has_system_track = ingest::has_audio(&store.system_track_path(id));
+    Ok(MeetingDto::from_meeting(
+        renamed,
+        has_audio,
+        has_system_track,
+    ))
 }
 
 /// Archives or unarchives a meeting.
@@ -166,12 +190,22 @@ fn set_meeting_archived_blocking(
     guard_not_recording(active_meeting_id, id)?;
 
     let meeting = state.store.get(id)?;
+    let has_audio = ingest::has_audio(&state.store.audio_path(id));
+    let has_system_track = ingest::has_audio(&state.store.system_track_path(id));
     if meeting.archived == archived {
-        return Ok(MeetingDto::from(meeting));
+        return Ok(MeetingDto::from_meeting(
+            meeting,
+            has_audio,
+            has_system_track,
+        ));
     }
     let updated = meeting.with_archived(archived);
     state.store.save(&updated)?;
-    Ok(MeetingDto::from(updated))
+    Ok(MeetingDto::from_meeting(
+        updated,
+        has_audio,
+        has_system_track,
+    ))
 }
 
 /// Edits the text of one transcript segment.
@@ -214,16 +248,26 @@ fn edit_transcript_segment_blocking(
     guard_not_recording(active_meeting_id, id)?;
 
     let meeting = state.store.get(id)?;
+    let has_audio = ingest::has_audio(&state.store.audio_path(id));
+    let has_system_track = ingest::has_audio(&state.store.system_track_path(id));
     let Some(transcript) = &meeting.transcript else {
         return Err(AppError::NotFound(format!("transcript for meeting {id}")));
     };
     let edited = apply_segment_edit(transcript, segment_index, text)?;
     if &edited == transcript {
-        return Ok(MeetingDto::from(meeting));
+        return Ok(MeetingDto::from_meeting(
+            meeting,
+            has_audio,
+            has_system_track,
+        ));
     }
     let updated = meeting.with_transcript(edited);
     state.store.save(&updated)?;
-    Ok(MeetingDto::from(updated))
+    Ok(MeetingDto::from_meeting(
+        updated,
+        has_audio,
+        has_system_track,
+    ))
 }
 
 /// Trims and length-caps a proposed meeting title.
@@ -282,6 +326,113 @@ pub fn apply_segment_edit(
         ..segments[index].clone()
     };
     Ok(myna_stt::Transcript { segments })
+}
+
+/// Returns a new [`myna_stt::Transcript`] with the segment at `index` removed.
+///
+/// Pure: never mutates `transcript` in place. Yields [`AppError::NotFound`]
+/// when `index` is out of range or when the segment at `index` no longer has
+/// `expected_text` (optimistic-concurrency guard against acting on stale
+/// UI state), leaving `transcript` untouched in either case. Deleting the
+/// only segment yields an empty `Transcript { segments: vec![] }`, not a
+/// dropped/`None` transcript.
+pub fn apply_segment_delete(
+    transcript: &myna_stt::Transcript,
+    index: usize,
+    expected_text: &str,
+) -> Result<myna_stt::Transcript, AppError> {
+    if index >= transcript.segments.len() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    if transcript.segments[index].text != expected_text {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let mut segments = transcript.segments.clone();
+    segments.remove(index);
+    Ok(myna_stt::Transcript { segments })
+}
+
+/// Returns a new [`myna_stt::Transcript`] with the segment at `index` merged
+/// into the segment immediately before it.
+///
+/// Pure: never mutates `transcript` in place. Yields [`AppError::NotFound`]
+/// when: `index` is `0` (there is no previous segment), `index` is out of
+/// range, the segment at `index` no longer has `expected_text`
+/// (optimistic-concurrency guard), the two segments have different
+/// [`myna_stt::Speaker`] labels (compared by value, not display name), or the
+/// joined text would exceed [`MAX_SEGMENT_TEXT_LENGTH`] — rejected rather
+/// than truncated, since silent truncation here would lose data the user
+/// didn't ask to lose.
+///
+/// The merged segment spans `prev.start_sec` to
+/// `prev.end_sec.max(cur.end_sec)` (so an overlapping pair can never yield an
+/// end before its start), joins text with a single ASCII space after
+/// trimming both sides, clones (never re-parses) the shared speaker label,
+/// and ORs `speaker_pinned` from both sides.
+pub fn apply_segment_merge_up(
+    transcript: &myna_stt::Transcript,
+    index: usize,
+    expected_text: &str,
+) -> Result<myna_stt::Transcript, AppError> {
+    if index == 0 || index >= transcript.segments.len() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let cur = &transcript.segments[index];
+    if cur.text != expected_text {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let prev = &transcript.segments[index - 1];
+    if prev.speaker != cur.speaker {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let text = format!("{} {}", prev.text.trim(), cur.text.trim());
+    if text.chars().count() > MAX_SEGMENT_TEXT_LENGTH {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let merged = myna_stt::TranscriptSegment {
+        start_sec: prev.start_sec,
+        end_sec: prev.end_sec.max(cur.end_sec),
+        text,
+        speaker: prev.speaker.clone(),
+        speaker_pinned: prev.speaker_pinned || cur.speaker_pinned,
+    };
+    let mut segments = transcript.segments.clone();
+    segments.splice(index - 1..=index, [merged]);
+    Ok(myna_stt::Transcript { segments })
+}
+
+/// Returns a new [`myna_stt::Transcript`] with `remove_count` segments
+/// starting at `index` replaced by `segments` (`Vec::splice` semantics).
+///
+/// Pure: never mutates `transcript` in place. Undoes an
+/// [`apply_segment_delete`] (`remove_count: 0`, one restored segment) or an
+/// [`apply_segment_merge_up`] (`remove_count: 1`, two restored segments),
+/// preserving each restored segment's `speaker_pinned` individually. Yields
+/// [`AppError::NotFound`] when `index + remove_count` exceeds the transcript's
+/// length, or when any restored segment's speaker label is not the
+/// canonical output of [`myna_stt::Speaker::parse`] — this rejects rather
+/// than silently degrading a malformed label to `unknown`, which is
+/// otherwise this codebase's documented data-loss gate.
+pub fn apply_segment_restore(
+    transcript: &myna_stt::Transcript,
+    index: usize,
+    remove_count: usize,
+    segments: &[myna_stt::TranscriptSegment],
+) -> Result<myna_stt::Transcript, AppError> {
+    if index + remove_count > transcript.segments.len() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    for segment in segments {
+        let label = segment.speaker.as_str();
+        if myna_stt::Speaker::parse(label).as_str() != label {
+            return Err(AppError::NotFound(format!("segment {index}")));
+        }
+    }
+    let mut new_segments = transcript.segments.clone();
+    new_segments.splice(index..index + remove_count, segments.iter().cloned());
+    Ok(myna_stt::Transcript {
+        segments: new_segments,
+    })
 }
 
 /// Parses a meeting id from its string form, surfacing an invalid id as
