@@ -1,0 +1,26 @@
+// Myna macOS Designated Requirement (DR) — explicit, pinned, and NEVER to be
+// changed once a signed build has shipped and users have granted TCC
+// permissions (microphone / kTCCServiceAudioCapture) against it.
+//
+// Background (see docs/releasing-macos.md and Apple TN3127):
+//   - macOS records an app's DR against every privacy grant it holds. If a
+//     later build's DR does not match, the grant is silently denied with no
+//     re-prompt.
+//   - Ad-hoc signing (no certificate) produces a DR that is a bare `cdhash`,
+//     which is different on every rebuild — so ad-hoc builds can never keep
+//     a stable TCC grant across updates.
+//   - Signing with a certificate (even an untrusted/self-issued one — trust
+//     is irrelevant to requirement evaluation unless the expression itself
+//     contains `anchor trusted`) lets the DR name the certificate's team
+//     instead of a per-build hash, which *is* stable across rebuilds.
+//   - The *default* DR that codesign derives from an Apple Development
+//     identity pins `leaf[subject.CN]`, whose value can change on
+//     certificate renewal. Pinning `leaf[subject.OU]` (the stable Team ID)
+//     instead avoids that churn — but only if we set it explicitly, once,
+//     and never again.
+//
+// `__APPLE_TEAM_ID__` is substituted by scripts/release-macos.sh from the
+// `APPLE_TEAM_ID` environment variable at build time. This file is a
+// template — it is never used verbatim as a requirement source, and the
+// Team ID is intentionally not hardcoded here (this repo is public).
+anchor apple generic and certificate leaf[subject.OU] = "__APPLE_TEAM_ID__"

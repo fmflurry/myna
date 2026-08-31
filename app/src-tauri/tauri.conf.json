@@ -42,7 +42,8 @@
       "../../templates": "templates"
     },
     "macOS": {
-      "minimumSystemVersion": "14.4"
+      "minimumSystemVersion": "14.4",
+      "signingIdentity": "-"
     }
   }
 }
