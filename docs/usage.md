@@ -4,35 +4,24 @@ Welcome to Myna, your local-first AI meeting recorder and summarizer. This guide
 
 ## First Run
 
-### 1. Download Models
-
-Myna requires two AI models (speech-to-text and summarization) and a voice-activity-detection model. Download them once at setup:
-
-```bash
-./scripts/download-models.sh
-```
-
-This fetches:
-- **Parakeet-TDT v3** (640 MB) — speech-to-text in 25 European languages
-- **Qwen2.5-Instruct** (2.0 GB) — on-device LLM for summaries
-- **Silero VAD** (629 KB) — voice activity detection
-
-Downloads are idempotent; running the script again checks what's already present and skips it.
-
-### 2. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 npm install                    # Tauri dependencies
 npm --prefix ui install        # Angular UI
 ```
 
-### 3. Launch Myna
+### 2. Launch Myna
 
 ```bash
 npx tauri dev
 ```
 
-The Myna window opens. You are now ready to record.
+The Myna window opens. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
+
+The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
+
+You are now ready to record.
 
 ## Choosing a Capture Source
 

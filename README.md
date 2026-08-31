@@ -24,7 +24,7 @@ Myna is built on a simple premise: your meetings are yours alone. Here's what th
 - **Recordings, transcripts, and summaries** live in `~/myna/` on your disk (override with `MYNA_DATA_DIR`); **nothing is synced to the cloud**.
 - **No telemetry, no analytics, no "improve our service" data collection**.
 - **No bot joins your call** — Myna captures from your microphone and system audio; it never participates as a meeting attendee.
-- **The only network call in Myna's lifetime is a one-time download** of the AI models from Hugging Face when you first run `./scripts/download-models.sh`. After that, **it works completely offline.**
+- **The only network call in Myna's lifetime is a one-time download** of the AI models from Hugging Face when you first click **Download** in the app (or run `./scripts/download-models.sh`). After that, **it works completely offline.**
 
 **Verify it yourself:** Myna is MIT-licensed and open-source. Read the code. Run it with your network disconnected.
 
@@ -69,26 +69,23 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 
 ### App & Models
 - **Tauri 2 desktop shell:** Rust core + system webview; small binary, native performance. Currently ships for macOS; Windows and Linux support is on the roadmap.
-- **In-app model management:** check model download status, see which models are ready, get the download command.
+- **In-app model downloads:** one-click fetch of the AI models with live progress and cancel; see at a glance which models are ready.
 - **App version info:** identify your Myna build.
 
 ## Getting Started
 
 **Platform support:** Myna is developed and tested on macOS only. Windows and Linux builds are not yet verified — see Roadmap.
 
-### 1. Download Models
-```bash
-./scripts/download-models.sh
-```
-Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face. Idempotent — safe to re-run.
-
-### 2. Install & Launch
+### 1. Install & Launch
 ```bash
 npm install
 npm --prefix ui install
 npx tauri dev
 ```
 Opens the Myna window. Ready to record.
+
+### 2. Download Models In-App
+On first run, Myna's onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
 
 For production builds:
 ```bash
