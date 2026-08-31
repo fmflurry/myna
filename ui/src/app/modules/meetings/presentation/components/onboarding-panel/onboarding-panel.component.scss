@@ -38,7 +38,7 @@ li {
 }
 
 li.present {
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 
 .download {
@@ -57,6 +57,24 @@ li.present {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   overflow-x: auto;
+}
+
+/*
+ * Standard button treatment (matches meeting-detail-pane's toolbar buttons).
+ * Both buttons previously had no background/color rule at all, so they fell
+ * back to unstyled UA chrome — invisible near-white-on-near-white in dark
+ * mode. This screen is the first thing a new user sees before any model is
+ * installed, so it's the highest-severity instance of that bug.
+ */
+.copy-download-command,
+.recheck {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .recheck {

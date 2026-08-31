@@ -1,0 +1,33 @@
+// Shared speaker-accent palette selector structure, included by both
+// live-transcript and transcript-view `.speaker-label` rules. The actual
+// colour VALUES live once, globally, as `--speaker-accent-0..5` (base hues,
+// scheme-independent) and `--speaker-accent-0..5-text` (legibility-adjusted
+// per hue and per scheme) in `src/styles.scss` — this mixin only supplies
+// the repeated selector/property shape so the two components don't each
+// hand-maintain their own copy of it.
+@mixin speaker-accent-palette {
+  &.speaker-accent-0 {
+    color: var(--speaker-accent-0-text);
+    background: color-mix(in srgb, var(--speaker-accent-0) 15%, transparent);
+  }
+  &.speaker-accent-1 {
+    color: var(--speaker-accent-1-text);
+    background: color-mix(in srgb, var(--speaker-accent-1) 15%, transparent);
+  }
+  &.speaker-accent-2 {
+    color: var(--speaker-accent-2-text);
+    background: color-mix(in srgb, var(--speaker-accent-2) 15%, transparent);
+  }
+  &.speaker-accent-3 {
+    color: var(--speaker-accent-3-text);
+    background: color-mix(in srgb, var(--speaker-accent-3) 15%, transparent);
+  }
+  &.speaker-accent-4 {
+    color: var(--speaker-accent-4-text);
+    background: color-mix(in srgb, var(--speaker-accent-4) 15%, transparent);
+  }
+  &.speaker-accent-5 {
+    color: var(--speaker-accent-5-text);
+    background: color-mix(in srgb, var(--speaker-accent-5) 15%, transparent);
+  }
+}

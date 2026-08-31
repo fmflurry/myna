@@ -40,7 +40,14 @@
     padding: 0.2rem 0.4rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text);
     font: inherit;
+
+    &::placeholder {
+      color: var(--color-text-muted);
+      opacity: 1;
+    }
   }
 
   .remove-speaker {
@@ -71,7 +78,7 @@
     }
 
     &:disabled {
-      opacity: 0.5;
+      color: var(--color-text-disabled);
       cursor: default;
     }
   }

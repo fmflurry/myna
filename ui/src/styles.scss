@@ -48,6 +48,15 @@
 }
 
 :root {
+  /* Let native form controls (scrollbars, unstyled inputs/buttons) pick the
+   * matching UA chrome for the active scheme. Without this, an element that
+   * declares text colour but no background (or vice versa) falls back to
+   * *light* UA chrome regardless of `--color-*`, which is how near-white
+   * dark-mode text has repeatedly gone invisible against default-white
+   * input/button backgrounds. Belt-and-braces: still set explicit
+   * background/color on every such element too (see A/B fixes). */
+  color-scheme: light dark;
+
   /* Myna brand palette. Ink + Off White are the UI foundation; Yellow is
    * reserved for small accents (focus marks) — never a large fill or page
    * background. #6366F1 is the interactive/product accent. */
@@ -66,6 +75,14 @@
   --color-danger: #c73a3a;
   --color-danger-contrast: #ffffff;
   --color-danger-soft: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  /* Darker danger token for use as TEXT over a danger-tinted surface (e.g.
+   * error-state's "Try again" button, which sits on a 12%-danger-tinted
+   * background and darkens further to ~27%-tinted on hover). `--color-danger`
+   * itself only clears ~4.3:1 there at rest and ~3.5:1 on hover — both below
+   * the 4.5:1 text threshold — because text and background share the same
+   * hue. Mixed toward black (light) / white (dark) like the analogous
+   * `-strong`/`-text` derivatives above. */
+  --color-danger-text: color-mix(in srgb, var(--color-danger) 83%, black);
   --color-success: #2f8a4d;
   /* Hover fill for otherwise-transparent/surface buttons (speaker chip/menu,
    * speakers-panel). Derived relative to --color-surface/--color-text so a
@@ -115,8 +132,70 @@
   --select-row-height: 2.25rem;
   --select-popup-max-height: calc(var(--select-row-height) * 10);
 
-  /* Focus/active marks are the one place small Myna Yellow accents belong. */
-  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--myna-yellow);
+  /* Disabled-state convention: ONE pairing used everywhere a control is
+   * `:disabled`, replacing the old bare `opacity` fades (those fade
+   * foreground AND background toward the page backdrop, so contrast becomes
+   * backdrop-dependent and drops below AA). `--color-text-muted` and
+   * `--color-border` already clear 4.5:1 / non-text contrast against both
+   * --color-bg and --color-surface in both schemes, so no scheme-specific
+   * override is needed here. */
+  --color-text-disabled: var(--color-text-muted);
+  --color-surface-disabled: var(--color-border);
+
+  /* Darker accent derivatives — #6366f1 fails as a foreground at full
+   * strength in both directions (white-on-accent ~4.47:1, accent-as-text
+   * ~3.8-4.2:1; both need >=4.5:1). `--color-accent-strong` darkens by a
+   * fixed amount and is scheme-independent: it always sits behind the
+   * constant white `--color-accent-contrast`, so the required contrast
+   * doesn't depend on light/dark. `--color-accent-text` is for accent used
+   * directly as text against the page bg/surface, which DOES depend on
+   * scheme (light backgrounds need darker text, dark backgrounds need
+   * lighter text) — see the dark override below. */
+  --color-accent-strong: color-mix(in srgb, var(--color-accent) 85%, black);
+  --color-accent-text: var(--color-accent-strong);
+
+  /* Darker success token for use as TEXT (li.present in onboarding-panel);
+   * --color-success itself stays the base swatch used elsewhere (e.g. the
+   * level-meter gradient). Passes comfortably in dark too (huge margin
+   * already), so no dark override is needed. */
+  --color-success-text: color-mix(in srgb, var(--color-success) 90%, black);
+
+  /* Speaker-accent palette (live-transcript / transcript-view speaker
+   * chips), wired up as real custom properties — they used to only exist as
+   * `var(--speaker-accent-N, #hex)` fallbacks, and since the property
+   * itself was never assigned, the literal hex fallback always won. Base
+   * hues are constant across schemes and drive the 15%-tint pill
+   * background; the `-text` companions are legibility-adjusted per hue AND
+   * per scheme, because the 15% tint leaves very little headroom against a
+   * near-white light surface and against a near-black dark surface alike. */
+  --speaker-accent-0: #6366f1;
+  --speaker-accent-1: #0ea5e9;
+  --speaker-accent-2: #10b981;
+  --speaker-accent-3: #f59e0b;
+  --speaker-accent-4: #ec4899;
+  --speaker-accent-5: #8b5cf6;
+
+  /* Mix percentages below are tuned against the WORST backdrop each chip
+   * renders on: transcript-view's speaker-label sits directly on the page
+   * `--color-bg` (no surface underneath it), which composited with the 15%
+   * hue tint is measurably lower-contrast than the `--color-surface`
+   * backdrop live-transcript uses for the same class. Indigo/pink/amber/
+   * violet are tuned to clear >=4.8:1 against that worst-case bg tint (pink
+   * previously failed outright at 4.49:1); sky/emerald already clear >=5.0
+   * there untouched. */
+  --speaker-accent-0-text: color-mix(in srgb, var(--speaker-accent-0) 81%, black);
+  --speaker-accent-1-text: color-mix(in srgb, var(--speaker-accent-1) 60%, black);
+  --speaker-accent-2-text: color-mix(in srgb, var(--speaker-accent-2) 60%, black);
+  --speaker-accent-3-text: color-mix(in srgb, var(--speaker-accent-3) 57%, black);
+  --speaker-accent-4-text: color-mix(in srgb, var(--speaker-accent-4) 71%, black);
+  --speaker-accent-5-text: color-mix(in srgb, var(--speaker-accent-5) 78%, black);
+
+  /* Focus/active marks: yellow only clears 3:1 non-text contrast in dark
+   * mode (10.6-11.8:1 there); against the light scheme's near-white
+   * --color-bg/--color-surface it measures ~1.5-1.6:1. Light mode uses the
+   * accent indigo instead (~4.2-4.5:1 against both), which the dark
+   * override below restores back to yellow where it already passes. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -131,6 +210,30 @@
     --color-danger: #e0685f;
     --color-danger-contrast: #1c1c1f;
     --color-success: #4cbf74;
+
+    /* Scheme-dependent overrides: dark backgrounds need the opposite
+     * adjustment from light ones (lighten toward white, not darken toward
+     * black), so these can't share the :root values above.
+     *
+     * --color-accent-text was previously mixed at 85% accent / 15% white,
+     * which passes against the *plain* dark bg/surface (4.9-5.5:1) but not
+     * against the TINTED contexts it also renders on: `.drop-hint` on
+     * drop-hover and `.status-badge` on `.row.selected` both composite a 14%
+     * accent tint over the surface first, and that pre-tinted backdrop only
+     * left 4.24:1 against the old, less-lightened text. Mixing in more white
+     * (75% accent / 25% white) fixes the tinted worst case to ~5.0:1 while
+     * still comfortably passing every plain-background use (>=5.7:1). */
+    --color-accent-text: color-mix(in srgb, var(--color-accent) 75%, white);
+    --color-danger-text: color-mix(in srgb, var(--color-danger) 79%, white);
+
+    --speaker-accent-0-text: color-mix(in srgb, var(--speaker-accent-0) 75%, white);
+    --speaker-accent-1-text: var(--speaker-accent-1);
+    --speaker-accent-2-text: var(--speaker-accent-2);
+    --speaker-accent-3-text: var(--speaker-accent-3);
+    --speaker-accent-4-text: color-mix(in srgb, var(--speaker-accent-4) 85%, white);
+    --speaker-accent-5-text: color-mix(in srgb, var(--speaker-accent-5) 78%, white);
+
+    --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--myna-yellow);
   }
 }
 

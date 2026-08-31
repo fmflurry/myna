@@ -54,14 +54,15 @@
   padding: var(--space-2) var(--space-5);
   border: none;
   border-radius: var(--radius-md);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-contrast);
   font-size: 1rem;
   cursor: pointer;
 }
 
 .start-meeting:disabled {
-  opacity: 0.6;
+  background: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 
@@ -82,7 +83,7 @@
 }
 
 .import-recording:disabled {
-  opacity: 0.6;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 

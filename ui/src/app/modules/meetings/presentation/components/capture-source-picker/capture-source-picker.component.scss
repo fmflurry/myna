@@ -32,7 +32,7 @@
 }
 
 .source:disabled {
-  opacity: 0.5;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 
@@ -51,7 +51,7 @@
 }
 
 .grant-permission:disabled {
-  opacity: 0.5;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 

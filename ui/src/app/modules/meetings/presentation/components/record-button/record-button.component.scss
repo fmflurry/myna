@@ -18,20 +18,20 @@ button {
  * app-record-control), so it stays a conventional, unmistakable cue rather
  * than permanent decoration on a button that's visible at rest. */
 .record {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-contrast);
-  border-color: var(--color-accent);
+  border-color: var(--color-accent-strong);
 }
 
 .record:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent) 88%, black);
-  border-color: color-mix(in srgb, var(--color-accent) 88%, black);
+  background: color-mix(in srgb, var(--color-accent-strong) 88%, black);
+  border-color: color-mix(in srgb, var(--color-accent-strong) 88%, black);
 }
 
 .stop {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-contrast);
-  border-color: var(--color-accent);
+  border-color: var(--color-accent-strong);
 }
 
 .cancel {
@@ -45,8 +45,18 @@ button {
 }
 
 button:disabled {
-  opacity: 0.5;
   cursor: not-allowed;
+}
+
+.record:disabled,
+.stop:disabled {
+  background: var(--color-surface-disabled);
+  border-color: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
+}
+
+.cancel:disabled {
+  color: var(--color-text-disabled);
 }
 
 .spinner {

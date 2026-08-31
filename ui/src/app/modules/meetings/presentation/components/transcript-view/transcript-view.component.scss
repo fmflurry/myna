@@ -1,3 +1,5 @@
+@use '../speaker-accent-palette' as palette;
+
 /* Explicit block-level fit within the transcript column, consistent with `live-transcript`'s own `:host` rule. */
 :host {
   display: block;
@@ -72,30 +74,7 @@ li {
   align-self: flex-start;
   color: inherit;
 
-  &.speaker-accent-0 {
-    color: var(--speaker-accent-0, #6366f1);
-    background: color-mix(in srgb, var(--speaker-accent-0, #6366f1) 15%, transparent);
-  }
-  &.speaker-accent-1 {
-    color: var(--speaker-accent-1, #0ea5e9);
-    background: color-mix(in srgb, var(--speaker-accent-1, #0ea5e9) 15%, transparent);
-  }
-  &.speaker-accent-2 {
-    color: var(--speaker-accent-2, #10b981);
-    background: color-mix(in srgb, var(--speaker-accent-2, #10b981) 15%, transparent);
-  }
-  &.speaker-accent-3 {
-    color: var(--speaker-accent-3, #f59e0b);
-    background: color-mix(in srgb, var(--speaker-accent-3, #f59e0b) 15%, transparent);
-  }
-  &.speaker-accent-4 {
-    color: var(--speaker-accent-4, #ec4899);
-    background: color-mix(in srgb, var(--speaker-accent-4, #ec4899) 15%, transparent);
-  }
-  &.speaker-accent-5 {
-    color: var(--speaker-accent-5, #8b5cf6);
-    background: color-mix(in srgb, var(--speaker-accent-5, #8b5cf6) 15%, transparent);
-  }
+  @include palette.speaker-accent-palette;
 }
 
 /**
@@ -152,6 +131,13 @@ li {
     padding: 0.2rem 0.4rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text);
     font: inherit;
+
+    &::placeholder {
+      color: var(--color-text-muted);
+      opacity: 1;
+    }
   }
 }

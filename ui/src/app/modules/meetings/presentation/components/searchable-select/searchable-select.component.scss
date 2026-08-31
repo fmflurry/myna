@@ -14,8 +14,13 @@
 }
 
 .ss-input:disabled {
-  opacity: 0.5;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
+}
+
+.ss-input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 .ss-listbox {

@@ -28,7 +28,11 @@
   flex-shrink: 0;
   background: transparent;
   border: 1px solid var(--color-danger);
-  color: var(--color-danger);
+  /* `--color-danger` itself only clears ~4.3:1 at rest and ~3.5:1 on hover
+     against this button's own (danger-tinted) background — text and
+     background share the same hue, so `--color-danger-text` (darker/lighter
+     per scheme) is used for the text instead. */
+  color: var(--color-danger-text);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3);
   cursor: pointer;

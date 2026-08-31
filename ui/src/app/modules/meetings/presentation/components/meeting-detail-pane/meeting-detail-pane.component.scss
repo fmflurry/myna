@@ -52,17 +52,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cancel-import {
-  flex-shrink: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  padding: 0.15rem 0.5rem;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
 .tab-row {
   flex-shrink: 0;
   display: flex;
@@ -83,7 +72,7 @@
 }
 
 .tab.active {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-bottom-color: var(--color-accent);
   font-weight: 600;
 }
@@ -98,7 +87,6 @@
   font-size: 0.85rem;
 }
 
-.reingest-controls,
 .export-controls {
   display: flex;
   align-items: center;
@@ -106,8 +94,9 @@
   flex-shrink: 0;
 }
 
-.reingest-controls .retranscribe,
-.reingest-controls .replace-audio,
+.cancel-import,
+.pane-toolbar-transcript .retranscribe,
+.pane-toolbar-transcript .replace-audio,
 .degraded-audio-warning .recover-transcript,
 .pane-toolbar-transcript .detect-speakers,
 .pane-toolbar-transcript .stop-diarize,
@@ -121,13 +110,18 @@
   cursor: pointer;
 }
 
-.reingest-controls .retranscribe:disabled,
-.reingest-controls .replace-audio:disabled,
+.cancel-import {
+  flex-shrink: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.pane-toolbar-transcript .retranscribe:disabled,
+.pane-toolbar-transcript .replace-audio:disabled,
 .degraded-audio-warning .recover-transcript:disabled,
 .pane-toolbar-transcript .detect-speakers:disabled,
 .export-controls .export:disabled {
-  color: var(--color-text-muted);
-  opacity: 0.7;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
 
@@ -190,11 +184,7 @@
   overflow-y: auto;
 }
 
-/* The wide two-column layout: fills the remaining vertical space below the
- * fixed heading/tabs/actions above it, and hands independent scrolling off
- * to `SplitWorkspaceComponent`'s own two panes — this element itself never
- * scrolls, so a long transcript on the left never drags the right column's
- * scroll position (or vice versa) with it. */
+/* Fills space below heading/tabs/actions; SplitWorkspaceComponent scrolls its own panes. */
 .workspace-split {
   flex: 1;
   min-height: 0;
@@ -237,12 +227,13 @@
   padding: var(--space-2) var(--space-4);
   border: none;
   border-radius: var(--radius-sm);
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-contrast);
   cursor: pointer;
 }
 
 .generate-button:disabled {
-  opacity: 0.6;
+  background: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }

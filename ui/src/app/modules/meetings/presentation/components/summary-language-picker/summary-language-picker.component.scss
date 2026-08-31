@@ -33,6 +33,6 @@ select:focus-visible {
 }
 
 select:disabled {
-  opacity: 0.5;
+  color: var(--color-text-disabled);
   cursor: not-allowed;
 }
