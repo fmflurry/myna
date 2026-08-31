@@ -6,7 +6,7 @@
 **Capture, transcribe, and summarize your meetings — entirely on your machine.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-FFC300?style=flat-square&logo=open-source-initiative)](LICENSE)
-[![Platform: macOS/Windows/Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-0F1115?style=flat-square&logo=apple)]
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-0F1115?style=flat-square&logo=apple)]
 [![100% Local](https://img.shields.io/badge/runs-100%25%20local-6366F1?style=flat-square&logo=shield-check)](docs/usage.md)
 [![No Account](https://img.shields.io/badge/account-not%20required-FFC300?style=flat-square&logo=circle-check)](docs/usage.md)
 [![Price: $0](https://img.shields.io/badge/price-%240-0F1115?style=flat-square&logo=handshake)](LICENSE)
@@ -37,7 +37,7 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 ## Features
 
 ### Recording & Capture
-- **Three capture modes:** microphone only (all platforms), system audio only (macOS 14.4+), or microphone + system audio mixed (macOS 14.4+). Gracefully degrades to microphone-only on older macOS versions.
+- **Three capture modes:** microphone only, system audio only (macOS 14.4+), or microphone + system audio mixed (macOS 14.4+). Gracefully degrades to microphone-only on older macOS versions.
 - **Input device selection:** choose which microphone to use; see all available devices.
 - **Pause-free recording:** start and stop cleanly; cancel a recording without saving.
 - **Permission flow:** requests system audio recording permission when needed; handles permission state (audio-only, no video capture).
@@ -68,11 +68,13 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 - **Export meetings:** save transcripts and summaries to your filesystem.
 
 ### App & Models
-- **Tauri 2 desktop shell:** Rust core + system webview; small binary, native performance, runs on macOS (13+), Windows, and Linux.
+- **Tauri 2 desktop shell:** Rust core + system webview; small binary, native performance. Currently ships for macOS; Windows and Linux support is on the roadmap.
 - **In-app model management:** check model download status, see which models are ready, get the download command.
 - **App version info:** identify your Myna build.
 
 ## Getting Started
+
+**Platform support:** Myna is developed and tested on macOS only. Windows and Linux builds are not yet verified — see Roadmap.
 
 ### 1. Download Models
 ```bash
@@ -122,7 +124,7 @@ See [docs/usage.md](docs/usage.md) for a complete walkthrough: choosing capture 
 - **Speaker diarization** — summaries know who said what (paywalled by all cloud rivals).
 - **Global search** — find meetings, transcripts, and summaries across your entire library.
 - **Export formats** — Markdown, TXT, SRT, VTT, PDF, plus Obsidian and Notion vault exports.
-- **Windows & Linux parity** — full feature support on non-macOS platforms.
+- **Windows & Linux support** — build, test, and full feature parity on non-macOS platforms.
 - **Model picker** — choose between 3B, 8B, and larger LLMs based on your hardware.
 - **Custom vocabulary** — biasing and hotword support so proper nouns and technical terms transcribe correctly.
 
