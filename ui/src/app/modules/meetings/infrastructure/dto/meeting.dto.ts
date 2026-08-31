@@ -27,4 +27,11 @@ export interface MeetingDto {
    * field (still exercised by existing specs) keep type-checking.
    */
   readonly folderId?: string | null;
+  /**
+   * Display names keyed by flat speaker label (e.g. `'others:1'` ->
+   * `'Jean'`), mirroring Rust `MeetingDto::speaker_names`. The Rust side
+   * always serializes the map (empty included); typed optional here for
+   * the same pre-existing-fixture reason as `folderId`.
+   */
+  readonly speakerNames?: Readonly<Record<string, string>>;
 }

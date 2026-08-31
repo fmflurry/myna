@@ -141,3 +141,65 @@ li {
     }
   }
 }
+
+/**
+ * Floating toolbar shown over a text selection inside the transcript.
+ * Positioned `fixed` with inline `left`/`top`/`bottom`/`max-height` computed
+ * from the selection range's `getBoundingClientRect()` (see
+ * `computeAnchoredMenuPosition(rect, true)` — bottom-anchored ABOVE the
+ * selection, flipping below near the viewport top), so it escapes the
+ * transcript's scroll clipping exactly like `.speaker-menu`. Same
+ * surface/border/shadow tokens so the dark theme follows automatically.
+ */
+.selection-menu {
+  position: fixed;
+  z-index: var(--z-popover, 100);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.15));
+  padding: 0.25rem;
+}
+
+.selection-menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/** The ~28px icon button that opens the speaker picker from the toolbar. */
+.selection-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+
+  &:hover {
+    background: var(--color-surface-hover);
+  }
+}
+
+.selection-scope {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* The picker inside the toolbar flows within it — the fixed popup geometry only applies to the chip menu. */
+.selection-menu .speaker-menu {
+  position: static;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+}
+

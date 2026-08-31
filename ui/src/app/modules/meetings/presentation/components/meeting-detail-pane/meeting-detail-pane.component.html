@@ -12,7 +12,7 @@
     (importRequested)="importRequested.emit()"
   />
 } @else {
-  <header class="detail-heading">
+    <header class="detail-heading">
     <h1>
       <app-editable-title [title]="displayTitle()" (titleChanged)="renameRequested.emit($event)" />
       &mdash; {{ headingDate() }}
@@ -26,6 +26,9 @@
         <span class="import-progress-label">{{ label }}</span>
         <button type="button" class="cancel-import" (click)="cancelImportRequested.emit()">Cancel</button>
       </div>
+    }
+    @if (meeting()?.hasAudio && hasAudio()) {
+      <app-audio-player [meetingId]="meeting()?.id" [hasAudio]="true" />
     }
   </header>
 
@@ -182,7 +185,11 @@
       <app-transcript-view
         [transcript]="meeting()!.transcript"
         [editable]="!isLive()"
+        [speakerNames]="speakerNamesRegistry()"
         (segmentEdited)="segmentEdited.emit($event)"
+        (speakerRenamed)="speakerRenamed.emit($event)"
+        (segmentSpeakerReassigned)="segmentSpeakerReassigned.emit($event)"
+        (selectionSpeakerAssigned)="selectionSpeakerAssigned.emit($event)"
       />
     }
   </ng-template>

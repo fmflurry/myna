@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use myna_llm::{RenderContext, Summarizer, SummaryOptions, Template};
+use myna_llm::{init_ggml_env, RenderContext, Summarizer, SummaryOptions, Template};
 
 #[derive(Debug, Parser)]
 #[command(name = "myna-llm", about = "Local summarization for Myna transcripts")]
@@ -69,6 +69,13 @@ fn apply_overrides(overrides: SummaryOverrides) -> SummaryOptions {
 }
 
 fn main() -> Result<()> {
+    // Must run before any Metal buffer is allocated (i.e. before the first
+    // `Summarizer::load`) -- see `init_ggml_env`'s doc comment for why.
+    // `Summarizer::load` also calls this itself, so this call is here only
+    // so the CLI's single-threaded startup is the point that sets the env
+    // var, matching the Tauri entry point's convention.
+    init_ggml_env();
+
     let Command::Summarize {
         model,
         template,

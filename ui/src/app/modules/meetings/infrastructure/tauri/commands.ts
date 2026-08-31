@@ -62,6 +62,7 @@ export const COMMAND_NAMES = [
   'start_model_download',
   'start_diarization_download',
   'cancel_model_download',
+  'get_meeting_audio_path',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -215,6 +216,7 @@ export interface CommandSignatures {
   readonly start_model_download: { args: NoArgs; result: void };
   readonly start_diarization_download: { args: NoArgs; result: void };
   readonly cancel_model_download: { args: NoArgs; result: void };
+  readonly get_meeting_audio_path: { args: { readonly id: string }; result: string | null };
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];

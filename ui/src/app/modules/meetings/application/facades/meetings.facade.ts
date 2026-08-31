@@ -4,7 +4,7 @@ import type { CaptureSource } from '../../core/models/capture-source.model';
 import type { FolderId } from '../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
-import { FileDialogPort } from '../../core/ports/file-dialog.port';
+import { AudioRepositoryPort, FileDialogPort } from '../../core/ports';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
 import { CancelImportUseCase } from '../use-cases/cancel-import.usecase';
 import { CancelRecordingUseCase } from '../use-cases/cancel-recording.usecase';
@@ -101,6 +101,7 @@ export class MeetingsFacade {
   private readonly deleteFolderUseCase = inject(DeleteFolderUseCase);
   private readonly setMeetingFolderUseCase = inject(SetMeetingFolderUseCase);
   private readonly placeMeetingUseCase = inject(PlaceMeetingUseCase);
+  private readonly audioRepository = inject(AudioRepositoryPort);
 
   readonly meetings = this.store.meetings;
   readonly selectedMeeting = this.store.selectedMeeting;
@@ -274,6 +275,8 @@ export class MeetingsFacade {
   removeSpeaker = (id: MeetingId, label: string): Promise<void> => this.speakerFacade.removeSpeaker(id, label);
   setSegmentSpeaker = (id: MeetingId, index: number, speaker: string): Promise<void> =>
     this.speakerFacade.setSegmentSpeaker(id, index, speaker);
+  setSegmentSpeakers = (id: MeetingId, indices: readonly number[], speaker: string): Promise<void> =>
+    this.speakerFacade.setSegmentSpeakers(id, indices, speaker);
   deleteTranscriptSegment = (id: MeetingId, index: number, expectedText: string): Promise<void> =>
     this.transcriptEditingFacade.deleteTranscriptSegment(id, index, expectedText);
   mergeTranscriptSegmentUp = (id: MeetingId, index: number, expectedText: string): Promise<void> =>
@@ -367,6 +370,7 @@ export class MeetingsFacade {
   setTranscriptCollapsed(collapsed: boolean): void {
     this.store.setTranscriptCollapsed(collapsed);
   }
+  getAudioUrl = (meetingId: MeetingId): Promise<string | null> => this.audioRepository.getAudioUrl(meetingId);
 
   loadFolders = (): Promise<void> =>
     this.guarded(async () => this.store.setFolders(await this.listFoldersUseCase.execute()));

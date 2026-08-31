@@ -4,6 +4,8 @@
 //! UI never has to translate field names, and every timestamp is rendered
 //! as an RFC 3339 string rather than a native `OffsetDateTime`.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -204,6 +206,11 @@ pub struct MeetingDto {
     /// Always serialized (key-or-null), never omitted, so the UI can rely
     /// on the key's presence.
     pub folder_id: Option<String>,
+    /// Display names keyed by flat speaker label (e.g. `"others:1"` ->
+    /// `"Jean"`) — see [`crate::domain::Meeting::speaker_names`]. Always
+    /// serialized, empty map included, mirroring the key-or-null modeling
+    /// of the other optional-feeling fields on this DTO.
+    pub speaker_names: BTreeMap<String, String>,
 }
 
 impl MeetingDto {
@@ -235,6 +242,7 @@ impl From<Meeting> for MeetingDto {
             has_audio: false,
             has_system_track: false,
             folder_id: meeting.folder_id.map(|id| id.to_string()),
+            speaker_names: meeting.speaker_names,
         }
     }
 }

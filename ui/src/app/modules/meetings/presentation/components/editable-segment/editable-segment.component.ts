@@ -3,6 +3,7 @@ import {
   Component,
   ElementRef,
   afterRenderEffect,
+  inject,
   input,
   output,
   signal,
@@ -33,6 +34,7 @@ export class EditableSegmentComponent {
   protected readonly editing = signal(false);
   protected readonly draft = signal('');
 
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly textArea = viewChild<ElementRef<HTMLTextAreaElement>>('segmentInput');
 
   constructor() {
@@ -49,8 +51,28 @@ export class EditableSegmentComponent {
     if (!this.editable()) {
       return;
     }
+    if (this.isSelectionAnchoredInTrigger()) {
+      return;
+    }
     this.draft.set(this.text());
     this.editing.set(true);
+  }
+
+  /**
+   * True while a real (non-collapsed) text selection is anchored inside this
+   * segment's trigger button. A drag-select that ends on the trigger fires a
+   * trailing `click` on it — entering edit mode there would replace the text
+   * with a textarea and destroy the selection (and with it the floating
+   * attribution toolbar) before the user could act on it. The click is the
+   * tail of a selection, not an intent to edit.
+   */
+  private isSelectionAnchoredInTrigger(): boolean {
+    const selection = window.getSelection();
+    if (selection === null || selection.isCollapsed || selection.anchorNode === null) {
+      return false;
+    }
+    const trigger = this.host.nativeElement.querySelector('.segment-trigger');
+    return trigger !== null && trigger.contains(selection.anchorNode);
   }
 
   protected onInput(event: Event): void {

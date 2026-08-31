@@ -84,7 +84,7 @@ describe('TranscriptViewComponent — speaker chip menu', () => {
     expect(emitted).toEqual([{ index: 1, speaker: 'others:m1' }]);
   });
 
-  it('offers renaming only once the segment carries a sub-identity', () => {
+  it('offers renaming for every attributed label but never for unknown', () => {
     const withSubId = createFixture();
     const subIdChip: HTMLButtonElement = withSubId.nativeElement.querySelectorAll('.speaker-chip')[0]!;
     subIdChip.click();
@@ -96,6 +96,50 @@ describe('TranscriptViewComponent — speaker chip menu', () => {
     bareChip.click();
     withoutSubId.detectChanges();
     expect(withoutSubId.nativeElement.querySelector('.rename-row')).toBeNull();
+  });
+
+  it('renders the rename input for the unassigned bare "others" chip', () => {
+    // Regression (bug 1): the menu for the unassigned "Others" pool used to
+    // omit the rename row entirely — `showRenameRow` required a sub-id — so
+    // the pool could never be renamed. The name registry is keyed by flat
+    // label, so `others` is renamable like any other attributed label.
+    const fixture = createFixture({}, ['others']);
+    const chip: HTMLButtonElement = fixture.nativeElement.querySelector('.speaker-chip');
+    chip.click();
+    fixture.detectChanges();
+
+    const input: HTMLInputElement | null = fixture.nativeElement.querySelector('.rename-row input');
+    expect(input).not.toBeNull();
+    expect(input!.placeholder).toBe('Others');
+  });
+
+  it('emits speakerRenamed with label "others" when Enter commits on the unassigned chip', () => {
+    // Regression (bug 1, commit path): typing + Enter on the unassigned
+    // "Others" chip must emit a rename for the bare `others` label.
+    const fixture = createFixture({}, ['others']);
+    const emitted: SpeakerRename[] = [];
+    fixture.componentInstance.speakerRenamed.subscribe((event) => emitted.push(event));
+
+    const chip: HTMLButtonElement = fixture.nativeElement.querySelector('.speaker-chip');
+    chip.click();
+    fixture.detectChanges();
+    const input: HTMLInputElement = fixture.nativeElement.querySelector('.rename-row input');
+    input.value = '  Remote team  ';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    fixture.detectChanges();
+
+    expect(emitted).toEqual([{ label: 'others', name: 'Remote team' }]);
+    expect(fixture.nativeElement.querySelector('.speaker-menu')).toBeNull();
+  });
+
+  it('shows the registered display name on the chip so a committed rename is visible immediately', () => {
+    // Regression (bug 2, display layer): the chip used to render only the
+    // derived `speakerDisplayName` ("Others 1") and never consulted
+    // `speakerNames`, so even a successfully persisted rename left the old
+    // name on the chip across re-renders.
+    const fixture = createFixture({ 'others:1': 'Jean' }, ['others:1']);
+    const chip: HTMLButtonElement = fixture.nativeElement.querySelector('.speaker-chip');
+    expect(chip.textContent?.trim()).toBe('Jean');
   });
 
   it('emits speakerRenamed with the trimmed name on Enter', () => {

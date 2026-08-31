@@ -3,6 +3,7 @@ import { makeEnvironmentProviders } from '@angular/core';
 
 import { AppInfoPort } from './core/ports/app-info.port';
 import { AudioImportPort } from './core/ports/audio-import.port';
+import { AudioRepositoryPort } from './core/ports/audio-repository.port';
 import { FileDialogPort } from './core/ports/file-dialog.port';
 import { FolderRepositoryPort } from './core/ports/folder-repository.port';
 import { MeetingRepositoryPort } from './core/ports/meeting-repository.port';
@@ -15,6 +16,7 @@ import { TranscriberPort } from './core/ports/transcriber.port';
 import { LocalStoragePreferencesAdapter } from './infrastructure/local-storage-preferences.adapter';
 import { TauriAppInfoAdapter } from './infrastructure/tauri/tauri-app-info.adapter';
 import { TauriAudioImportAdapter } from './infrastructure/tauri/tauri-audio-import.adapter';
+import { TauriAudioRepositoryAdapter } from './infrastructure/tauri/tauri-audio-repository.adapter';
 import { TauriFileDialogAdapter } from './infrastructure/tauri/tauri-file-dialog.adapter';
 import { TauriFolderRepositoryAdapter } from './infrastructure/tauri/tauri-folder-repository.adapter';
 import { TauriMeetingRepositoryAdapter } from './infrastructure/tauri/tauri-meeting-repository.adapter';
@@ -89,6 +91,7 @@ export function provideMeetings(): EnvironmentProviders {
     { provide: PreferencesPort, useClass: LocalStoragePreferencesAdapter },
     { provide: AppInfoPort, useClass: TauriAppInfoAdapter },
     { provide: AudioImportPort, useClass: TauriAudioImportAdapter },
+    { provide: AudioRepositoryPort, useClass: TauriAudioRepositoryAdapter },
     { provide: ModelInitializerPort, useClass: TauriModelInitializerAdapter },
     StartRecordingUseCase,
     StopRecordingUseCase,

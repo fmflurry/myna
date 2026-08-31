@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { convertFileSrc, listen } from '@tauri-apps/api/core';
 import { Observable } from 'rxjs';
 
 import { MeetingsError, type MeetingsErrorCode } from '../../core/models/recording-state.model';
@@ -101,4 +101,14 @@ export function onEvent<E extends EventName>(name: E): Observable<EventPayload<E
       unlisten?.();
     };
   });
+}
+
+/**
+ * Returns a playable URL for a meeting's audio file, or null if none exists.
+ * Invokes the Rust `get_meeting_audio_path` command and converts the filesystem
+ * path to a Tauri asset URL via `convertFileSrc`.
+ */
+export async function getMeetingAudioUrl(meetingId: string): Promise<string | null> {
+  const path = await invokeCommand('get_meeting_audio_path', { id: meetingId });
+  return path !== null ? convertFileSrc(path) : null;
 }

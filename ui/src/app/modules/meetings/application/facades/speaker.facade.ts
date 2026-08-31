@@ -9,6 +9,7 @@ import {
   runRemoveSpeakerWithHistory,
   runRenameSpeakerWithHistory,
   runSetSegmentSpeakerWithHistory,
+  runSetSegmentSpeakersWithHistory,
   runUndoLastSpeakerOp,
 } from './meetings-facade-speaker-history.support';
 
@@ -38,6 +39,10 @@ export class SpeakerFacade {
 
   async setSegmentSpeaker(id: MeetingId, index: number, speaker: string): Promise<void> {
     await runSetSegmentSpeakerWithHistory(this.store, this.setSegmentSpeakerUseCase, id, index, speaker);
+  }
+
+  async setSegmentSpeakers(id: MeetingId, indices: readonly number[], speaker: string): Promise<void> {
+    await runSetSegmentSpeakersWithHistory(this.store, this.setSegmentSpeakerUseCase, id, indices, speaker);
   }
 
   async undoLastSpeakerOp(): Promise<void> {

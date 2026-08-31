@@ -52,7 +52,20 @@ export interface SpeakerReassignOp {
   readonly previousLabel: string;
 }
 
-export type SpeakerOp = SpeakerRenameOp | SpeakerRemoveOp | SpeakerReassignOp;
+/**
+ * Inverse of a batched `set_segment_speaker` op: restore every touched
+ * segment's label. ACCEPTED asymmetry (see the file header): captures only
+ * `previousLabel`, and the backend `set_segment_speaker` ALWAYS re-pins — so
+ * undo restores labels but cannot un-pin; touched segments remain pinned
+ * after undo and are skipped by future diarization relabels.
+ */
+export interface SpeakerReassignManyOp {
+  readonly kind: 'reassign-many';
+  readonly meetingId: MeetingId;
+  readonly segments: readonly SpeakerRemovedSegment[];
+}
+
+export type SpeakerOp = SpeakerRenameOp | SpeakerRemoveOp | SpeakerReassignOp | SpeakerReassignManyOp;
 
 /** Undo stack depth cap — the oldest ops fall off first. */
 export const SPEAKER_HISTORY_CAP = 50;
@@ -70,5 +83,7 @@ export function describeSpeakerOp(op: SpeakerOp): string {
       return `Undo remove ${op.previousName ?? op.label}`;
     case 'reassign':
       return `Undo speaker change (segment ${op.index + 1})`;
+    case 'reassign-many':
+      return `Undo speaker change (${op.segments.length} segments)`;
   }
 }

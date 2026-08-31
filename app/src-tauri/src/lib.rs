@@ -54,6 +54,7 @@ pub fn run() {
             commands::meetings::get_meeting,
             commands::meetings::delete_meeting,
             commands::meetings::get_transcript,
+            commands::meetings::get_meeting_audio_path,
             commands::meetings::rename_meeting,
             commands::meetings::set_meeting_archived,
             commands::meetings::edit_transcript_segment,

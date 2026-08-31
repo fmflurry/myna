@@ -3,7 +3,9 @@ import type { MeetingsStore } from '../stores/meetings.store';
 import {
   pushSpeakerOp,
   type SpeakerOp,
+  type SpeakerReassignManyOp,
   type SpeakerReassignOp,
+  type SpeakerRemovedSegment,
   type SpeakerRemoveOp,
   type SpeakerRenameOp,
 } from '../stores/speaker-history.model';
@@ -48,6 +50,20 @@ function captureRemoveInverse(meeting: Meeting | undefined, id: MeetingId, label
 function captureReassignInverse(meeting: Meeting | undefined, id: MeetingId, index: number): SpeakerReassignOp | null {
   const previousLabel = meeting?.id === id ? meeting.transcript?.segments[index]?.speaker : undefined;
   return previousLabel === undefined ? null : { kind: 'reassign', meetingId: id, index, previousLabel };
+}
+
+/** Captures every touched segment's pre-mutation label for a batched reassign (out-of-range indices drop out). */
+function captureReassignManyInverses(
+  meeting: Meeting | undefined,
+  id: MeetingId,
+  indices: readonly number[],
+): readonly SpeakerRemovedSegment[] {
+  if (meeting?.id !== id) {
+    return [];
+  }
+  return indices
+    .map((index) => ({ index, previousLabel: meeting.transcript?.segments[index]?.speaker }))
+    .filter((entry): entry is SpeakerRemovedSegment => entry.previousLabel !== undefined);
 }
 
 /** Runs a persisted speaker mutation, pushing its captured inverse only after the backend confirms. Never optimistic. */
@@ -99,6 +115,42 @@ export async function runSetSegmentSpeakerWithHistory(
 }
 
 /**
+ * Reassigns several segments' speakers in one undoable step. All inverses are
+ * captured BEFORE any mutation (a mid-batch failure must leave a restorable
+ * picture of every touched segment); a single index collapses to the existing
+ * `'reassign'` op so the stack never churns kinds. Forward calls run
+ * sequentially, each confirmed write mirrored into the store, and exactly ONE
+ * op is pushed after the whole batch succeeds — any rejection surfaces the
+ * error and pushes nothing (never optimistic).
+ */
+export async function runSetSegmentSpeakersWithHistory(
+  store: MeetingsStore,
+  setSegmentSpeakerUseCase: SetSegmentSpeakerUseCase,
+  id: MeetingId,
+  indices: readonly number[],
+  speaker: string,
+): Promise<void> {
+  const [singleIndex] = indices;
+  if (indices.length === 1 && singleIndex !== undefined) {
+    await runSetSegmentSpeakerWithHistory(store, setSegmentSpeakerUseCase, id, singleIndex, speaker);
+    return;
+  }
+  const segments = captureReassignManyInverses(store.selectedMeeting(), id, indices);
+  try {
+    for (const index of indices) {
+      store.updateMeeting(await setSegmentSpeakerUseCase.set(id, index, speaker));
+    }
+    if (segments.length > 0) {
+      const op: SpeakerReassignManyOp = { kind: 'reassign-many', meetingId: id, segments };
+      store.setSpeakerHistory(pushSpeakerOp(store.speakerHistory(), op));
+    }
+    store.clearError();
+  } catch (caught) {
+    store.setError(toErrorInfo(caught));
+  }
+}
+
+/**
  * Pops and executes the last speaker op's inverse through the existing use
  * cases (persisted, never optimistic). The op is dropped BEFORE the inverse
  * runs: a failed undo surfaces through the ERROR slot and is never retried
@@ -131,7 +183,17 @@ export async function runUndoLastSpeakerOp(
       // An empty name clears the entry, mirroring `renameSpeaker`'s contract.
       store.updateMeeting(await renameSpeakerUseCase.rename(id, op.label, op.previousName ?? ''));
     } else if (op.kind === 'reassign') {
+      // ACCEPTED asymmetry (see the KNOWN LIMITATION in `speaker-history.model.ts`):
+      // the inverse `set_segment_speaker` ALWAYS re-pins, so undo restores the
+      // label but cannot un-pin — the touched segment remains pinned after
+      // undo and is skipped by future diarization relabels.
       store.updateMeeting(await setSegmentSpeakerUseCase.set(id, op.index, op.previousLabel));
+    } else if (op.kind === 'reassign-many') {
+      // Same accepted asymmetry as `'reassign'`: undo restores labels but
+      // cannot un-pin; every touched segment stays pinned after undo.
+      for (const segment of op.segments) {
+        store.updateMeeting(await setSegmentSpeakerUseCase.set(id, segment.index, segment.previousLabel));
+      }
     } else {
       for (const segment of op.segments) {
         store.updateMeeting(await setSegmentSpeakerUseCase.set(id, segment.index, segment.previousLabel));

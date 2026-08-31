@@ -25,6 +25,7 @@ import { InMemoryRecorderFake } from '../testing/in-memory-recorder.fake';
 import { InMemorySummarizerFake } from '../testing/in-memory-summarizer.fake';
 import { InMemoryTemplateRepositoryFake } from '../testing/in-memory-template-repository.fake';
 import { InMemoryTranscriberFake } from '../testing/in-memory-transcriber.fake';
+import { describeSpeakerOp, type SpeakerOp } from '../stores/speaker-history.model';
 import { MeetingsFacade } from './meetings.facade';
 
 /**
@@ -207,5 +208,76 @@ describe('MeetingsFacade speaker-op undo history', () => {
 
     expect(facade.error()).toBeUndefined();
     expect(facade.speakerHistory()).toEqual([]);
+  });
+
+  // ---- Multi-segment speaker reassign ----
+  const callSetSegmentSpeakers = (indices: readonly number[], speaker: string): Promise<void> =>
+    facade.setSegmentSpeakers(meetingId, indices, speaker);
+
+  it('setSegmentSpeakers updates every touched segment and records ONE reassign-many op', async () => {
+    await callSetSegmentSpeakers([0, 2], 'me');
+
+    expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.speaker)).toEqual([
+      'me',
+      'others',
+      'me',
+    ]);
+    const expectedOp: SpeakerOp = {
+      kind: 'reassign-many',
+      meetingId,
+      segments: [
+        { index: 0, previousLabel: 'others:1' },
+        { index: 2, previousLabel: 'others:1' },
+      ],
+    };
+    expect(facade.speakerHistory()).toEqual([expectedOp]);
+  });
+
+  it('setSegmentSpeakers with a single index collapses to the existing reassign op (no kind churn)', async () => {
+    await callSetSegmentSpeakers([1], 'me');
+
+    expect(facade.selectedMeeting()?.transcript?.segments[1]?.speaker).toBe('me');
+    expect(facade.speakerHistory()).toEqual([
+      { kind: 'reassign', meetingId, index: 1, previousLabel: 'others' },
+    ]);
+  });
+
+  it('undo of a reassign-many restores all touched labels in one undo and empties the stack', async () => {
+    await callSetSegmentSpeakers([0, 2], 'me');
+    expect(facade.speakerHistory().length).toBe(1);
+
+    await facade.undoLastSpeakerOp();
+
+    expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.speaker)).toEqual([
+      'others:1',
+      'others',
+      'others:1',
+    ]);
+    expect(facade.speakerHistory()).toEqual([]);
+    expect(facade.error()).toBeUndefined();
+  });
+
+  it('setSegmentSpeakers pushes nothing and sets the error when the forward mutation is rejected', async () => {
+    vi.spyOn(repository, 'setSegmentSpeaker').mockRejectedValueOnce(
+      new MeetingsError('BUSY', 'Meeting is recording.'),
+    );
+
+    await callSetSegmentSpeakers([0, 2], 'me');
+
+    expect(facade.error()?.code).toBe('BUSY');
+    expect(facade.speakerHistory()).toEqual([]);
+  });
+
+  it('describeSpeakerOp renders a reassign-many op as covering "2 segments"', () => {
+    const op: SpeakerOp = {
+      kind: 'reassign-many',
+      meetingId,
+      segments: [
+        { index: 0, previousLabel: 'others:1' },
+        { index: 2, previousLabel: 'others:1' },
+      ],
+    };
+
+    expect(describeSpeakerOp(op)).toContain('2 segments');
   });
 });

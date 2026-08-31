@@ -1,7 +1,7 @@
 @if (transcript() && transcript()!.segments.length > 0) {
   <ol class="transcript">
     @for (segment of transcript()!.segments; track $index) {
-      <li>
+      <li [attr.data-segment-index]="$index">
         <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
         <button type="button" class="{{ chipClass(segment.speaker) }}" aria-haspopup="menu" (click)="onChipClick($event, $index)">{{ chipLabel(segment.speaker) }}</button>
         @if (openIndex() === $index) {
@@ -35,4 +35,41 @@
   </ol>
 } @else {
   <p class="empty">No transcript available for this meeting.</p>
+}
+@if (selectionMenuOpen()) {
+  <div
+    class="selection-menu"
+    role="group"
+    aria-label="Speech attribution toolbar"
+    [style.left.px]="selectionMenuPosition()?.left"
+    [style.top.px]="selectionMenuPosition()?.top"
+    [style.bottom.px]="selectionMenuPosition()?.bottom"
+    [style.max-height.px]="selectionMenuPosition()?.maxHeight"
+  >
+    <div class="selection-menu-bar">
+      <button
+        type="button"
+        class="selection-trigger"
+        title="Attribute this speech to another speaker"
+        aria-label="Attribute this speech to another speaker"
+        aria-haspopup="menu"
+        [attr.aria-expanded]="selectionPickerOpen()"
+        (click)="onSelectionTriggerClick()"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false">
+          <circle cx="6" cy="5" r="2.5" />
+          <path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke-linecap="round" />
+          <path d="M11.5 5h3M13 3.5v3" stroke-linecap="round" />
+        </svg>
+      </button>
+      <span class="selection-scope">{{ selectionIndices().length }} segment{{ selectionIndices().length === 1 ? '' : 's' }}</span>
+    </div>
+    @if (selectionPickerOpen()) {
+      <div class="speaker-menu" role="menu">
+        @for (item of selectionPickerItems(); track item.key) {
+          <button type="button" role="menuitem" class="speaker-menu-item" (click)="onSelectionPickerSelect(item)">{{ item.text }}</button>
+        }
+      </div>
+    }
+  </div>
 }

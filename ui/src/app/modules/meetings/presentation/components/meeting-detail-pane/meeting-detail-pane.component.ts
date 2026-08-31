@@ -20,6 +20,7 @@ import {
   formatMinutesLong,
   formatTemplateLabel,
 } from '../../utils/format-display.util';
+import { AudioPlayerComponent } from '../audio-player/audio-player.component';
 import { EditableTitleComponent } from '../editable-title/editable-title.component';
 import { ErrorStateComponent } from '../error-state/error-state.component';
 import { LiveTranscriptComponent } from '../live-transcript/live-transcript.component';
@@ -27,7 +28,7 @@ import { OnboardingPanelComponent } from '../onboarding-panel/onboarding-panel.c
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
 import { SummaryLanguagePickerComponent } from '../summary-language-picker/summary-language-picker.component';
 import { SummaryPanelComponent } from '../summary-panel/summary-panel.component';
-import type { TranscriptSegmentEdit } from '../transcript-view/transcript-view.component';
+import type { SpeakerRename, TranscriptSelectionSpeakerAssignment, TranscriptSegmentSpeakerReassign, TranscriptSegmentEdit } from '../transcript-view/transcript-view.component';
 import { TranscriptViewComponent } from '../transcript-view/transcript-view.component';
 import { WelcomePanelComponent } from '../welcome-panel/welcome-panel.component';
 import {
@@ -66,6 +67,7 @@ const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json
 @Component({
   selector: 'app-meeting-detail-pane',
   imports: [
+    AudioPlayerComponent,
     EditableTitleComponent,
     ErrorStateComponent,
     LiveTranscriptComponent,
@@ -129,6 +131,12 @@ export class MeetingDetailPaneComponent {
 
   readonly renameRequested = output<string>();
   readonly segmentEdited = output<TranscriptSegmentEdit>();
+  /** Re-emitted from `app-transcript-view`'s rename commit; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly speakerRenamed = output<SpeakerRename>();
+  /** Re-emitted from `app-transcript-view`'s chip-menu segment reassign; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly segmentSpeakerReassigned = output<TranscriptSegmentSpeakerReassign>();
+  /** Re-emitted from `app-transcript-view`'s selection-toolbar multi-segment assignment; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly selectionSpeakerAssigned = output<TranscriptSelectionSpeakerAssignment>();
   readonly summarizeRequested = output<string>();
   readonly cancelSummaryRequested = output<void>();
   readonly exportRequested = output<MeetingExportFormat>();
@@ -213,6 +221,18 @@ export class MeetingDetailPaneComponent {
   /** See {@link computeSummarySelectionTab}. */
   protected readonly summarySelectionTab = computed(() =>
     computeSummarySelectionTab(this.isNarrow(), this.activeTab(), this.wideActiveTemplate()),
+  );
+
+  /**
+   * Stable frozen empty registry for {@link speakerNamesRegistry}: the old
+   * `?? {}` fallback in the template allocated a fresh object on every
+   * change-detection pass, re-writing the child's input signal each tick.
+   */
+  private readonly EMPTY_SPEAKER_NAMES = Object.freeze<Record<string, string>>({});
+
+  /** The transcript view's speaker-name registry; the fallback reference never changes. */
+  protected readonly speakerNamesRegistry = computed<Readonly<Record<string, string>>>(
+    () => this.meeting()?.speakerNames ?? this.EMPTY_SPEAKER_NAMES,
   );
 
   protected readonly headingDate = computed(() => {

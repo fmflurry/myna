@@ -24,7 +24,7 @@ import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
-import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
+import type { SpeakerRename, TranscriptSelectionSpeakerAssignment, TranscriptSegmentEdit, TranscriptSegmentSpeakerReassign } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
 import { buildExportFilename, CHECKING_SYSTEM_AUDIO, runMeetingDeleted, runMeetingMoveRequested } from './meetings-shell.page.support';
 
@@ -202,6 +202,46 @@ export class MeetingsShellPage implements OnInit {
       return;
     }
     void this.facade.editTranscriptSegment(meeting.id, edit.index, edit.text);
+  }
+
+  /**
+   * Commits a speaker-chip rename through the facade (never a use case
+   * directly — presentation talks to facades only). An empty `name` clears
+   * the display name, restoring the derived label; the facade captures the
+   * undo inverse and refreshes the selected meeting from the persisted one.
+   */
+  onSpeakerRenamed(rename: SpeakerRename): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.renameSpeaker(meeting.id, rename.label, rename.name);
+  }
+
+  /**
+   * Commits a speaker-chip segment reassign through the facade (never a use
+   * case directly — presentation talks to facades only). The batched
+   * `setSegmentSpeakers` entry point keeps the undo history honest: a
+   * single-index reassign collapses to the plain `'reassign'` op.
+   */
+  onSegmentSpeakerReassigned(reassign: TranscriptSegmentSpeakerReassign): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.setSegmentSpeakers(meeting.id, [reassign.index], reassign.speaker);
+  }
+
+  /**
+   * Commits a selection-toolbar assignment through the facade. ALL indices
+   * go into one batched `setSegmentSpeakers` call — one compound undo entry.
+   */
+  onSelectionSpeakerAssigned(assignment: TranscriptSelectionSpeakerAssignment): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.setSegmentSpeakers(meeting.id, [...assignment.indices], assignment.speaker);
   }
 
   onMeetingDeleted(id: MeetingId): void {

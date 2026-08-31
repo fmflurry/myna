@@ -26,6 +26,7 @@ use std::num::NonZeroU32;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
 use encoding_rs::Decoder;
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -108,6 +109,65 @@ impl Default for SummaryOptions {
     }
 }
 
+/// Guards [`init_ggml_env`] so its environment-variable write happens at
+/// most once per process, no matter how many entry points call it.
+static INIT_GGML_ENV: Once = Once::new();
+
+/// Disables ggml's Metal residency-set bookkeeping before any model is
+/// loaded. **Call this before the first [`Summarizer::load`]** (it is also
+/// called as the first statement of `load` itself, so callers that only go
+/// through this crate get the fix for free).
+///
+/// ## The bug this works around
+///
+/// ggml asserts that every Metal buffer has been unregistered from its
+/// residency set before the Metal device is torn down:
+/// `ggml_metal_rsets_free` -> `GGML_ASSERT([rsets->data count] == 0)` at
+/// `ggml-metal-device.m:656` -- unconditional, not compiled out in release.
+/// Myna holds its loaded model in a `OnceLock` that is never dropped
+/// (`app/src-tauri/src/state.rs`), so the model's weight buffers stay
+/// registered in the residency set for the lifetime of the process. The
+/// Metal device itself lives in a function-local
+/// `static std::vector<ggml_metal_device_ptr> devs;`
+/// (`ggml-metal-device.cpp:21`), whose C++ destructor runs at `exit()` via
+/// `__cxa_finalize_ranges`. On Cmd+Q that destructor chain hits the assert
+/// and calls `abort()` -- deterministically, on every quit, once a model has
+/// loaded successfully once.
+///
+/// ## Why this fixes it
+///
+/// `ggml-metal-device.m:863` reads:
+/// `dev->props.use_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == nil;`
+/// Setting `GGML_METAL_NO_RESIDENCY` makes `use_residency_sets` false, so
+/// `dev->rsets` stays nil, and `ggml_metal_rsets_free(NULL)` early-returns
+/// (`:651-653`) before ever reaching the assert. The other call sites that
+/// touch `rsets` are safe under a nil set too: `rsets_add`/`rsets_rm` return
+/// early when `rset == nil` (`:988-990`, `:1002-1004`), and
+/// `rsets_keep_alive` null-checks it as well (`:1016-1018`).
+///
+/// ## Tradeoff
+///
+/// With residency sets disabled, ggml no longer keeps weight buffers
+/// "wired" (pinned resident) ahead of use, so the first token generated
+/// after a long idle period may pay an extra page-in cost. Given the
+/// alternative is an unconditional abort on every quit, this is the right
+/// tradeoff.
+///
+/// ## Removal condition
+///
+/// Upstream llama.cpp still has this bug on `master`; three attempted fixes
+/// have stalled, the closest being llama.cpp#26857. Drop this workaround
+/// once upstream ships a teardown that tolerates leaked buffers, or once
+/// Myna reliably drops the loaded model before `exit()` (tracked separately
+/// -- see `app/src-tauri/src/state.rs`; not done here because an in-flight
+/// summarization holds a second `Arc` to the same `Summarizer`).
+pub fn init_ggml_env() {
+    INIT_GGML_ENV.call_once(|| {
+        #[cfg(target_os = "macos")]
+        std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
+    });
+}
+
 /// A loaded Qwen (or any GGUF chat) model ready to summarize prompts.
 pub struct Summarizer {
     backend: LlamaBackend,
@@ -120,6 +180,8 @@ impl Summarizer {
     /// Returns [`LlmError::ModelNotFound`] before touching llama.cpp at all
     /// if the path does not exist on disk.
     pub fn load(model_path: &Path) -> Result<Self, LlmError> {
+        init_ggml_env();
+
         if !model_path.exists() {
             return Err(LlmError::ModelNotFound(model_path.to_path_buf()));
         }

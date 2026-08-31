@@ -105,6 +105,37 @@ pub async fn get_transcript(app: AppHandle, id: String) -> Result<Option<Transcr
     })
 }
 
+/// Returns the absolute filesystem path to a meeting's `audio.wav` file
+/// if it exists on disk, or `None` if the meeting has no audio.
+///
+/// The returned path is an absolute path that can be loaded via Tauri's
+/// asset protocol for streaming in an HTML5 `<audio>` element.
+#[tauri::command]
+pub async fn get_meeting_audio_path(
+    app: AppHandle,
+    id: String,
+) -> Result<Option<String>, AppError> {
+    let meeting_id = parse_meeting_id(&id)?;
+    let store = app.state::<AppState>().store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = store.audio_path(meeting_id);
+        Ok(if path.exists() {
+            path.canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .map(Some)
+                .unwrap_or(None)
+        } else {
+            None
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "get_meeting_audio_path worker thread panicked".to_string(),
+        ))
+    })
+}
+
 /// Renames a meeting.
 ///
 /// The proposed `title` is trimmed and capped at [`MAX_TITLE_LENGTH`]
@@ -485,5 +516,91 @@ fn month_abbreviation(month: Month) -> &'static str {
         Month::October => "Oct",
         Month::November => "Nov",
         Month::December => "Dec",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::fs_store::FsMeetingStore;
+    use std::fs;
+
+    #[test]
+    fn get_meeting_audio_path_returns_some_when_audio_exists() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("test meeting").expect("create meeting");
+        let audio_path = store.audio_path(meeting.id);
+        fs::create_dir_all(audio_path.parent().expect("parent")).expect("create dir");
+        fs::write(&audio_path, b"RIFF....WAVEfmt ").expect("write audio");
+
+        // Act: mirror the command's blocking logic
+        let result: Result<Option<String>, AppError> = parse_meeting_id(&meeting.id.to_string())
+            .map(|id| {
+                let path = store.audio_path(id);
+                if path.exists() {
+                    path.canonicalize()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .map(Some)
+                        .unwrap_or(None)
+                } else {
+                    None
+                }
+            });
+
+        // Assert
+        assert!(result.is_ok(), "should not error");
+        let path = result.expect("should be ok");
+        assert!(path.is_some(), "should return Some(path) when audio exists");
+        assert!(
+            path.unwrap().ends_with("audio.wav"),
+            "path should end with audio.wav"
+        );
+    }
+
+    #[test]
+    fn get_meeting_audio_path_returns_none_when_audio_missing() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("test meeting").expect("create meeting");
+
+        // Act: mirror the command's blocking logic
+        let result: Result<Option<String>, AppError> = parse_meeting_id(&meeting.id.to_string())
+            .map(|id| {
+                let path = store.audio_path(id);
+                if path.exists() {
+                    path.canonicalize()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .map(Some)
+                        .unwrap_or(None)
+                } else {
+                    None
+                }
+            });
+
+        // Assert
+        assert!(result.is_ok(), "should not error");
+        let path = result.expect("should be ok");
+        assert!(
+            path.is_none(),
+            "should return None when audio does not exist"
+        );
+    }
+
+    #[test]
+    fn get_meeting_audio_path_accepts_valid_uuid() {
+        // Arrange
+        let fake_id = uuid::Uuid::new_v4();
+
+        // Act: parse_meeting_id accepts any valid UUID string
+        let result = parse_meeting_id(&fake_id.to_string());
+
+        // Assert
+        assert!(
+            result.is_ok(),
+            "parse_meeting_id should accept any valid UUID string"
+        );
     }
 }

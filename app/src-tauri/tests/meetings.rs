@@ -662,3 +662,253 @@ mod transcript_structure {
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 }
+
+// --- apply_speaker_rename ------------------------------------------------
+//
+// Pure name-map editing behind the `rename_speaker` command. Takes an
+// immutable `&BTreeMap` and returns a new one; a malformed label surfaces as
+// `AppError::NotFound` (same reject-rather-than-degrade gate as
+// `apply_segment_restore`), and an empty name clears the entry, mirroring
+// the UI port's contract. The bare unassigned pool label `"others"` is a
+// legal key — renaming it must work exactly like renaming `"others:<id>"`.
+mod speaker_rename {
+    use std::collections::BTreeMap;
+
+    use myna_app::commands::meetings::{apply_speaker_rename, MAX_SPEAKER_NAME_LENGTH};
+    use myna_app::error::AppError;
+
+    fn names(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(label, name)| (label.to_string(), name.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn apply_speaker_rename_sets_a_name_for_a_sub_id_others_label() {
+        let updated =
+            apply_speaker_rename(&names(&[]), "others:1", "Jean").expect("rename others:1");
+        assert_eq!(updated, names(&[("others:1", "Jean")]));
+    }
+
+    #[test]
+    fn apply_speaker_rename_accepts_the_bare_unassigned_others_label() {
+        // Regression: the unassigned pool must be renamable like any other
+        // flat label — the name map is keyed by label, and renderers resolve
+        // `"others"` through the same lookup as `"others:<id>"`.
+        let updated =
+            apply_speaker_rename(&names(&[]), "others", "Remote team").expect("rename others");
+        assert_eq!(updated, names(&[("others", "Remote team")]));
+    }
+
+    #[test]
+    fn apply_speaker_rename_replaces_the_previous_name_and_preserves_other_entries() {
+        let updated = apply_speaker_rename(
+            &names(&[("me", "Alice"), ("others:2", "Bob")]),
+            "others:2",
+            "Bobby",
+        )
+        .expect("rename others:2");
+        assert_eq!(updated, names(&[("me", "Alice"), ("others:2", "Bobby")]));
+    }
+
+    #[test]
+    fn apply_speaker_rename_with_an_empty_or_whitespace_name_clears_the_entry() {
+        let cleared =
+            apply_speaker_rename(&names(&[("others:1", "Jean")]), "others:1", "").expect("clear");
+        assert!(cleared.is_empty());
+
+        let cleared = apply_speaker_rename(&names(&[("others:1", "Jean")]), "others:1", "   ")
+            .expect("clear");
+        assert!(cleared.is_empty());
+    }
+
+    #[test]
+    fn apply_speaker_rename_trims_and_caps_the_name_at_max_speaker_name_length() {
+        let updated = apply_speaker_rename(&names(&[]), "me", "  Jean-Pierre  ").expect("trim");
+        assert_eq!(updated, names(&[("me", "Jean-Pierre")]));
+
+        let over_long = "é".repeat(MAX_SPEAKER_NAME_LENGTH + 1);
+        let updated = apply_speaker_rename(&names(&[]), "me", &over_long).expect("cap");
+        assert_eq!(updated["me"].chars().count(), MAX_SPEAKER_NAME_LENGTH);
+    }
+
+    #[test]
+    fn apply_speaker_rename_with_a_malformed_label_yields_an_error_instead_of_silently_degrading() {
+        // "Others 1" is the *display* form the user sees; the stored label is
+        // `others:1`. A display string must be rejected, not degraded to
+        // `unknown` and written under the wrong key.
+        let result = apply_speaker_rename(&names(&[]), "Others 1", "Jean");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+
+        let result = apply_speaker_rename(&names(&[]), "others:Bad!", "Jean");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[test]
+    fn apply_speaker_rename_leaves_an_untouched_map_equal_so_the_command_can_skip_the_write() {
+        let existing = names(&[("others:1", "Jean")]);
+        let updated =
+            apply_speaker_rename(&existing, "others:1", "Jean").expect("idempotent rename");
+        assert_eq!(updated, existing);
+    }
+}
+
+// --- apply_segment_speaker_set --------------------------------------------
+//
+// Pure per-segment speaker correction behind the future
+// `set_segment_speaker` command. Sets the target segment's `speaker` to the
+// canonical label AND stamps `speaker_pinned = true` — the flag automated
+// relabeling (`relabel_others`) must never clobber. Every other segment is
+// copied verbatim, and the touched segment's timing and text are untouched.
+// A malformed label surfaces as `AppError::NotFound` (the same reject-
+// rather-than-degrade gate as `apply_speaker_rename` and
+// `apply_segment_restore`), an out-of-range index surfaces as
+// `AppError::NotFound`, and a segment already carrying the requested label
+// while pinned returns the transcript unchanged so the command can skip the
+// write.
+mod segment_speaker_set {
+    use myna_app::commands::meetings::apply_segment_speaker_set;
+    use myna_app::error::AppError;
+    use myna_stt::{Speaker, Transcript, TranscriptSegment};
+
+    fn seg(start: f32, end: f32, text: &str, speaker: Speaker, pinned: bool) -> TranscriptSegment {
+        TranscriptSegment {
+            start_sec: start,
+            end_sec: end,
+            text: text.to_string(),
+            speaker,
+            speaker_pinned: pinned,
+        }
+    }
+
+    fn transcript_of(segments: Vec<TranscriptSegment>) -> Transcript {
+        Transcript { segments }
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_stamps_the_label_and_pinned_on_the_target_only() {
+        // Arrange: three segments, none pinned, first labelled `me`.
+        let transcript = transcript_of(vec![
+            seg(0.0, 1.0, "hello", Speaker::me(), false),
+            seg(1.0, 2.0, "bonjour", Speaker::others(), false),
+            seg(2.0, 3.0, "au revoir", Speaker::unknown(), false),
+        ]);
+
+        // Act
+        let updated = apply_segment_speaker_set(&transcript, 0, "others:1").expect("set others:1");
+
+        // Assert: target carries the new canonical label and the pin.
+        assert_eq!(updated.segments[0].speaker, Speaker::parse("others:1"));
+        assert!(updated.segments[0].speaker_pinned);
+
+        // Assert: every other segment is byte-identical to the original.
+        assert_eq!(updated.segments[1], transcript.segments[1]);
+        assert_eq!(updated.segments[2], transcript.segments[2]);
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_preserves_timing_and_text_of_the_touched_segment() {
+        let transcript = transcript_of(vec![seg(
+            12.5,
+            18.75,
+            "Réunion d'équipe — 100% local",
+            Speaker::unknown(),
+            false,
+        )]);
+
+        let updated = apply_segment_speaker_set(&transcript, 0, "me").expect("set me");
+
+        assert_eq!(updated.segments[0].start_sec, 12.5);
+        assert_eq!(updated.segments[0].end_sec, 18.75);
+        assert_eq!(updated.segments[0].text, "Réunion d'équipe — 100% local");
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_allows_reassigning_an_already_pinned_segment() {
+        // A manual correction must override a previous pin — the user is
+        // still the authority; the pin only guards *automated* relabeling.
+        let transcript = transcript_of(vec![seg(0.0, 1.0, "hi", Speaker::me(), true)]);
+
+        let updated =
+            apply_segment_speaker_set(&transcript, 0, "others:2").expect("reassign pinned");
+
+        assert_eq!(updated.segments[0].speaker, Speaker::parse("others:2"));
+        assert!(updated.segments[0].speaker_pinned);
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_returns_the_transcript_unchanged_when_label_and_pin_already_match()
+    {
+        // Skip-write signal: identical label + already pinned → returned
+        // transcript equals the input, letting the command avoid a disk write.
+        let transcript = transcript_of(vec![
+            seg(0.0, 1.0, "hi", Speaker::parse("others:1"), true),
+            seg(1.0, 2.0, "there", Speaker::me(), false),
+        ]);
+
+        let updated =
+            apply_segment_speaker_set(&transcript, 0, "others:1").expect("idempotent set");
+
+        assert_eq!(updated, transcript);
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_pins_a_segment_whose_label_already_matches_but_is_unpinned() {
+        // Correct label but `speaker_pinned == false` is still a change:
+        // the pin must be applied, so the result differs from the input.
+        let transcript = transcript_of(vec![seg(0.0, 1.0, "hi", Speaker::me(), false)]);
+
+        let updated = apply_segment_speaker_set(&transcript, 0, "me").expect("pin me");
+
+        assert_eq!(updated.segments[0].speaker, Speaker::me());
+        assert!(updated.segments[0].speaker_pinned);
+        assert_ne!(updated, transcript);
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_with_an_out_of_range_index_yields_not_found() {
+        let transcript = transcript_of(vec![seg(0.0, 1.0, "hi", Speaker::me(), false)]);
+
+        let result = apply_segment_speaker_set(&transcript, 1, "me");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+
+        // Empty transcript: index 0 is already out of range.
+        let empty = transcript_of(vec![]);
+        let result = apply_segment_speaker_set(&empty, 0, "me");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_with_a_malformed_label_yields_an_error_instead_of_silently_degrading(
+    ) {
+        // "Others 1" is the *display* form the user sees; the stored label is
+        // `others:1`. A display string must be rejected, not degraded to
+        // `unknown` and pinned under the wrong identity. Same gate as
+        // `apply_speaker_rename` (see tests above).
+        let transcript = transcript_of(vec![seg(0.0, 1.0, "hi", Speaker::me(), false)]);
+
+        let result = apply_segment_speaker_set(&transcript, 0, "Others 1");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+
+        let result = apply_segment_speaker_set(&transcript, 0, "others:Bad!");
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+
+        // The transcript must not have been mutated by the rejected calls.
+        assert_eq!(transcript.segments[0].speaker, Speaker::me());
+        assert!(!transcript.segments[0].speaker_pinned);
+    }
+
+    #[test]
+    fn apply_segment_speaker_set_accepts_every_canonical_label() {
+        for label in ["me", "others", "others:1", "others:m2", "unknown"] {
+            let transcript = transcript_of(vec![seg(0.0, 1.0, "hi", Speaker::unknown(), false)]);
+
+            let updated = apply_segment_speaker_set(&transcript, 0, label)
+                .unwrap_or_else(|err| panic!("canonical label {label:?} rejected: {err}"));
+
+            assert_eq!(updated.segments[0].speaker, Speaker::parse(label));
+            assert!(updated.segments[0].speaker_pinned);
+        }
+    }
+}

@@ -25,6 +25,12 @@ export function mapMeetingDtoToDomain(dto: MeetingDto): Meeting {
     hasSystemTrack: dto.hasSystemTrack,
     droppedAudioChunks: dto.droppedAudioChunks,
     ...(dto.folderId !== null && dto.folderId !== undefined ? { folderId: toFolderId(dto.folderId) } : {}),
+    // An empty map (meetings with no custom names yet) is omitted, mirroring
+    // the domain's "absent means no names" modeling; `exactOptionalPropertyTypes`
+    // forbids assigning `undefined` to the optional key.
+    ...(dto.speakerNames !== undefined && Object.keys(dto.speakerNames).length > 0
+      ? { speakerNames: dto.speakerNames }
+      : {}),
   };
 }
 

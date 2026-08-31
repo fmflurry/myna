@@ -127,6 +127,45 @@ describe('mapMeetingDtoToDomain', () => {
     // Assert
     expect(meeting.folderId).toBe(toFolderId('f-1'));
   });
+
+  it('maps speakerNames when the DTO sends a non-empty map', () => {
+    // Regression (bug 2, mapping layer): the mapper used to drop
+    // `speakerNames` entirely, so even a persisted rename never reached the
+    // domain meeting — the chip and the undo inverse both read nothing.
+    const meeting = mapMeetingDtoToDomain({
+      id: 'm-7',
+      title: 'Named speakers',
+      createdAt: '2026-01-15T09:00:00Z',
+      durationSec: 0,
+      audioPath: null,
+      transcript: null,
+      summaries: [],
+      archived: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
+      speakerNames: { 'others:1': 'Jean', me: 'Alice' },
+    });
+
+    expect(meeting.speakerNames).toEqual({ 'others:1': 'Jean', me: 'Alice' });
+  });
+
+  it('omits speakerNames when the DTO sends an empty map or no key', () => {
+    const base = {
+      id: 'm-8',
+      title: 'Unnamed speakers',
+      createdAt: '2026-01-15T09:00:00Z',
+      durationSec: 0,
+      audioPath: null,
+      transcript: null,
+      summaries: [],
+      archived: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
+    };
+
+    expect('speakerNames' in mapMeetingDtoToDomain({ ...base, speakerNames: {} })).toBe(false);
+    expect('speakerNames' in mapMeetingDtoToDomain(base)).toBe(false);
+  });
 });
 
 describe('mapMeetingExportFormatToDto', () => {
