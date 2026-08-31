@@ -22,9 +22,19 @@ QWEN_MARKER_NAME="qwen2.5-3b-instruct-q4_k_m.gguf"
 VAD_DIR_NAME="silero-vad"
 VAD_MARKER_NAME="silero_vad.onnx"
 
+# Optional: speaker diarization (segmentation + speaker embedding). Not
+# fetched by default — pass `--only diarization` to fetch both. The app
+# works without them, degrading to unlabelled speakers.
+PYANNOTE_DIR_NAME="pyannote-segmentation-3-0"
+PYANNOTE_MARKER_NAME="sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx"
+
+TITANET_DIR_NAME="nemo-titanet"
+TITANET_MARKER_NAME="nemo_en_titanet_small.onnx"
+
 usage() {
   cat <<'EOF'
-Usage: scripts/download-models.sh [--dest <dir>] [--only parakeet|qwen|vad]
+Usage: scripts/download-models.sh [--dest <dir>]
+                                   [--only parakeet|qwen|vad|diarization]
                                    [--migrate] [--check] [--help]
 
 Fetches local models into <dest> (default: $MYNA_MODELS_DIR, or ~/myna/models
@@ -32,6 +42,11 @@ if that's unset — the same location the packaged app reads from):
   - Parakeet STT v3 (sherpa-onnx, int8)
   - Qwen2.5-3B-Instruct GGUF (Q4_K_M)
   - silero VAD (ONNX)
+  - [optional] speaker diarization: pyannote segmentation-3-0 + NeMo TitaNet
+    speaker embedding. Only needed for speaker labels/detection; the app
+    works fine without them, degrading to unlabelled speakers. NOT fetched
+    by default — pass `--only diarization` to fetch both (they are useless
+    apart).
 
 Idempotent: already-present artifacts (detected via marker file) are skipped.
 
@@ -42,16 +57,21 @@ exact `mv`/`ln -s` command to relocate it — or performs the move itself when
 --migrate is given.
 
 Options:
-  --dest <dir>               Destination directory (default: $MYNA_MODELS_DIR,
-                              else ~/myna/models).
-  --only parakeet|qwen|vad   Fetch a single artifact instead of all three.
-  --migrate                  When an artifact exists under the repo's models/
-                              dir but not <dest>, move it into <dest> instead
-                              of just printing the command.
-  --check                    Report presence of all three artifacts under
-                              <dest>; exit non-zero if any is missing. Fetches
-                              and migrates nothing.
-  --help                     Show this help and exit.
+  --dest <dir>                 Destination directory (default:
+                                $MYNA_MODELS_DIR, else ~/myna/models).
+  --only parakeet|qwen|vad|diarization
+                                Fetch a single artifact (or, for
+                                "diarization", both optional speaker models
+                                together) instead of the default set.
+  --migrate                     When an artifact exists under the repo's
+                                models/ dir but not <dest>, move it into
+                                <dest> instead of just printing the command.
+  --check                       Report presence of all artifacts (including
+                                the optional diarization models) under
+                                <dest>; exit non-zero if any REQUIRED
+                                artifact is missing. Fetches and migrates
+                                nothing.
+  --help                        Show this help and exit.
 EOF
 }
 
@@ -146,6 +166,34 @@ fetch_vad() {
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 }
 
+# fetch_pyannote downloads and extracts the pyannote speaker-segmentation
+# tarball. Preserves the extracted LICENSE file alongside model.int8.onnx —
+# that's the licence evidence (MIT, CNRS) and must not be deleted.
+fetch_pyannote() {
+  fetch_artifact "pyannote speaker segmentation (diarization, optional)" \
+    "$PYANNOTE_DIR_NAME" "$PYANNOTE_MARKER_NAME" \
+    bash -c '
+      set -euo pipefail
+      dest_dir="$1"; url="$2"
+      mkdir -p "$dest_dir"
+      tarball="$dest_dir/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+      curl -fSL -o "$tarball" "$url"
+      tar -xjf "$tarball" -C "$dest_dir"
+    ' _ \
+    "$DEST/$PYANNOTE_DIR_NAME" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+}
+
+# fetch_titanet downloads the NeMo TitaNet speaker-embedding model (bare
+# .onnx, no archive).
+fetch_titanet() {
+  fetch_artifact "NeMo TitaNet speaker embedding (diarization, optional)" \
+    "$TITANET_DIR_NAME" "$TITANET_MARKER_NAME" \
+    bash -c 'mkdir -p "$(dirname "$1")" && curl -fSL -o "$1" "$2"' _ \
+    "$DEST/$TITANET_DIR_NAME/$TITANET_MARKER_NAME" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx"
+}
+
 human_size() {
   local path="$1"
   if [[ -e "$path" ]]; then
@@ -167,10 +215,21 @@ print_summary() {
   printf '  %-24s %s (%s)\n' "silero VAD" \
     "$(human_size "$(marker_path "$DEST" "$VAD_DIR_NAME" "$VAD_MARKER_NAME")")" \
     "$(marker_path "$DEST" "$VAD_DIR_NAME" "$VAD_MARKER_NAME")"
+  printf '  %-24s %s (%s) [optional: speaker diarization]\n' "pyannote segmentation" \
+    "$(human_size "$(marker_path "$DEST" "$PYANNOTE_DIR_NAME" "$PYANNOTE_MARKER_NAME")")" \
+    "$(marker_path "$DEST" "$PYANNOTE_DIR_NAME" "$PYANNOTE_MARKER_NAME")"
+  printf '  %-24s %s (%s) [optional: speaker diarization]\n' "NeMo TitaNet" \
+    "$(human_size "$(marker_path "$DEST" "$TITANET_DIR_NAME" "$TITANET_MARKER_NAME")")" \
+    "$(marker_path "$DEST" "$TITANET_DIR_NAME" "$TITANET_MARKER_NAME")"
   echo
   echo "Parakeet weights are distributed under CC-BY-4.0. If you use or"
   echo "redistribute them, provide attribution to NVIDIA NeMo Parakeet-TDT"
   echo "and the sherpa-onnx project (csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8)."
+  echo
+  echo "Speaker diarization models (pyannote segmentation, NeMo TitaNet) are"
+  echo "OPTIONAL — only needed for speaker labels/detection. The app works"
+  echo "fully without them, degrading to unlabelled speakers. Fetch with:"
+  echo "  scripts/download-models.sh --only diarization"
 }
 
 run_check() {
@@ -184,6 +243,17 @@ run_check() {
     else
       echo "MISSING $marker"
       missing=1
+    fi
+  done
+  # Optional diarization artifacts: reported, but never fail --check — the
+  # app works without them (degrades to unlabelled speakers).
+  for marker in \
+    "$(marker_path "$DEST" "$PYANNOTE_DIR_NAME" "$PYANNOTE_MARKER_NAME")" \
+    "$(marker_path "$DEST" "$TITANET_DIR_NAME" "$TITANET_MARKER_NAME")"; do
+    if [[ -e "$marker" ]]; then
+      echo "OK    $marker (optional — speaker diarization)"
+    else
+      echo "MISSING $marker (optional — speaker diarization; app works without it)"
     fi
   done
   return "$missing"
@@ -207,7 +277,7 @@ while [[ $# -gt 0 ]]; do
     --only)
       only="${2:-}"
       if [[ -z "$only" ]]; then
-        echo "ERROR: --only requires an argument (parakeet|qwen|vad)" >&2
+        echo "ERROR: --only requires an argument (parakeet|qwen|vad|diarization)" >&2
         exit 1
       fi
       shift 2
@@ -261,8 +331,12 @@ case "$only" in
   vad)
     fetch_vad
     ;;
+  diarization)
+    fetch_pyannote
+    fetch_titanet
+    ;;
   *)
-    echo "ERROR: invalid --only value: $only (expected parakeet|qwen|vad)" >&2
+    echo "ERROR: invalid --only value: $only (expected parakeet|qwen|vad|diarization)" >&2
     exit 1
     ;;
 esac

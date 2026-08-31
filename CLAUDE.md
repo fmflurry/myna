@@ -84,9 +84,16 @@ llama-server -m models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf -c 32
 Myna supports three recording modes (set via `start_recording { "source": "..." }`):
 - `"mic"` — microphone only (all platforms).
 - `"system"` — system audio only (macOS 14.4+; silently degrades to mic on unsupported versions).
-- `"mixed"` — microphone + system audio (macOS 14.4+; resampled and mixed at −3 dB per source; degrades to mic if permission denied).
+- `"mixed"` — microphone + system audio as separate 16 kHz mono tracks with speaker attribution (macOS 14.4+; degrades to mic if permission denied).
 
 The `source` parameter is optional; default is `"mic"`.
+
+Each meeting produces up to three audio files (stored in `~/myna/meetings/{id}/`):
+- **`audio.wav`** — device-native stereo format (typically 48 kHz, ~920 MB/h), listenable and exportable to other meeting tools.
+- **`track-mic.wav`** — 16 kHz mono, retained permanently for STT and future speaker diarization; absent if only system audio was captured.
+- **`track-system.wav`** — 16 kHz mono, retained permanently for STT and future speaker diarization; absent if only microphone was captured.
+
+Transcription format: the synthesized transcript uses speaker labels (`"Me"` for the user, `"Others"` for remote participants, no label for unknown). These are preserved in summaries and notes (see [ADR 0008](docs/adr/0008-dual-track-audio-with-speaker-attribution.md)). Re-transcription of old meetings (pre-Phase-6) falls back to `audio.wav` if track files are missing, stamped as unknown source.
 
 System audio capture uses **Core Audio process taps** (see [ADR 0007](docs/adr/0007-core-audio-taps.md)) and requires `kTCCServiceAudioCapture` permission. Live audio tests are gated by `MYNA_LIVE_AUDIO_TESTS` and must run serially (`--test-threads=1`).
 
