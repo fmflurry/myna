@@ -14,13 +14,14 @@ import { distinctUntilChanged, map } from 'rxjs';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
 import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
+import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { MeetingExportFormat } from '../../../core/ports/meeting-repository.port';
 import { AttributionComponent } from '../../components/attribution/attribution.component';
-import type { SummaryLoadRequest } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
+import type { SummaryEdit, SummaryLoadRequest } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
 import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
-import type { MeetingArchiveRequest } from '../../components/meeting-list-item/meeting-list-item.component';
+import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
 import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
@@ -62,6 +63,16 @@ export class MeetingsShellPage implements OnInit {
   protected readonly showAbout = signal(false);
   /** Local, ephemeral UI-only flag — true only for the duration of the in-flight export call. */
   protected readonly exporting = signal(false);
+  /**
+   * Local, ephemeral UI-only flag — true only for the duration of the
+   * in-flight `diarizeMeeting` call, mirroring `exporting`. Distinct from
+   * `facade.importing()` (which `diarizeMeeting` ALSO sets, for mutual
+   * exclusion with import/re-transcribe): this one identifies THIS specific
+   * operation, so the "Detect speakers" button only shows its own running
+   * state — never borrows a spinner from an unrelated in-flight
+   * import/re-transcribe.
+   */
+  protected readonly diarizing = signal(false);
 
   protected readonly modelsReady = computed(() => this.facade.modelsStatus()?.allPresent === true);
   protected readonly systemAudioStatus = computed(
@@ -113,6 +124,7 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.loadSummaryLanguages();
     void this.facade.loadAppVersion();
     void this.facade.loadAudioSources();
+    void this.facade.loadFolders();
 
     // Reactive, not a one-time `snapshot` read: `''` and `meeting/:id` share
     // this same component, and Angular's default route-reuse strategy keeps
@@ -184,7 +196,7 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onMeetingSelected(id: MeetingId): void {
-    if (this.facade.busy()) {
+    if (this.facade.busy() || this.facade.importing()) {
       return;
     }
     void this.router.navigate(['/meetings/meeting', id]);
@@ -221,14 +233,62 @@ export class MeetingsShellPage implements OnInit {
     });
   }
 
-  onMeetingArchiveToggled(request: MeetingArchiveRequest): void {
-    void this.facade.setMeetingArchived(request.id, request.archived);
+  /**
+   * Drag-and-drop is the only way to move or archive a meeting — this is the
+   * sole handler for both; it routes by the drop target's `kind`, always via
+   * `facade.placeMeeting` with `previousId`/`nextId` both `null` (the backend
+   * resolves that to `Placement::Keep` — container change only, matching
+   * today's behaviour but as one write instead of two). Archiving preserves
+   * the meeting's CURRENT folder — looked up from `facade.meetings()` — so a
+   * meeting dragged to the archive never loses its filing.
+   */
+  onMeetingMoveRequested(request: MeetingDragMoveRequest): void {
+    const { target } = request;
+    if (target.kind === 'placement') {
+      const { container, previousId, nextId } = target;
+      if (container.kind === 'archive') {
+        void this.facade.placeMeeting(request.id, this.currentFolderId(request.id), true, previousId, nextId);
+        return;
+      }
+      const folderId = container.kind === 'folder' ? container.folderId : null;
+      void this.facade.placeMeeting(request.id, folderId, false, previousId, nextId);
+      return;
+    }
+    if (target.kind === 'archive') {
+      void this.facade.placeMeeting(request.id, this.currentFolderId(request.id), true, null, null);
+      return;
+    }
+    const folderId = target.kind === 'folder' ? target.folderId : null;
+    void this.facade.placeMeeting(request.id, folderId, false, null, null);
+  }
+
+  /** The meeting's CURRENT folder (or `null`), looked up from `facade.meetings()` — used to preserve filing when archiving. */
+  private currentFolderId(id: MeetingId): FolderId | null {
+    return this.facade.meetings().find((meeting) => meeting.id === id)?.folderId ?? null;
   }
 
   reload(): void {
     const current = this.facade.selectedMeeting();
     if (current) {
       void this.facade.openMeeting(current.id);
+    }
+  }
+
+  /**
+   * Wired to the detail pane's `retryRequested`, which is now emitted from
+   * the hoisted error banner regardless of which pane is showing — not just
+   * the meeting-selected detail branch. With a meeting selected, "retry"
+   * still means re-opening it (`reload()`, unchanged). With no meeting
+   * selected (e.g. an import rejected before any placeholder meeting was
+   * created — see meeting-detail-pane.component.html), `reload()` is a
+   * no-op, so retry instead just dismisses the error so the user can try
+   * again from a clean state.
+   */
+  onErrorRetryClicked(): void {
+    if (this.facade.selectedMeeting()) {
+      this.reload();
+    } else {
+      this.facade.clearError();
     }
   }
 
@@ -257,6 +317,10 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.loadSummary(request.meetingId, request.template, request.language);
   }
 
+  onSummaryEdited(edit: SummaryEdit): void {
+    void this.facade.editSummary(edit.meetingId, edit.template, edit.language, edit.markdown);
+  }
+
   onSplitRatioChanged(ratio: number): void {
     this.facade.setSplitRatio(ratio);
   }
@@ -274,5 +338,54 @@ export class MeetingsShellPage implements OnInit {
     void this.facade
       .exportMeeting(meeting.id, format, buildExportFilename(meeting))
       .finally(() => this.exporting.set(false));
+  }
+
+  onImportRequested(): void {
+    void this.facade.importAudio();
+  }
+
+  onRetranscribeRequested(): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.retranscribeMeeting(meeting.id, false);
+  }
+
+  onReplaceAudioRequested(): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    void this.facade.retranscribeMeeting(meeting.id, true);
+  }
+
+  onCancelImportRequested(): void {
+    void this.facade.cancelImport();
+  }
+
+  onDiarizeRequested(): void {
+    const meeting = this.facade.selectedMeeting();
+    if (!meeting) {
+      return;
+    }
+    this.diarizing.set(true);
+    void this.facade.diarizeMeeting(meeting.id).finally(() => this.diarizing.set(false));
+  }
+
+  onFolderCreated(name: string): void {
+    void this.facade.createFolder(name);
+  }
+
+  onFolderRenamed(event: { id: FolderId; name: string }): void {
+    void this.facade.renameFolder(event.id, event.name);
+  }
+
+  onFolderDeleted(id: FolderId): void {
+    void this.facade.deleteFolder(id);
+  }
+
+  onFolderToggled(id: FolderId): void {
+    this.facade.toggleFolderExpanded(id);
   }
 }

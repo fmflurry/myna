@@ -4,6 +4,7 @@ import type { Meeting } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
+import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
 
 /** Matches this component's own narrow/wide breakpoint. */
@@ -26,10 +27,11 @@ describe('MeetingDetailPaneComponent — split-workspace layout', () => {
     title: 'Standup',
     createdAt: new Date(2026, 7, 27, 14, 2),
     durationSec: 32 * 60,
-    transcript: { segments: [{ startSec: 4, endSec: 6, text: 'On commence.' }] },
+    transcript: { segments: [transcriptSegment({ startSec: 4, endSec: 6, text: 'On commence.' })] },
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   afterEach(() => {

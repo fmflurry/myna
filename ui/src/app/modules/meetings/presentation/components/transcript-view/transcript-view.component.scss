@@ -38,3 +38,120 @@ li {
 .empty {
   color: var(--color-text-muted);
 }
+
+/** The clickable per-segment trigger for the speaker menu; always rendered, even for `unknown`. */
+.speaker-chip {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font: inherit;
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--radius-sm, 0.25rem);
+  cursor: pointer;
+  color: var(--color-text-muted);
+
+  &:hover {
+    background: var(--color-surface-hover);
+  }
+}
+
+/**
+ * Fixed-size accent palette, keyed by `speakerAccentIndex()` (a stable
+ * string hash of the speaker label mod palette size). An UNBOUNDED set of
+ * speaker labels — including one never seen before — always resolves to
+ * one of these, so a new label renders correctly with zero style change.
+ */
+.speaker-label {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--radius-sm, 0.25rem);
+  align-self: flex-start;
+  color: inherit;
+
+  &.speaker-accent-0 {
+    color: var(--speaker-accent-0, #6366f1);
+    background: color-mix(in srgb, var(--speaker-accent-0, #6366f1) 15%, transparent);
+  }
+  &.speaker-accent-1 {
+    color: var(--speaker-accent-1, #0ea5e9);
+    background: color-mix(in srgb, var(--speaker-accent-1, #0ea5e9) 15%, transparent);
+  }
+  &.speaker-accent-2 {
+    color: var(--speaker-accent-2, #10b981);
+    background: color-mix(in srgb, var(--speaker-accent-2, #10b981) 15%, transparent);
+  }
+  &.speaker-accent-3 {
+    color: var(--speaker-accent-3, #f59e0b);
+    background: color-mix(in srgb, var(--speaker-accent-3, #f59e0b) 15%, transparent);
+  }
+  &.speaker-accent-4 {
+    color: var(--speaker-accent-4, #ec4899);
+    background: color-mix(in srgb, var(--speaker-accent-4, #ec4899) 15%, transparent);
+  }
+  &.speaker-accent-5 {
+    color: var(--speaker-accent-5, #8b5cf6);
+    background: color-mix(in srgb, var(--speaker-accent-5, #8b5cf6) 15%, transparent);
+  }
+}
+
+/**
+ * Popup opened by a `.speaker-chip` click. Positioned `fixed` with inline
+ * `left`/`top`/`bottom`/`max-height` computed at click time from the
+ * clicked chip's `getBoundingClientRect()` (see `computeMenuPosition`), so
+ * it escapes any ancestor `overflow` clipping while staying inside this
+ * component's own DOM (no CDK Overlay, no `document.body` portal).
+ */
+.speaker-menu {
+  position: fixed;
+  z-index: var(--z-popover, 100);
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.15));
+  padding: 0.25rem;
+
+  /* Purely informational when flipped above the chip; layout itself is driven by the inline `bottom` style. */
+  &.dropup {
+    flex-direction: column-reverse;
+  }
+}
+
+.speaker-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.85rem;
+  border: none;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+
+  &:hover {
+    background: var(--color-surface-hover);
+  }
+}
+
+.rename-row {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid var(--color-border);
+  margin-top: 0.25rem;
+
+  input {
+    width: 100%;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font: inherit;
+  }
+}

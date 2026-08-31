@@ -160,4 +160,31 @@ describe('CaptureSettingsComponent', () => {
 
     expect(fixture.nativeElement.querySelector('.trigger').textContent).toContain('Mic only');
   });
+
+  it('closes the popover when the user clicks outside it', () => {
+    const fixture = createFixture();
+    document.body.appendChild(fixture.nativeElement);
+    fixture.nativeElement.querySelector('.trigger').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.popover')).toBeTruthy();
+
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.popover')).toBeNull();
+  });
+
+  it('keeps the popover open when the user clicks inside it', () => {
+    const fixture = createFixture();
+    document.body.appendChild(fixture.nativeElement);
+    fixture.nativeElement.querySelector('.trigger').click();
+    fixture.detectChanges();
+    const deviceSelect: HTMLSelectElement = fixture.nativeElement.querySelector('.device-select');
+    expect(deviceSelect).toBeTruthy();
+
+    deviceSelect.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.popover')).toBeTruthy();
+  });
 });

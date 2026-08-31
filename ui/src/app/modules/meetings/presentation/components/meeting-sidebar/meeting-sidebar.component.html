@@ -1,4 +1,15 @@
 <div class="sidebar">
+  <div class="sidebar-toolbar">
+    <button
+      type="button"
+      class="import-button"
+      [disabled]="importDisabled()"
+      (click)="importRequested.emit()"
+    >
+      Import audio&hellip;
+    </button>
+  </div>
+
   <div class="search">
     <span class="icon" aria-hidden="true">&#9906;</span>
     <input
@@ -10,55 +21,136 @@
     />
   </div>
 
-  @if (meetings().length === 0) {
+  @if (meetings().length === 0 && folders().length === 0) {
     <div class="empty-state">
       <p class="headline">No meetings yet</p>
       <p class="hint">Press Record to capture your first meeting.</p>
     </div>
-  } @else if (activeMeetings().length === 0 && archivedMeetings().length === 0) {
+  } @else if (!hasAnyMatches() && folderViews().length === 0) {
     <p class="no-match">No meetings match &ldquo;{{ query() }}&rdquo;</p>
   } @else {
-    <div class="list" role="listbox" aria-label="Meetings">
-      @for (meeting of activeMeetings(); track meeting.id) {
+    <div
+      class="list"
+      role="listbox"
+      aria-label="Meetings"
+      [class.drop-accepting]="dragActive() && canDropInUncategorized()"
+      [class.drop-hover]="uncategorizedDragHover()"
+      [style.min-height.px]="dragActive() ? 48 : null"
+      (dragover)="onUncategorizedDragOver($event)"
+      (dragleave)="onUncategorizedDragLeave()"
+      (drop)="onUncategorizedDrop($event)"
+    >
+      @for (meeting of uncategorizedMeetings(); track meeting.id) {
         <app-meeting-list-item
           [meeting]="meeting"
           [selected]="meeting.id === selectedId()"
           [disabled]="selectionDisabled()"
           [recording]="meeting.id === recordingMeetingId()"
+          [dragEnabled]="true"
+          [dropIndicatorEnabled]="rowDropEnabled(meeting.id)"
           (opened)="meetingSelected.emit($event)"
           (deleteRequested)="meetingDeleted.emit($event)"
-          (archiveToggleRequested)="meetingArchiveToggled.emit($event)"
+          (dragStarted)="onRowDragStarted($event)"
+          (dragEnded)="onRowDragEnded()"
+          (dropOnRow)="onDropOnRow(meeting.id, $event, { kind: 'uncategorized' })"
+          (keydown.alt.arrowdown)="onKeyboardReorder(meeting.id, 'down', { kind: 'uncategorized' })"
+          (keydown.alt.arrowup)="onKeyboardReorder(meeting.id, 'up', { kind: 'uncategorized' })"
         />
       }
     </div>
 
-    @if (archivedMeetings().length > 0) {
-      <section class="archive">
-        <button
-          type="button"
-          class="archive-toggle"
-          [attr.aria-expanded]="archiveExpanded()"
-          aria-controls="archived-meetings"
-          (click)="toggleArchive()"
-        >
-          <span class="chevron" aria-hidden="true">&#9656;</span> Archive ({{ archivedMeetings().length }})
-        </button>
-        @if (archiveExpanded()) {
-          <div id="archived-meetings" class="list" role="listbox" aria-label="Archived meetings">
-            @for (meeting of archivedMeetings(); track meeting.id) {
-              <app-meeting-list-item
-                [meeting]="meeting"
-                [selected]="meeting.id === selectedId()"
-                [disabled]="selectionDisabled()"
-                [recording]="meeting.id === recordingMeetingId()"
-                (opened)="meetingSelected.emit($event)"
-                (deleteRequested)="meetingDeleted.emit($event)"
-                (archiveToggleRequested)="meetingArchiveToggled.emit($event)"
-              />
-            }
-          </div>
-        }
-      </section>
+    @for (view of folderViews(); track view.folder.id) {
+      <app-folder-section
+        [folder]="view.folder"
+        [meetings]="view.meetings"
+        [expanded]="isFolderExpanded(view.folder.id)"
+        [selectedId]="selectedId() ?? null"
+        [selectionDisabled]="selectionDisabled()"
+        [recordingMeetingId]="recordingMeetingId() ?? null"
+        [dragEnabled]="true"
+        [dropAccepting]="canDropInFolder(view.folder.id)"
+        [rowDropEnabled]="dragActive() && query().trim().length === 0"
+        (toggled)="folderToggled.emit($event)"
+        (renamed)="folderRenamed.emit($event)"
+        (deleted)="folderDeleted.emit($event)"
+        (meetingSelected)="meetingSelected.emit($event)"
+        (meetingDeleted)="meetingDeleted.emit($event)"
+        (meetingDragStarted)="onRowDragStarted($event)"
+        (meetingDragEnded)="onRowDragEnded()"
+        (dropped)="onDropOnFolder($event)"
+        (meetingDropOnRow)="onDropOnRow($event.id, $event.edge, { kind: 'folder', folderId: view.folder.id })"
+        (meetingReorderRequested)="onKeyboardReorder($event.id, $event.direction, { kind: 'folder', folderId: view.folder.id })"
+      />
     }
+  }
+
+  @if (query().trim().length === 0) {
+    @if (creatingFolder()) {
+      <div class="new-folder-form">
+        <input
+          class="new-folder-input"
+          type="text"
+          placeholder="Folder name"
+          aria-label="New folder name"
+          [value]="newFolderDraft()"
+          (input)="onNewFolderInput($event)"
+          (keydown.enter)="commitNewFolder($event)"
+          (keydown.escape)="cancelNewFolder($event)"
+        />
+      </div>
+    } @else {
+      <button type="button" class="new-folder-trigger" (click)="startNewFolder()">
+        <span aria-hidden="true">+</span> New folder
+      </button>
+    }
+  }
+
+  @if (archivedMeetings().length > 0 || dragActive()) {
+    <section
+      class="archive"
+      [class.drop-accepting]="dragActive() && canDropInArchive()"
+      [class.drop-hover]="archiveDragHover()"
+      (dragover)="onArchiveDragOver($event)"
+      (dragleave)="onArchiveDragLeave()"
+      (drop)="onArchiveDrop($event)"
+    >
+      <button
+        type="button"
+        class="archive-toggle"
+        [attr.aria-expanded]="archiveExpanded()"
+        aria-controls="archived-meetings"
+        (click)="toggleArchive()"
+      >
+        <span class="chevron" aria-hidden="true">&#9656;</span>
+        @if (archiveDragHover()) {
+          <span class="drop-hint">Drop to archive</span>
+        } @else {
+          Archive ({{ archivedMeetings().length }})
+        }
+      </button>
+      @if (archivedMeetings().length === 0) {
+        <p class="empty-hint">Drop a meeting here to archive it</p>
+      } @else if (archiveExpanded()) {
+        <div id="archived-meetings" class="list" role="listbox" aria-label="Archived meetings">
+          @for (meeting of archivedMeetings(); track meeting.id) {
+            <app-meeting-list-item
+              [meeting]="meeting"
+              [selected]="meeting.id === selectedId()"
+              [disabled]="selectionDisabled()"
+              [recording]="meeting.id === recordingMeetingId()"
+              [dragEnabled]="true"
+              [dropIndicatorEnabled]="rowDropEnabled(meeting.id)"
+              (opened)="meetingSelected.emit($event)"
+              (deleteRequested)="meetingDeleted.emit($event)"
+              (dragStarted)="onRowDragStarted($event)"
+              (dragEnded)="onRowDragEnded()"
+              (dropOnRow)="onDropOnRow(meeting.id, $event, { kind: 'archive' })"
+              (keydown.alt.arrowdown)="onKeyboardReorder(meeting.id, 'down', { kind: 'archive' })"
+              (keydown.alt.arrowup)="onKeyboardReorder(meeting.id, 'up', { kind: 'archive' })"
+            />
+          }
+        </div>
+      }
+    </section>
   }
 </div>

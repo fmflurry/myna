@@ -7,7 +7,7 @@
     <button
       type="button"
       class="start-meeting"
-      [disabled]="startingRecording()"
+      [disabled]="actionsDisabled()"
       (click)="startRecordingRequested.emit()"
     >
       @if (startingRecording()) {
@@ -15,6 +15,14 @@
       } @else {
         Start a meeting
       }
+    </button>
+    <button
+      type="button"
+      class="import-recording"
+      [disabled]="actionsDisabled()"
+      (click)="importRequested.emit()"
+    >
+      Import a recording
     </button>
   </div>
 </div>

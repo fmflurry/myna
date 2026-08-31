@@ -16,6 +16,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
 import { MeetingsShellPage } from './meetings-shell.page';
 
@@ -46,7 +47,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -65,6 +67,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
 
   const loadMeetings = vi.fn(async () => undefined);
   const loadTemplates = vi.fn(async () => undefined);
@@ -124,6 +128,16 @@ describe('MeetingsShellPage route-selection reactivity', () => {
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => {
     void collapsed;
   });
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
+  const loadFolders = vi.fn(async () => undefined);
+  const createFolder = vi.fn(async (name: string) => void name);
+  const renameFolder = vi.fn(async (id: string, name: string) => {
+    void id;
+    void name;
+  });
+  const deleteFolder = vi.fn(async (id: string) => void id);
+  const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
     meetings,
@@ -134,7 +148,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     recordingState,
     level,
     finalizedSegments,
-    partialText,
+    partialTextMe,
+    partialTextOthers,
     error,
     busy,
     systemAudioStatus,
@@ -153,6 +168,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     effectiveSystemSource,
     splitRatio,
     transcriptCollapsed,
+    importing,
+    importProgress,
     setSplitRatio,
     setTranscriptCollapsed,
     loadMeetings,
@@ -178,6 +195,13 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     selectAudioSource,
     selectSummaryLanguage,
     requestSystemAudioPermission,
+    folders,
+    expandedFolders,
+    loadFolders,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    toggleFolderExpanded,
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;
@@ -190,6 +214,8 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     systemAudioStatus.set({ kind: 'available' });
     summarizing.set(false);
     startingRecording.set(false);
+    importing.set(false);
+    importProgress.set(null);
     routeParamMap = new BehaviorSubject<ParamMap>(convertToParamMap({}));
     Object.values({
       loadMeetings,
@@ -282,6 +308,21 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     expect(navigateSpy).not.toHaveBeenCalled();
 
     recordingState.set('idle');
+    fixture.componentInstance.onMeetingSelected(toMeetingId('m1'));
+
+    expect(navigateSpy).toHaveBeenCalledWith(['/meetings/meeting', 'm1']);
+  });
+
+  it('blocks a sidebar selection while an audio import/re-transcribe is in progress, then resumes once it settles', () => {
+    importing.set(true);
+    const fixture = createFixture();
+    const router = TestBed.inject(Router);
+    const navigateSpy = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+
+    fixture.componentInstance.onMeetingSelected(toMeetingId('m1'));
+    expect(navigateSpy).not.toHaveBeenCalled();
+
+    importing.set(false);
     fixture.componentInstance.onMeetingSelected(toMeetingId('m1'));
 
     expect(navigateSpy).toHaveBeenCalledWith(['/meetings/meeting', 'm1']);

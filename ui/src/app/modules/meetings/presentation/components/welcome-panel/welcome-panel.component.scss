@@ -69,3 +69,24 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+.import-recording {
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.import-recording:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.import-recording:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

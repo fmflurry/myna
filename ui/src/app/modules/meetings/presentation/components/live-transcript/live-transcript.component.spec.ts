@@ -1,19 +1,25 @@
 import { TestBed } from '@angular/core/testing';
 
+import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
 import { LiveTranscriptComponent } from './live-transcript.component';
 
 describe('LiveTranscriptComponent', () => {
-  const createFixture = (finalizedSegments: TranscriptSegment[], partialText = '') => {
+  const createFixture = (
+    finalizedSegments: TranscriptSegment[],
+    partialTextMe = '',
+    partialTextOthers = '',
+  ) => {
     const fixture = TestBed.createComponent(LiveTranscriptComponent);
     fixture.componentRef.setInput('finalizedSegments', finalizedSegments);
-    fixture.componentRef.setInput('partialText', partialText);
+    fixture.componentRef.setInput('partialTextMe', partialTextMe);
+    fixture.componentRef.setInput('partialTextOthers', partialTextOthers);
     fixture.detectChanges();
     return fixture;
   };
 
   it('renders finalized segments with an mm:ss timestamp gutter and the text', () => {
-    const fixture = createFixture([{ startSec: 65, endSec: 67, text: 'Hello team' }]);
+    const fixture = createFixture([transcriptSegment({ startSec: 65, endSec: 67, text: 'Hello team' })]);
 
     const finals = fixture.nativeElement.querySelectorAll('.final');
     expect(finals.length).toBe(1);
@@ -21,9 +27,9 @@ describe('LiveTranscriptComponent', () => {
     expect(finals[0].querySelector('.text').textContent).toBe('Hello team');
   });
 
-  it('renders the trailing partial in a visually distinct style, using the same layout as a final', () => {
+  it('renders the trailing "me" partial in a visually distinct style, using the same layout as a final', () => {
     const fixture = createFixture(
-      [{ startSec: 0, endSec: 2, text: 'Hello team' }],
+      [transcriptSegment({ startSec: 0, endSec: 2, text: 'Hello team' })],
       'and welcome',
     );
 
@@ -35,7 +41,7 @@ describe('LiveTranscriptComponent', () => {
   it('renders a real segment whose startSec equals its endSec as finalized, not partial', () => {
     // Regression guard for the removed startSec===endSec sentinel hack: a
     // genuine zero-duration final segment must never be misread as partial.
-    const fixture = createFixture([{ startSec: 3, endSec: 3, text: 'Quick aside' }]);
+    const fixture = createFixture([transcriptSegment({ startSec: 3, endSec: 3, text: 'Quick aside' })]);
 
     expect(fixture.nativeElement.querySelectorAll('.final').length).toBe(1);
     expect(fixture.nativeElement.querySelector('.partial')).toBeNull();
@@ -47,15 +53,48 @@ describe('LiveTranscriptComponent', () => {
     expect(fixture.nativeElement.querySelector('.empty')).toBeTruthy();
   });
 
+  it('renders an "unknown" segment with no speaker chrome at all, exactly as before per-speaker attribution existed', () => {
+    const fixture = createFixture([transcriptSegment({ startSec: 0, endSec: 1, text: 'No attribution here', speaker: 'unknown' })]);
+
+    const final = fixture.nativeElement.querySelector('.final');
+    expect(final.querySelector('.speaker-label')).toBeNull();
+    expect(final.querySelector('.text').textContent).toBe('No attribution here');
+  });
+
+  it('renders an unseen speaker label (forward-compat for future per-speaker diarization) with a stable accent and no crash', () => {
+    const fixture = createFixture([transcriptSegment({ startSec: 0, endSec: 1, text: 'Chiming in', speaker: 'others:7' })]);
+
+    const label = fixture.nativeElement.querySelector('.final .speaker-label');
+    expect(label.textContent).toBe('Others 7');
+    const accentClass = Array.from(label.classList as DOMTokenList).find((cls) => /^speaker-accent-\d+$/.test(cls as string));
+    expect(accentClass).toBeTruthy();
+
+    // Re-rendering the SAME label resolves to the SAME accent class every time.
+    const fixture2 = createFixture([transcriptSegment({ startSec: 0, endSec: 1, text: 'Chiming in', speaker: 'others:7' })]);
+    const label2 = fixture2.nativeElement.querySelector('.final .speaker-label');
+    expect(label2.className).toBe(label.className);
+  });
+
+  it('renders "Me" and "Others" chrome for the two bounded live-partial slots', () => {
+    const fixture = createFixture([], 'I think we should', 'actually I disagree');
+
+    const partials: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.partial'));
+    expect(partials.length).toBe(2);
+    expect(partials[0]?.querySelector('.speaker-label')?.textContent).toBe('Me');
+    expect(partials[0]?.querySelector('.text')?.textContent).toBe('I think we should');
+    expect(partials[1]?.querySelector('.speaker-label')?.textContent).toBe('Others');
+    expect(partials[1]?.querySelector('.text')?.textContent).toBe('actually I disagree');
+  });
+
   it('auto-scrolls the viewport to the bottom when new content renders', () => {
-    const fixture = createFixture([{ startSec: 0, endSec: 1, text: 'One' }]);
+    const fixture = createFixture([transcriptSegment({ startSec: 0, endSec: 1, text: 'One' })]);
     const container: HTMLElement = fixture.nativeElement.querySelector('.live-transcript');
     Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 200, configurable: true });
 
     fixture.componentRef.setInput('finalizedSegments', [
-      { startSec: 0, endSec: 1, text: 'One' },
-      { startSec: 1, endSec: 2, text: 'Two' },
+      transcriptSegment({ startSec: 0, endSec: 1, text: 'One' }),
+      transcriptSegment({ startSec: 1, endSec: 2, text: 'Two' }),
     ]);
     fixture.detectChanges();
 
@@ -63,7 +102,7 @@ describe('LiveTranscriptComponent', () => {
   });
 
   it('stops auto-scrolling once the user has scrolled away from the bottom', () => {
-    const fixture = createFixture([{ startSec: 0, endSec: 1, text: 'One' }]);
+    const fixture = createFixture([transcriptSegment({ startSec: 0, endSec: 1, text: 'One' })]);
     const container: HTMLElement = fixture.nativeElement.querySelector('.live-transcript');
     Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 200, configurable: true });
@@ -73,8 +112,8 @@ describe('LiveTranscriptComponent', () => {
     fixture.detectChanges();
 
     fixture.componentRef.setInput('finalizedSegments', [
-      { startSec: 0, endSec: 1, text: 'One' },
-      { startSec: 1, endSec: 2, text: 'Two' },
+      transcriptSegment({ startSec: 0, endSec: 1, text: 'One' }),
+      transcriptSegment({ startSec: 1, endSec: 2, text: 'Two' }),
     ]);
     fixture.detectChanges();
 
@@ -95,12 +134,12 @@ describe('LiveTranscriptComponent', () => {
     for (let i = 0; i < 20; i += 1) {
       // A partial arrives before each final is confirmed — it must never
       // displace or reorder any already-finalized segment.
-      fixture.componentRef.setInput('partialText', `partial in progress ${i}`);
+      fixture.componentRef.setInput('partialTextMe', `partial in progress ${i}`);
       fixture.detectChanges();
 
-      finals.push({ startSec: i, endSec: i + 1, text: `Sentence number ${i}` });
+      finals.push(transcriptSegment({ startSec: i, endSec: i + 1, text: `Sentence number ${i}` }));
       fixture.componentRef.setInput('finalizedSegments', [...finals]);
-      fixture.componentRef.setInput('partialText', '');
+      fixture.componentRef.setInput('partialTextMe', '');
       fixture.detectChanges();
 
       const renderedFinals: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
@@ -110,7 +149,7 @@ describe('LiveTranscriptComponent', () => {
 
     // One last trailing partial after all 20 finals: the finals must be
     // completely unaffected, only the trailing provisional line changes.
-    fixture.componentRef.setInput('partialText', 'still speaking');
+    fixture.componentRef.setInput('partialTextMe', 'still speaking');
     fixture.detectChanges();
 
     const renderedFinals: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));

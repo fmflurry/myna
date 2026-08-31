@@ -14,6 +14,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingsShellPage } from './meetings-shell.page';
 
 const readyModelsStatus: ModelsStatus = {
@@ -40,7 +41,8 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -59,6 +61,8 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
 
   const loadMeetings = vi.fn(async () => undefined);
   const loadTemplates = vi.fn(async () => undefined);
@@ -120,6 +124,16 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
   });
   /** Being added concurrently on `MeetingsFacade` by another agent — stubbed here per brief. */
   const clearSelection = vi.fn();
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
+  const loadFolders = vi.fn(async () => undefined);
+  const createFolder = vi.fn(async (name: string) => void name);
+  const renameFolder = vi.fn(async (id: string, name: string) => {
+    void id;
+    void name;
+  });
+  const deleteFolder = vi.fn(async (id: string) => void id);
+  const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
     meetings,
@@ -130,7 +144,8 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
     recordingState,
     level,
     finalizedSegments,
-    partialText,
+    partialTextMe,
+    partialTextOthers,
     error,
     busy,
     systemAudioStatus,
@@ -149,6 +164,8 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
     effectiveSystemSource,
     splitRatio,
     transcriptCollapsed,
+    importing,
+    importProgress,
     setSplitRatio,
     setTranscriptCollapsed,
     loadMeetings,
@@ -175,6 +192,13 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
     selectSummaryLanguage,
     requestSystemAudioPermission,
     clearSelection,
+    folders,
+    expandedFolders,
+    loadFolders,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    toggleFolderExpanded,
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

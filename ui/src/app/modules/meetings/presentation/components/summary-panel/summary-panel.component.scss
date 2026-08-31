@@ -56,6 +56,67 @@
   }
 }
 
+.summary-header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.edit {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+/*
+ * Same inherited-typography technique as `EditableSegmentComponent`'s
+ * `.segment-input`: font, color and line-height inherit so the editing
+ * surface reads exactly like the read-only `<pre>` it replaces.
+ */
+.summary-input {
+  display: block;
+  width: 100%;
+  max-width: var(--measure-reading);
+  resize: none;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: var(--line-height-relaxed);
+  color: inherit;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin: 0;
+}
+
+.summary-input:focus {
+  outline: none;
+}
+
+.editor-toolbar {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.done {
+  background: transparent;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.discard {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
 .markdown {
   white-space: pre-wrap;
   font-family: var(--font-sans);
@@ -71,4 +132,14 @@
 
 .empty {
   color: var(--color-text-muted);
+}
+
+.stale-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
 }

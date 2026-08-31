@@ -14,6 +14,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingsShellPage } from './meetings-shell.page';
 
 const readyModelsStatus: ModelsStatus = {
@@ -32,7 +33,8 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -51,17 +53,21 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
 
   const noop = async (): Promise<void> => undefined;
   const setSplitRatio = vi.fn((ratio: number) => void ratio);
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
 
   const facadeStub = {
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
-    finalizedSegments, partialText, error, busy, systemAudioStatus, captureSource, templates,
+    finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, setSplitRatio, setTranscriptCollapsed,
+    splitRatio, transcriptCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
@@ -70,6 +76,8 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
     cancelSummarization: vi.fn(noop), exportMeeting: vi.fn(noop), selectDevice: vi.fn(),
     selectCaptureSource: vi.fn(), selectAudioSource: vi.fn(), selectSummaryLanguage: vi.fn(),
     requestSystemAudioPermission: vi.fn(noop),
+    folders, expandedFolders, loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
+    deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
   } as unknown as MeetingsFacade;
 
   beforeEach(() => {

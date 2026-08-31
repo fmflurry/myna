@@ -7,7 +7,9 @@
 } @else if (!meeting()) {
   <app-welcome-panel
     [startingRecording]="startingRecording()"
+    [importing]="importing()"
     (startRecordingRequested)="startRecordingRequested.emit()"
+    (importRequested)="importRequested.emit()"
   />
 } @else {
   <header class="detail-heading">
@@ -16,6 +18,15 @@
       &mdash; {{ headingDate() }}
     </h1>
     <p class="meta">{{ metaLine() }}</p>
+    @if (importProgressLabel(); as label) {
+      <div class="import-progress" role="status">
+        <div class="import-progress-track">
+          <div class="import-progress-fill" [style.width.%]="importProgressPercent()"></div>
+        </div>
+        <span class="import-progress-label">{{ label }}</span>
+        <button type="button" class="cancel-import" (click)="cancelImportRequested.emit()">Cancel</button>
+      </div>
+    }
   </header>
 
   <nav class="tab-row" role="tablist" [attr.aria-label]="isNarrow() ? 'Meeting content' : 'Summary type'">
@@ -48,18 +59,6 @@
   </nav>
 
   <div class="actions-row">
-    @if (summarySelectionTab() !== transcriptTab) {
-      <!-- Meaningless on Transcript: Parakeet auto-detects the spoken
-           language and there is no re-transcribing in another one. This
-           picker only ever governs the OUTPUT language of a generated
-           summary. -->
-      <app-summary-language-picker
-        [languages]="summaryLanguages()"
-        [selectedLanguage]="selectedSummaryLanguage()"
-        [disabled]="summarizing()"
-        (languageSelected)="onSummaryLanguageSelected($event)"
-      />
-    }
     <div class="export-controls">
       <select
         class="export-format"
@@ -88,18 +87,25 @@
     </div>
   </div>
 
+  @if (hasDroppedAudio()) {
+    <div class="degraded-audio-warning" role="alert">
+      <p>Some audio wasn't transcribed. The recording is intact — re-transcribe from audio to recover the full transcript.</p>
+      <button
+        type="button"
+        class="recover-transcript"
+        [disabled]="retranscribeDisabled()"
+        [attr.aria-disabled]="retranscribeDisabled()"
+        (click)="retranscribe()"
+      >
+        Re-transcribe from audio
+      </button>
+    </div>
+  }
+
   @if (isNarrow()) {
     <div class="tab-content">
       @if (activeTab() === transcriptTab) {
-        @if (isLive()) {
-          <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
-        } @else {
-          <app-transcript-view
-            [transcript]="meeting()!.transcript"
-            [editable]="!isLive()"
-            (segmentEdited)="segmentEdited.emit($event)"
-          />
-        }
+        <ng-container *ngTemplateOutlet="transcriptContent" />
       } @else {
         <ng-container *ngTemplateOutlet="summaryContent" />
       }
@@ -114,15 +120,7 @@
       (collapsedChanged)="transcriptCollapsedChanged.emit($event)"
     >
       <div left class="split-pane-content">
-        @if (isLive()) {
-          <app-live-transcript [finalizedSegments]="finalizedSegments()" [partialText]="partialText()" />
-        } @else {
-          <app-transcript-view
-            [transcript]="meeting()!.transcript"
-            [editable]="!isLive()"
-            (segmentEdited)="segmentEdited.emit($event)"
-          />
-        }
+        <ng-container *ngTemplateOutlet="transcriptContent" />
       </div>
       <div right class="split-pane-content">
         <ng-container *ngTemplateOutlet="summaryContent" />
@@ -130,9 +128,88 @@
     </app-split-workspace>
   }
 
+  <ng-template #transcriptContent>
+    <div class="pane-toolbar-transcript">
+      <button
+        type="button"
+        class="retranscribe"
+        [disabled]="retranscribeDisabled()"
+        [attr.aria-disabled]="retranscribeDisabled()"
+        title="Re-transcribe from the existing audio"
+        (click)="retranscribe()"
+      >
+        Re-transcribe from audio
+      </button>
+      <button
+        type="button"
+        class="replace-audio"
+        [disabled]="replaceAudioDisabled()"
+        [attr.aria-disabled]="replaceAudioDisabled()"
+        title="Replace the audio file and re-transcribe"
+        (click)="replaceAudio()"
+      >
+        Replace audio &amp; re-transcribe&hellip;
+      </button>
+      <button
+        type="button"
+        class="detect-speakers"
+        [disabled]="diarizeDisabled()"
+        [attr.aria-disabled]="diarizeDisabled()"
+        [attr.aria-busy]="diarizing()"
+        [attr.title]="diarizeDisabledReason() ?? 'Detect speakers in the system-audio track'"
+        (click)="diarize()"
+      >
+        @if (diarizing()) {
+          <span class="spinner" aria-hidden="true"></span> Detecting speakers&hellip;
+        } @else {
+          Detect speakers
+        }
+      </button>
+      @if (diarizing()) {
+        <button type="button" class="stop-diarize" (click)="cancelImportRequested.emit()">Stop</button>
+        <p class="hint diarize-hint">Will stop after the current pass.</p>
+      } @else if (diarizeDisabledReason(); as reason) {
+        <p class="hint diarize-hint">{{ reason }}</p>
+      }
+    </div>
+    @if (showLiveTranscript()) {
+      <app-live-transcript
+        [finalizedSegments]="finalizedSegments()"
+        [partialTextMe]="partialTextMe()"
+        [partialTextOthers]="partialTextOthers()"
+      />
+    } @else {
+      <app-transcript-view
+        [transcript]="meeting()!.transcript"
+        [editable]="!isLive()"
+        (segmentEdited)="segmentEdited.emit($event)"
+      />
+    }
+  </ng-template>
+
   <ng-template #summaryContent>
+    @if (summarySelectionTab() !== transcriptTab) {
+      <div class="pane-toolbar-summary">
+        <!-- Meaningless on Transcript: Parakeet auto-detects the spoken
+             language and there is no re-transcribing in another one. This
+             picker only ever governs the OUTPUT language of a generated
+             summary. -->
+        <app-summary-language-picker
+          [languages]="summaryLanguages()"
+          [selectedLanguage]="selectedSummaryLanguage()"
+          [disabled]="summarizing()"
+          (languageSelected)="onSummaryLanguageSelected($event)"
+        />
+      </div>
+    }
     @if (existingSummary(); as summary) {
-      <app-summary-panel [markdown]="summary.markdown" [generating]="false" />
+      <app-summary-panel
+        [markdown]="summary.markdown"
+        [generating]="false"
+        [stale]="summary.stale"
+        [editable]="!isGeneratingActiveTab() && !summaryLoading()"
+        (summaryEdited)="onSummaryEdited($event)"
+      />
     } @else if (summaryLoading()) {
       <app-summary-panel [markdown]="''" [generating]="false" [loading]="true" />
     } @else if (isGeneratingActiveTab()) {
@@ -162,8 +239,8 @@
       </div>
     }
   </ng-template>
+}
 
-  @if (error(); as err) {
-    <app-error-state [code]="err.code" (retryClicked)="retryRequested.emit()" />
-  }
+@if (modelsReady() && error(); as err) {
+  <app-error-state [code]="err.code" (retryClicked)="retryRequested.emit()" />
 }

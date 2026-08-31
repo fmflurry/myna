@@ -12,7 +12,8 @@ describe('MeetingListItemComponent', () => {
     durationSec: 32 * 60,
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   const createFixture = (selected = false) => {
@@ -260,64 +261,30 @@ describe('MeetingListItemComponent', () => {
     expect(emitted).toEqual([]);
   });
 
-  // --- archive control: a reversible per-row toggle, no confirmation step.
-  // Requires `archiveToggleRequested = output<MeetingArchiveRequest>()` and
-  // an `.archive` button rendered next to `.delete`.
+  // --- "importing" row: generalizes the recording badge above — the same
+  // warn-on-delete treatment, but for an in-flight audio import or
+  // re-transcribe. Requires `importing = input(false)`.
 
-  it('emits archiveToggleRequested with archived:true for an unarchived meeting', () => {
-    const fixture = createFixture();
-    const emitted: { id: string; archived: boolean }[] = [];
-    fixture.componentInstance.archiveToggleRequested.subscribe((request) => emitted.push(request));
-
-    fixture.nativeElement.querySelector('.archive').click();
-
-    expect(emitted).toEqual([{ id: 'm1', archived: true }]);
-  });
-
-  it('emits archiveToggleRequested with archived:false for an already-archived meeting', () => {
-    const fixture = TestBed.createComponent(MeetingListItemComponent);
-    fixture.componentRef.setInput('meeting', { ...meeting, archived: true });
-    fixture.detectChanges();
-    const emitted: { id: string; archived: boolean }[] = [];
-    fixture.componentInstance.archiveToggleRequested.subscribe((request) => emitted.push(request));
-
-    fixture.nativeElement.querySelector('.archive').click();
-
-    expect(emitted).toEqual([{ id: 'm1', archived: false }]);
-  });
-
-  it('does not emit opened when the archive button is clicked', () => {
-    const fixture = createFixture();
-    const openedEmitted: string[] = [];
-    fixture.componentInstance.opened.subscribe((id) => openedEmitted.push(id));
-
-    fixture.nativeElement.querySelector('.archive').click();
-
-    expect(openedEmitted.length).toBe(0);
-  });
-
-  it('hides the archive control while the row is recording', () => {
+  it('shows an Importing status badge while importing', () => {
     const fixture = TestBed.createComponent(MeetingListItemComponent);
     fixture.componentRef.setInput('meeting', meeting);
-    fixture.componentRef.setInput('recording', true);
+    fixture.componentRef.setInput('importing', true);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('.archive')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.status-badge').textContent).toContain('Importing');
   });
 
-  it('flips the archive button label to Unarchive meeting for an archived row', () => {
+  it('shows a cancel-import warning instead of Delete? when importing is true', () => {
     const fixture = TestBed.createComponent(MeetingListItemComponent);
-    fixture.componentRef.setInput('meeting', { ...meeting, archived: true });
+    fixture.componentRef.setInput('meeting', meeting);
+    fixture.componentRef.setInput('importing', true);
     fixture.detectChanges();
 
-    const button: HTMLElement = fixture.nativeElement.querySelector('.archive');
-    expect(button.getAttribute('aria-label')).toBe('Unarchive meeting');
-  });
+    fixture.nativeElement.querySelector('.delete').click();
+    fixture.detectChanges();
 
-  it('labels the archive button Archive meeting for an unarchived row', () => {
-    const fixture = createFixture();
-
-    const button: HTMLElement = fixture.nativeElement.querySelector('.archive');
-    expect(button.getAttribute('aria-label')).toBe('Archive meeting');
+    expect(fixture.nativeElement.querySelector('.confirm-label').textContent).toBe(
+      'Cancel this import? The partially imported audio and transcript will be deleted.',
+    );
   });
 });

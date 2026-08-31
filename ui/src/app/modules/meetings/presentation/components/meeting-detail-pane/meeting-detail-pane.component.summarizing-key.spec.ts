@@ -31,7 +31,8 @@ describe('MeetingDetailPaneComponent summarizingKey', () => {
     durationSec: 32 * 60,
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   const findDecisionsTab = (fixture: ReturnType<typeof createFixture>): HTMLButtonElement | undefined => {

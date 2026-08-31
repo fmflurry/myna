@@ -11,7 +11,33 @@
       <span>Loading summary&hellip;</span>
     </div>
   }
-  @if (markdown()) {
+  @if (stale() && markdown() && !editing()) {
+    <p class="stale-banner" role="status">
+      Generated from a previous transcript — regenerate for up-to-date results.
+    </p>
+  }
+  @if (editing()) {
+    <div class="summary-editor">
+      <textarea
+        #summaryInput
+        class="summary-input"
+        rows="1"
+        aria-label="Summary markdown"
+        [value]="draft()"
+        (input)="onInput($event)"
+        (keydown)="onKeydown($event)"
+      ></textarea>
+      <div class="editor-toolbar">
+        <button type="button" class="done" (click)="commit()">Done</button>
+        <button type="button" class="discard" (click)="cancel()">Cancel</button>
+      </div>
+    </div>
+  } @else if (markdown()) {
+    @if (editable()) {
+      <div class="summary-header">
+        <button type="button" class="edit" (click)="beginEdit()">Edit</button>
+      </div>
+    }
     <pre class="markdown">{{ markdown() }}</pre>
   } @else if (!generating() && !loading()) {
     <p class="empty">No summary yet. Pick a template to generate one.</p>

@@ -54,6 +54,29 @@ describe('WelcomePanelComponent', () => {
     expect(button.textContent).toContain('Preparing');
   });
 
+  it('renders a secondary Import a recording action and emits importRequested when clicked', () => {
+    const fixture = createFixture();
+    let emitCount = 0;
+    fixture.componentInstance.importRequested.subscribe(() => {
+      emitCount += 1;
+    });
+
+    const button = fixture.nativeElement.querySelector('button.import-recording') as HTMLButtonElement;
+    expect(button.textContent?.trim()).toBe('Import a recording');
+    button.click();
+
+    expect(emitCount).toBe(1);
+  });
+
+  it('disables both actions while an import is in progress', () => {
+    const fixture = TestBed.createComponent(WelcomePanelComponent);
+    fixture.componentRef.setInput('importing', true);
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement.querySelector('button.start-meeting') as HTMLButtonElement).disabled).toBe(true);
+    expect((fixture.nativeElement.querySelector('button.import-recording') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('marks the decorative logo aria-hidden', () => {
     const fixture = createFixture();
 

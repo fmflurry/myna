@@ -24,7 +24,8 @@
 .segment-input {
   display: block;
   width: 100%;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   padding: 0;
   border: none;
   border-bottom: 1px solid var(--color-accent);

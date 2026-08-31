@@ -2,18 +2,26 @@
   class="row"
   [class.selected]="selected()"
   [class.disabled]="disabled()"
+  [class.drop-before]="indicator() === 'before'"
+  [class.drop-after]="indicator() === 'after'"
   [attr.aria-selected]="selected()"
   [attr.aria-disabled]="disabled()"
   [attr.title]="disabledHint()"
+  [attr.draggable]="dragEnabled() ? 'true' : null"
   role="option"
   [attr.tabindex]="disabled() ? -1 : 0"
   (click)="activate()"
   (keydown.enter)="activate()"
   (keydown.space)="activate()"
   (keydown.escape)="onEscapeKey($event)"
+  (dragstart)="onDragStart($event)"
+  (dragend)="onDragEnd()"
+  (dragover)="onRowDragOver($event)"
+  (dragleave)="onRowDragLeave()"
+  (drop)="onRowDrop($event)"
 >
   @if (confirmingDelete()) {
-    <div class="confirm" [class.warning]="recording()" [attr.role]="recording() ? 'alert' : null">
+    <div class="confirm" [class.warning]="busy()" [attr.role]="busy() ? 'alert' : null">
       <span class="confirm-label">{{ confirmLabel() }}</span>
       <span class="confirm-actions">
         <button type="button" class="confirm-yes" (click)="confirmDelete($event)">Yes</button>
@@ -23,16 +31,8 @@
   } @else {
     <span class="title">{{ displayTitle() }}</span>
     <span class="meta">{{ meta() }}</span>
-    @if (!recording()) {
-      <button
-        type="button"
-        class="archive"
-        [attr.aria-label]="archiveLabel()"
-        [attr.title]="archiveLabel()"
-        (click)="toggleArchive($event)"
-      >
-        &#8595;
-      </button>
+    @if (importing()) {
+      <span class="status-badge importing" aria-label="Importing">Importing&hellip;</span>
     }
     <button type="button" class="delete" aria-label="Delete meeting" (click)="requestDelete($event)">
       &times;

@@ -1,12 +1,12 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, HostListener, computed, effect, input, output, signal } from '@angular/core';
 
-import type { SummaryCacheEntry, SummarizingKey } from '../../../application/stores/meetings.store';
-import { summaryCacheKey, type MeetingsErrorInfo } from '../../../application/stores/meetings.store';
+import type { MeetingsErrorInfo, SummaryCacheEntry, SummarizingKey } from '../../../application/stores/meetings.store';
 import type { AudioSource } from '../../../core/models/audio-source.model';
 import type { CaptureSource } from '../../../core/models/capture-source.model';
-import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
+import type { Meeting } from '../../../core/models/meeting.model';
 import type { ModelsStatus } from '../../../core/models/models-status.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import type { MeetingExportFormat } from '../../../core/ports/meeting-repository.port';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import { DEFAULT_SPLIT_RATIO } from '../../../core/models/split-layout.model';
@@ -30,34 +30,30 @@ import { SummaryPanelComponent } from '../summary-panel/summary-panel.component'
 import type { TranscriptSegmentEdit } from '../transcript-view/transcript-view.component';
 import { TranscriptViewComponent } from '../transcript-view/transcript-view.component';
 import { WelcomePanelComponent } from '../welcome-panel/welcome-panel.component';
+import {
+  computeEffectiveCaptureLabel,
+  computeGeneratingElsewhereLabel,
+  computeIsGeneratingActiveTab,
+  computeSummarySelectionTab,
+  computeWideActiveTemplate,
+  diarizeDisabledReason,
+  findExistingSummary,
+  findUnloadedSummaryRequest,
+  isDiarizeDisabled,
+  isSummaryLoading,
+  NARROW_BREAKPOINT_PX,
+  buildSummaryEdit,
+  computeImportProgressLabel,
+  computeImportProgressPercent,
+  isReplaceAudioDisabled,
+  isRetranscribeDisabled,
+} from './meeting-detail-pane.component.support';
+import type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
+export type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
 
 const TRANSCRIPT_TAB = 'transcript';
 
-/**
- * Below this viewport width, the two-column split workspace no longer fits
- * comfortably (each column would drop under a usable reading measure), so
- * the layout falls back to the narrow single-column tabbed view — the same
- * one this component used before the split workspace existed, transcript
- * tab included. jsdom's default `window.innerWidth` (1024) resolves to
- * narrow, matching the layout every pre-existing spec in this file already
- * asserts against.
- */
-const NARROW_BREAKPOINT_PX = 1200;
-
 const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json'];
-
-const CAPTURE_SOURCE_LABELS: Readonly<Record<CaptureSource, string>> = {
-  microphone: 'Microphone',
-  system: 'System audio',
-  mixed: 'Mic + system',
-};
-
-/** A request to fetch a persisted summary's content for one (meeting, template, language) triple. */
-export interface SummaryLoadRequest {
-  readonly meetingId: MeetingId;
-  readonly template: string;
-  readonly language: string;
-}
 
 /**
  * Right-hand detail pane: heading, a horizontal tab strip (Transcript + one
@@ -91,7 +87,8 @@ export class MeetingDetailPaneComponent {
   readonly modelsStatus = input<ModelsStatus | undefined>(undefined);
   readonly recordingState = input.required<RecordingState>();
   readonly finalizedSegments = input<readonly TranscriptSegment[]>([]);
-  readonly partialText = input('');
+  readonly partialTextMe = input('');
+  readonly partialTextOthers = input('');
   readonly templates = input<readonly SummaryTemplate[]>([]);
   readonly summaryStream = input('');
   /** True while ANYTHING is generating, regardless of tab — see `isGeneratingActiveTab` for the per-tab check. */
@@ -119,6 +116,16 @@ export class MeetingDetailPaneComponent {
   readonly transcriptCollapsed = input(false);
   /** True while a recording is starting up, forwarded to the welcome panel's Start a meeting button. */
   readonly startingRecording = input(false);
+  /** True while an audio import or re-transcribe is running for THIS meeting. */
+  readonly importing = input(false);
+  /** Latest `import://progress` event for the in-flight import/re-transcribe, or `null` once none is running. */
+  readonly importProgress = input<ImportProgress | null>(null);
+  /** Whether `audio.wav` exists on disk for this meeting — gates "Re-transcribe from audio". */
+  readonly hasAudio = input(false);
+  /** Whether `track-system.wav` exists on disk for this meeting — gates "Detect speakers". */
+  readonly hasSystemTrack = input(false);
+  /** True for the duration of an in-flight `diarizeMeeting` call; shows activity on the "Detect speakers" button specifically (never borrowed from an unrelated `importing`). */
+  readonly diarizing = input(false);
 
   readonly renameRequested = output<string>();
   readonly segmentEdited = output<TranscriptSegmentEdit>();
@@ -130,10 +137,19 @@ export class MeetingDetailPaneComponent {
   readonly summaryLanguageSelected = output<string>();
   /** Emitted when the active tab has a persisted-but-unloaded summary ref that needs fetching. */
   readonly summaryLoadRequested = output<SummaryLoadRequest>();
+  /** Re-emitted from `app-summary-panel`'s edit mode with the (meeting, template, language) context of the edited summary. */
+  readonly summaryEdited = output<SummaryEdit>();
   readonly splitRatioChanged = output<number>();
   readonly transcriptCollapsedChanged = output<boolean>();
   /** Re-emitted from `app-welcome-panel`'s Start a meeting button — see `meetings-shell.page.ts` for the wiring. */
   readonly startRecordingRequested = output<void>();
+  /** Re-emitted from `app-welcome-panel`'s secondary Import a recording button. */
+  readonly importRequested = output<void>();
+  readonly retranscribeRequested = output<void>();
+  readonly replaceAudioRequested = output<void>();
+  readonly cancelImportRequested = output<void>();
+  /** User-triggered speaker detection over this meeting's system-audio track; see `meetings-shell.page.ts` for the wiring. */
+  readonly diarizeRequested = output<void>();
 
   protected readonly transcriptTab = TRANSCRIPT_TAB;
   protected readonly exportFormats = EXPORT_FORMATS;
@@ -152,31 +168,51 @@ export class MeetingDetailPaneComponent {
 
   protected readonly isLive = computed(() => this.recordingState() !== 'idle');
 
-  /**
-   * The template tab governing the right (summary) column in the WIDE
-   * layout, where the tab strip no longer includes a Transcript tab. Falls
-   * back to the first available template so the right column shows
-   * something meaningful even before the user explicitly clicks a tab —
-   * `activeTab` itself still starts at {@link TRANSCRIPT_TAB} internally,
-   * it just never renders as a tab choice on wide screens.
-   */
-  protected readonly wideActiveTemplate = computed(() => {
-    const tab = this.activeTab();
-    if (tab !== this.transcriptTab) {
-      return tab;
-    }
-    return this.templates()[0]?.name ?? this.transcriptTab;
-  });
+  /** Drives the transcript column: a live import re-uses the same streaming view as a live recording. */
+  protected readonly showLiveTranscript = computed(() => this.isLive() || this.importing());
 
-  /**
-   * The (template, language) selector every summary-related computed below
-   * reads from. Narrow: the literal active tab (Transcript included, same
-   * as before the split workspace existed). Wide: {@link wideActiveTemplate},
-   * since the transcript is always visible in the left column there and the
-   * tab strip governs only the right one.
-   */
+  protected readonly importProgressLabel = computed(() =>
+    computeImportProgressLabel(this.importing(), this.importProgress()),
+  );
+  protected readonly importProgressPercent = computed(() => computeImportProgressPercent(this.importProgress()));
+  protected readonly retranscribeDisabled = computed(() =>
+    isRetranscribeDisabled(this.hasAudio(), this.isLive(), this.importing()),
+  );
+  protected readonly replaceAudioDisabled = computed(() => isReplaceAudioDisabled(this.isLive(), this.importing()));
+
+  /** Whether the diarization models (pyannote segmentation + NeMo TitaNet embedding) are present on disk. */
+  protected readonly diarizationModelsPresent = computed(() => this.modelsStatus()?.diarization?.present ?? false);
+  /** See {@link isDiarizeDisabled}. `isLive()` is passed both as `busy` (silent, matches every other reingest control) and as the explicit `recording` flag that drives the surfaced reason below. */
+  protected readonly diarizeDisabled = computed(() =>
+    isDiarizeDisabled(
+      this.diarizationModelsPresent(),
+      this.hasSystemTrack(),
+      this.isLive(),
+      this.importing(),
+      this.diarizing(),
+      this.isLive(),
+    ),
+  );
+  /** See {@link diarizeDisabledReason}. The recording reason takes precedence over the other durable reasons while a recording is in progress. */
+  protected readonly diarizeDisabledReason = computed<string | undefined>(() =>
+    diarizeDisabledReason(
+      this.diarizationModelsPresent(),
+      this.hasSystemTrack(),
+      this.modelsStatus()?.diarization?.path ?? '',
+      this.isLive(),
+    ),
+  );
+  /** Drives the "some audio wasn't transcribed" recovery warning near the transcript. */
+  protected readonly hasDroppedAudio = computed(() => (this.meeting()?.droppedAudioChunks ?? 0) > 0);
+
+  /** See {@link computeWideActiveTemplate}. */
+  protected readonly wideActiveTemplate = computed(() =>
+    computeWideActiveTemplate(this.activeTab(), this.transcriptTab, this.templates()),
+  );
+
+  /** See {@link computeSummarySelectionTab}. */
   protected readonly summarySelectionTab = computed(() =>
-    this.isNarrow() ? this.activeTab() : this.wideActiveTemplate(),
+    computeSummarySelectionTab(this.isNarrow(), this.activeTab(), this.wideActiveTemplate()),
   );
 
   protected readonly headingDate = computed(() => {
@@ -194,26 +230,10 @@ export class MeetingDetailPaneComponent {
     return current ? formatMinutesLong(current.durationSec) : '';
   });
 
-  /**
-   * The EFFECTIVE capture source label for a live recording — never the
-   * merely requested one. Requesting `system`/`mixed` audio is only
-   * reflected here once a system source is actually attached; when it
-   * isn't (the recorder degraded to microphone only), this reads that out
-   * plainly instead of repeating the original request, so it can never sit
-   * on screen next to the title bar's "Mic only" hint and contradict it.
-   * Idle/saved meetings never call this — `metaLine` shows duration then,
-   * and the *selected* (requested) source is still what the record
-   * control's capture-settings picker shows before/after recording.
-   */
-  protected readonly effectiveCaptureLabel = computed(() => {
-    const requested = this.captureSource();
-    if (requested === 'microphone') {
-      return CAPTURE_SOURCE_LABELS.microphone;
-    }
-    return this.effectiveSystemSource() !== null
-      ? CAPTURE_SOURCE_LABELS[requested]
-      : 'Mic only (system audio unavailable)';
-  });
+  /** See {@link computeEffectiveCaptureLabel}. Idle/saved meetings never call this — `metaLine` shows duration then. */
+  protected readonly effectiveCaptureLabel = computed(() =>
+    computeEffectiveCaptureLabel(this.captureSource(), this.effectiveSystemSource()),
+  );
 
   protected readonly activeTemplateLabel = computed(() => {
     const template = this.templates().find((candidate) => candidate.name === this.summarySelectionTab());
@@ -225,104 +245,43 @@ export class MeetingDetailPaneComponent {
     return this.summaryLanguages().find((language) => language.code === code)?.label ?? code;
   });
 
-  /**
-   * A tab is keyed by template alone, but a template can now hold both a
-   * French and an English summary side by side — so the match also
-   * requires the CURRENTLY SELECTED language, keeping which version is on
-   * screen unambiguous. `.at(-1)` picks the most recently generated match
-   * so regenerating in the same language shows the fresh content, while
-   * regenerating in a different language never overwrites the other one
-   * (`withSummary` only ever appends).
-   *
-   * A ref whose `markdown` is still `''` (persisted before this session, not
-   * yet fetched) is resolved from `summaryCache` instead — see the
-   * constructor `effect` below, which requests that fetch.
-   */
-  protected readonly existingSummary = computed(() => {
-    const current = this.meeting();
-    const tab = this.summarySelectionTab();
-    const language = this.selectedSummaryLanguage();
-    const ref = current?.summaries
-      .filter((summary) => summary.template === tab && summary.language === language)
-      .at(-1);
-    if (!ref) {
-      return undefined;
-    }
-    if (ref.markdown !== '') {
-      return ref;
-    }
-    const entry = this.summaryCache().get(summaryCacheKey(current!.id, tab, language));
-    return entry?.status === 'loaded' ? entry.summary : undefined;
-  });
+  /** See {@link findExistingSummary}. A ref whose `markdown` is still `''` is resolved from `summaryCache` instead — see the constructor `effect` below, which requests that fetch. */
+  protected readonly existingSummary = computed(() =>
+    findExistingSummary(this.meeting(), this.summaryCache(), this.summarySelectionTab(), this.selectedSummaryLanguage()),
+  );
 
-  /** True while a persisted-but-unfetched summary ref is being (or about to be) loaded for the active tab. */
-  protected readonly summaryLoading = computed(() => {
-    const current = this.meeting();
-    const tab = this.summarySelectionTab();
-    const language = this.selectedSummaryLanguage();
-    const ref = current?.summaries
-      .filter((summary) => summary.template === tab && summary.language === language)
-      .at(-1);
-    if (!current || !ref || ref.markdown !== '') {
-      return false;
-    }
-    const entry = this.summaryCache().get(summaryCacheKey(current.id, tab, language));
-    return entry === undefined || entry.status === 'loading';
-  });
+  /** See {@link isSummaryLoading}. */
+  protected readonly summaryLoading = computed(() =>
+    isSummaryLoading(this.meeting(), this.summaryCache(), this.summarySelectionTab(), this.selectedSummaryLanguage()),
+  );
 
-  /**
-   * True only when the ACTIVE tab (template + selected language) is the one
-   * generating. This is what gates the loader, the streaming tokens, and
-   * Cancel — never the bare `summarizing` flag, which is true for every tab
-   * while ANY generation runs and was the root cause of every tab showing
-   * the same loader (see task brief).
-   */
-  protected readonly isGeneratingActiveTab = computed(() => {
-    const key = this.summarizingKey();
-    return (
-      key !== null && key.template === this.summarySelectionTab() && key.language === this.selectedSummaryLanguage()
-    );
-  });
+  /** See {@link computeIsGeneratingActiveTab}. Gates the loader, the streaming tokens, and Cancel — never the bare `summarizing` flag. */
+  protected readonly isGeneratingActiveTab = computed(() =>
+    computeIsGeneratingActiveTab(this.summarizingKey(), this.summarySelectionTab(), this.selectedSummaryLanguage()),
+  );
 
-  /**
-   * Display label of the template generating on a DIFFERENT tab than the
-   * one currently active, or `undefined` when nothing is generating
-   * elsewhere. Drives the disabled Generate button + visible reason on
-   * every other tab, since the backend rejects a second concurrent
-   * summarization with `Busy`.
-   */
-  protected readonly generatingElsewhereLabel = computed(() => {
-    const key = this.summarizingKey();
-    if (!key || this.isGeneratingActiveTab()) {
-      return undefined;
-    }
-    const template = this.templates().find((candidate) => candidate.name === key.template);
-    return template ? formatTemplateLabel(template) : key.template;
-  });
+  /** See {@link computeGeneratingElsewhereLabel}. */
+  protected readonly generatingElsewhereLabel = computed(() =>
+    computeGeneratingElsewhereLabel(this.summarizingKey(), this.isGeneratingActiveTab(), this.templates()),
+  );
 
   constructor() {
-    // Requests a fetch whenever the active tab shows a persisted ref
-    // (survived a restart) whose markdown hasn't been loaded into the cache
-    // yet. Re-running as `summaryCache` itself changes is intentional: once
-    // the facade records a 'loading' (then 'loaded'/'empty') entry for this
-    // exact key, the guard below stops emitting further requests for it.
+    // Requests a fetch whenever the active tab shows a persisted-but-unloaded
+    // summary ref — see {@link findUnloadedSummaryRequest}. Re-running as
+    // `summaryCache` itself changes is intentional: once the facade records a
+    // 'loading' (then 'loaded'/'empty') entry for this exact key, the guard
+    // inside that helper stops emitting further requests for it.
     effect(() => {
-      const current = this.meeting();
-      const tab = this.summarySelectionTab();
-      const language = this.selectedSummaryLanguage();
-      if (!current || tab === this.transcriptTab) {
-        return;
+      const request = findUnloadedSummaryRequest(
+        this.meeting(),
+        this.summarySelectionTab(),
+        this.transcriptTab,
+        this.selectedSummaryLanguage(),
+        this.summaryCache(),
+      );
+      if (request) {
+        this.summaryLoadRequested.emit(request);
       }
-      const ref = current.summaries
-        .filter((summary) => summary.template === tab && summary.language === language)
-        .at(-1);
-      if (!ref || ref.markdown !== '') {
-        return;
-      }
-      if (this.summaryCache().has(summaryCacheKey(current.id, tab, language))) {
-        return;
-      }
-      this.summaryLoadRequested.emit({ meetingId: current.id, template: tab, language });
     });
   }
 
@@ -356,5 +315,26 @@ export class MeetingDetailPaneComponent {
 
   onSummaryLanguageSelected(code: string): void {
     this.summaryLanguageSelected.emit(code);
+  }
+
+  /** Tags the panel's raw edited markdown with the summary it was edited against. */
+  onSummaryEdited(markdown: string): void {
+    const current = this.meeting();
+    if (!current) {
+      return;
+    }
+    this.summaryEdited.emit(
+      buildSummaryEdit(current, this.summarySelectionTab(), this.selectedSummaryLanguage(), markdown),
+    );
+  }
+
+  retranscribe(): void {
+    this.retranscribeRequested.emit();
+  }
+  replaceAudio(): void {
+    this.replaceAudioRequested.emit();
+  }
+  diarize(): void {
+    this.diarizeRequested.emit();
   }
 }

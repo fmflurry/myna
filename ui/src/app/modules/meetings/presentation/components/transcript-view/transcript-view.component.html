@@ -3,6 +3,27 @@
     @for (segment of transcript()!.segments; track $index) {
       <li>
         <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
+        <button type="button" class="{{ chipClass(segment.speaker) }}" aria-haspopup="menu" (click)="onChipClick($event, $index)">{{ chipLabel(segment.speaker) }}</button>
+        @if (openIndex() === $index) {
+          <div
+            class="speaker-menu"
+            [class.dropup]="menuPosition()?.dropup"
+            role="menu"
+            [style.left.px]="menuPosition()?.left"
+            [style.top.px]="menuPosition()?.top"
+            [style.bottom.px]="menuPosition()?.bottom"
+            [style.max-height.px]="menuPosition()?.maxHeight"
+          >
+            @for (item of menuItems(); track item.key) {
+              <button type="button" role="menuitem" class="speaker-menu-item" (click)="item.action()">{{ item.text }}</button>
+            }
+            @if (showRenameRow()) {
+              <div class="rename-row">
+                <input type="text" [placeholder]="renamePlaceholder()" (keydown)="onRenameKeydown($event)" />
+              </div>
+            }
+          </div>
+        }
         <app-editable-segment
           class="text"
           [text]="segment.text"

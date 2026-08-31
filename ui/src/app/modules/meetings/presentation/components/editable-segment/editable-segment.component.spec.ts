@@ -11,6 +11,22 @@ describe('EditableSegmentComponent', () => {
     return fixture;
   };
 
+  /**
+   * jsdom always reports `scrollHeight` as 0, so shadow the inherited getter
+   * with a fixed value to simulate a textarea whose content needs that many
+   * pixels. Restored in `afterEach`.
+   */
+  const mockScrollHeight = (value: number) => {
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      value,
+      configurable: true,
+    });
+  };
+
+  afterEach(() => {
+    delete (HTMLTextAreaElement.prototype as { scrollHeight?: unknown }).scrollHeight;
+  });
+
   it('displays the text as a native button trigger, not a div or contenteditable, so it stays keyboard-reachable', () => {
     const fixture = createFixture('Welcome everyone');
 
@@ -156,5 +172,46 @@ describe('EditableSegmentComponent', () => {
     expect(span).not.toBeNull();
     expect(span.tagName).toBe('SPAN');
     expect(span.textContent!.trim()).toBe('Welcome everyone');
+  });
+
+  it('sizes the textarea to fit the entire draft text when editing starts', async () => {
+    mockScrollHeight(96);
+    const fixture = createFixture(
+      'A long transcript segment that wraps across many rendered lines at the section width',
+    );
+    document.body.appendChild(fixture.nativeElement);
+
+    const trigger: HTMLButtonElement = fixture.nativeElement.querySelector('.segment-trigger');
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.segment-input');
+    expect(textarea.style.height).toBe('96px');
+
+    fixture.nativeElement.remove();
+  });
+
+  it('re-adjusts the textarea height as the draft changes on input', async () => {
+    mockScrollHeight(96);
+    const fixture = createFixture('Initial text');
+    document.body.appendChild(fixture.nativeElement);
+
+    const trigger: HTMLButtonElement = fixture.nativeElement.querySelector('.segment-trigger');
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.segment-input');
+    expect(textarea.style.height).toBe('96px');
+
+    mockScrollHeight(140);
+    textarea.value = 'Initial text extended with much more content that now needs additional lines';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    expect(textarea.style.height).toBe('140px');
+
+    fixture.nativeElement.remove();
   });
 });

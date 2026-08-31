@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 
 /**
  * Empty-state content for the detail pane when no meeting is selected and
  * the models are ready (see `MeetingDetailPaneComponent`, which renders
  * `app-onboarding-panel` instead whenever `modelsReady()` is false). Purely
  * presentational: the owning page wires `startRecordingRequested` to the
- * same `facade.startRecording` call the header Record button already uses.
+ * same `facade.startRecording` call the header Record button already uses,
+ * and `importRequested` to `facade.importAudio()`.
  */
 @Component({
   selector: 'app-welcome-panel',
@@ -15,6 +16,11 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 })
 export class WelcomePanelComponent {
   readonly startingRecording = input(false);
+  /** True while an audio import or re-transcribe is running; disables both actions. */
+  readonly importing = input(false);
 
   readonly startRecordingRequested = output<void>();
+  readonly importRequested = output<void>();
+
+  protected readonly actionsDisabled = computed(() => this.startingRecording() || this.importing());
 }

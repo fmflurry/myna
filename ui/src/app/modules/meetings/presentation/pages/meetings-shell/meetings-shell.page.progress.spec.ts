@@ -15,6 +15,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingsShellPage } from './meetings-shell.page';
 
 const readyModelsStatus: ModelsStatus = {
@@ -41,7 +42,8 @@ describe('MeetingsShellPage non-blocking summarization', () => {
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -65,6 +67,8 @@ describe('MeetingsShellPage non-blocking summarization', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
 
   const meeting: Meeting = {
     id: toMeetingId('m1'),
@@ -73,7 +77,8 @@ describe('MeetingsShellPage non-blocking summarization', () => {
     durationSec: 60,
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   const noop = async (): Promise<void> => undefined;
@@ -102,18 +107,26 @@ describe('MeetingsShellPage non-blocking summarization', () => {
   const requestSystemAudioPermission = vi.fn(noop);
   const setSplitRatio = vi.fn();
   const setTranscriptCollapsed = vi.fn();
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
+  const loadFolders = vi.fn(noop);
+  const createFolder = vi.fn(noop);
+  const renameFolder = vi.fn(noop);
+  const deleteFolder = vi.fn(noop);
+  const toggleFolderExpanded = vi.fn();
 
   const facadeStub = {
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
-    finalizedSegments, partialText, error, busy, systemAudioStatus, captureSource, templates,
+    finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, setSplitRatio, setTranscriptCollapsed,
+    splitRatio, transcriptCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed,
     loadMeetings, loadTemplates, checkModels, loadDevices, checkSystemAudio, loadSummaryLanguages,
     loadAppVersion, loadAudioSources, loadSummary, openMeeting, startRecording, stopRecording,
     cancelRecording, deleteMeeting, renameMeeting, summarizeMeeting, cancelSummarization,
     exportMeeting, selectDevice, selectCaptureSource, selectAudioSource, selectSummaryLanguage,
     requestSystemAudioPermission,
+    folders, expandedFolders, loadFolders, createFolder, renameFolder, deleteFolder, toggleFolderExpanded,
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

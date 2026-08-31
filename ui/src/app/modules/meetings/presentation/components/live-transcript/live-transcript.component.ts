@@ -9,17 +9,27 @@ import {
   viewChild,
 } from '@angular/core';
 
-import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import {
+  speakerAccentIndex,
+  speakerDisplayName,
+  speakerRole,
+  type Speaker,
+  type TranscriptSegment,
+} from '../../../core/models/transcript.model';
 import { formatMmSs } from '../../utils/format-display.util';
 
 /** Pixel tolerance for treating the scroll position as "pinned to bottom". */
 const BOTTOM_TOLERANCE_PX = 24;
 
+/** Size of the fixed CSS accent palette; see `.speaker-accent-N` in the stylesheet. */
+const SPEAKER_ACCENT_PALETTE_SIZE = 6;
+
 /**
- * Finalized segments and the streaming partial are two explicit inputs —
- * never a single merged `Transcript` with a sentinel to tell them apart.
- * `finalizedSegments` only ever grows; `partialText` is transient and is
- * cleared by the store the moment the next final segment arrives.
+ * Finalized segments and the two streaming partials (one per speaker slot)
+ * are explicit inputs — never a single merged `Transcript` with a sentinel
+ * to tell them apart. `finalizedSegments` only ever grows; the partials are
+ * transient and are cleared by the store the moment the next final segment
+ * arrives.
  */
 @Component({
   selector: 'app-live-transcript',
@@ -29,10 +39,11 @@ const BOTTOM_TOLERANCE_PX = 24;
 })
 export class LiveTranscriptComponent {
   readonly finalizedSegments = input.required<readonly TranscriptSegment[]>();
-  readonly partialText = input<string>('');
+  readonly partialTextMe = input<string>('');
+  readonly partialTextOthers = input<string>('');
 
   readonly isEmpty = computed(
-    () => this.finalizedSegments().length === 0 && !this.partialText(),
+    () => this.finalizedSegments().length === 0 && !this.partialTextMe() && !this.partialTextOthers(),
   );
 
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
@@ -42,10 +53,11 @@ export class LiveTranscriptComponent {
 
   constructor() {
     afterRenderEffect(() => {
-      // Reading both signals here re-runs this effect after every new final
-      // or partial update renders, so the auto-scroll stays in sync with it.
+      // Reading all three signals here re-runs this effect after every new
+      // final or partial update renders, so the auto-scroll stays in sync.
       this.finalizedSegments();
-      this.partialText();
+      this.partialTextMe();
+      this.partialTextOthers();
       const element = this.scrollContainer()?.nativeElement;
       if (element && this.pinnedToBottom()) {
         element.scrollTop = element.scrollHeight;
@@ -62,5 +74,20 @@ export class LiveTranscriptComponent {
 
   formatTimestamp(seconds: number): string {
     return formatMmSs(seconds);
+  }
+
+  /** `''` for `unknown` — renderers must never fabricate attribution the app doesn't have. */
+  speakerLabel(speaker: Speaker): string {
+    return speakerDisplayName(speaker);
+  }
+
+  /** Whether `speaker` carries real attribution chrome should render for. */
+  hasSpeakerLabel(speaker: Speaker): boolean {
+    return speakerRole(speaker) !== 'unknown';
+  }
+
+  /** Stable CSS accent class for `speaker`, from the fixed-size palette. */
+  speakerAccentClass(speaker: Speaker): string {
+    return `speaker-accent-${speakerAccentIndex(speaker, SPEAKER_ACCENT_PALETTE_SIZE)}`;
   }
 }

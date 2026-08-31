@@ -4,6 +4,7 @@ import type { Meeting } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import { formatTemplateLabel } from '../../utils/format-display.util';
+import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
 
 describe('MeetingDetailPaneComponent', () => {
@@ -16,10 +17,11 @@ describe('MeetingDetailPaneComponent', () => {
     title: 'Standup',
     createdAt: new Date(2026, 7, 27, 14, 2),
     durationSec: 32 * 60,
-    transcript: { segments: [{ startSec: 4, endSec: 6, text: 'On commence.' }] },
+    transcript: { segments: [transcriptSegment({ startSec: 4, endSec: 6, text: 'On commence.' })] },
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   const createFixture = () => {
@@ -95,7 +97,7 @@ describe('MeetingDetailPaneComponent', () => {
     fixture.componentRef.setInput('recordingState', 'recording');
     fixture.componentRef.setInput('captureSource', 'system');
     fixture.componentRef.setInput('effectiveSystemSource', { id: 'system:all', name: 'All System Audio' });
-    fixture.componentRef.setInput('finalizedSegments', [{ startSec: 0, endSec: 1, text: 'Hi' }]);
+    fixture.componentRef.setInput('finalizedSegments', [transcriptSegment({ startSec: 0, endSec: 1, text: 'Hi' })]);
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('app-live-transcript')).toBeTruthy();
@@ -313,7 +315,7 @@ describe('MeetingDetailPaneComponent', () => {
   describe('restart regression: a persisted-but-unfetched summary ref', () => {
     const refOnlyMeeting: Meeting = {
       ...meeting,
-      summaries: [{ template: 'key-points', markdown: '', createdAt: new Date(), language: 'en' }],
+      summaries: [{ template: 'key-points', markdown: '', createdAt: new Date(), language: 'en', stale: false }],
     };
 
     it('requests a summary load when the active tab has a ref with no markdown and no cache entry yet', () => {
@@ -393,4 +395,6 @@ describe('MeetingDetailPaneComponent', () => {
       expect(fixture.nativeElement.querySelector('app-summary-panel')).toBeNull();
     });
   });
+
+  // Degraded-recording warning: meeting-detail-pane.component.degraded-audio.spec.ts (max-lines limit).
 });

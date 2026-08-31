@@ -23,6 +23,12 @@ const ALL_SYSTEM_AUDIO_LABEL = 'System';
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './capture-settings.component.html',
   styleUrl: './capture-settings.component.scss',
+  host: {
+    // Internal clicks never reach `document`, so the document listener
+    // below only fires for genuine "clicked outside" interactions.
+    '(click)': '$event.stopPropagation()',
+    '(document:click)': 'close()',
+  },
 })
 export class CaptureSettingsComponent {
   readonly devices = input<readonly AudioDevice[]>([]);
@@ -66,13 +72,17 @@ export class CaptureSettingsComponent {
     this.expanded.update((value) => !value);
   }
 
+  protected close(): void {
+    this.expanded.set(false);
+  }
+
   protected onDeviceChange(event: Event): void {
     this.deviceChanged.emit((event.target as HTMLSelectElement).value);
   }
 
   protected onSourceSelected(source: CaptureSource): void {
     this.sourceSelected.emit(source);
-    this.expanded.set(false);
+    this.close();
   }
 
   protected onAudioSourceChange(id: string): void {

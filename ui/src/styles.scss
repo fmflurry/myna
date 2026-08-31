@@ -67,6 +67,12 @@
   --color-danger-contrast: #ffffff;
   --color-danger-soft: color-mix(in srgb, var(--color-danger) 14%, transparent);
   --color-success: #2f8a4d;
+  /* Hover fill for otherwise-transparent/surface buttons (speaker chip/menu,
+   * speakers-panel). Derived relative to --color-surface/--color-text so a
+   * single definition works in both light and dark scheme blocks below —
+   * it nudges the surface 10% toward the current text colour, which reads
+   * as a subtle darken in light mode and a subtle lighten in dark mode. */
+  --color-surface-hover: color-mix(in srgb, var(--color-surface) 90%, var(--color-text) 10%);
 
   /* Product UI / body text: Inter. Brand / display (logo, headings): Poppins. */
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,

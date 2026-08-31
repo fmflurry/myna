@@ -16,6 +16,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingsShellPage } from './meetings-shell.page';
 
@@ -44,7 +45,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -63,6 +65,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
 
   const loadMeetings = vi.fn(async () => undefined);
   const loadTemplates = vi.fn(async () => undefined);
@@ -122,6 +126,16 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => {
     void collapsed;
   });
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
+  const loadFolders = vi.fn(async () => undefined);
+  const createFolder = vi.fn(async (name: string) => void name);
+  const renameFolder = vi.fn(async (id: string, name: string) => {
+    void id;
+    void name;
+  });
+  const deleteFolder = vi.fn(async (id: string) => void id);
+  const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
     meetings,
@@ -132,7 +146,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     recordingState,
     level,
     finalizedSegments,
-    partialText,
+    partialTextMe,
+    partialTextOthers,
     error,
     busy,
     systemAudioStatus,
@@ -151,6 +166,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     effectiveSystemSource,
     splitRatio,
     transcriptCollapsed,
+    importing,
+    importProgress,
     setSplitRatio,
     setTranscriptCollapsed,
     loadMeetings,
@@ -176,6 +193,13 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     selectAudioSource,
     selectSummaryLanguage,
     requestSystemAudioPermission,
+    folders,
+    expandedFolders,
+    loadFolders,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    toggleFolderExpanded,
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;
@@ -240,7 +264,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     durationSec: 0,
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
   };
 
   it('routes deletion of the in-progress meeting through cancelRecording, not deleteMeeting', () => {
@@ -296,7 +321,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
       durationSec: 3480,
       summaries: [],
       archived: false,
-      hasAudio: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
     meetings.set([inProgressMeeting, otherMeeting]);
     selectedMeeting.set(inProgressMeeting);

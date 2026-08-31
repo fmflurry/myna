@@ -9,12 +9,14 @@ import type { MeetingsErrorInfo } from '../../../application/stores/meetings.sto
 import type { AudioDevice, AudioLevel } from '../../../core/models/audio-device.model';
 import type { AudioSource } from '../../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
+import type { Folder, FolderId } from '../../../core/models/folder.model';
+import { toFolderId } from '../../../core/models/folder.model';
 import type { Meeting } from '../../../core/models/meeting.model';
-import { toMeetingId } from '../../../core/models/meeting.model';
 import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingsShellPage } from './meetings-shell.page';
 
 const readyModelsStatus: ModelsStatus = {
@@ -24,16 +26,35 @@ const readyModelsStatus: ModelsStatus = {
   allPresent: true,
 };
 
-describe('MeetingsShellPage — archive forwarding', () => {
+/**
+ * RED spec for Phase 3 — the shell page owns every facade call for folders
+ * (children stay dumb, mirroring `meetings-shell.page.archive.spec.ts`).
+ * Requires new `MeetingsShellPage` handlers `onFolderCreated`,
+ * `onFolderRenamed`, `onFolderDeleted`, `onFolderToggled` delegating to
+ * `facade.createFolder` / `renameFolder` / `deleteFolder` /
+ * `toggleFolderExpanded`, and an `ngOnInit` call to `facade.loadFolders()`.
+ *
+ * NOTE for the coder: `facade.toggleFolderExpanded` does not exist on
+ * `MeetingsFacade` yet (the store already has `toggleFolderExpanded`, but
+ * the facade never forwards it) — it must be added as a thin delegation,
+ * matching the existing `selectDevice`/`selectCaptureSource` style (no
+ * `guarded()` wrapper needed; it's a synchronous, always-succeeds
+ * preference toggle, like the store method it wraps).
+ */
+describe('MeetingsShellPage — folders forwarding', () => {
   const meetings = signal<readonly Meeting[]>([]);
   const selectedMeeting = signal<Meeting | undefined>(undefined);
   const modelsStatus = signal<ModelsStatus | undefined>(readyModelsStatus);
   const devices = signal<readonly AudioDevice[]>([]);
   const selectedDevice = signal<AudioDevice | null>(null);
+  const defaultDevice = signal<AudioDevice | null>(null);
+  const outputDevices = signal<readonly AudioDevice[]>([]);
+  const defaultOutputDevice = signal<AudioDevice | null>(null);
   const recordingState = signal<RecordingState>('idle');
   const level = signal<AudioLevel | undefined>(undefined);
   const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
-  const partialText = signal('');
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
   const error = signal<MeetingsErrorInfo | undefined>(undefined);
   const busy = computed(() => recordingState() !== 'idle');
   const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
@@ -52,6 +73,10 @@ describe('MeetingsShellPage — archive forwarding', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
+  const folders = signal<readonly Folder[]>([]);
+  const expandedFolders = signal<ReadonlySet<FolderId>>(new Set());
 
   const noop = async (): Promise<void> => undefined;
   const setSplitRatio = vi.fn((ratio: number) => void ratio);
@@ -60,13 +85,22 @@ describe('MeetingsShellPage — archive forwarding', () => {
     void id;
     void archived;
   });
+  const loadFolders = vi.fn(noop);
+  const createFolder = vi.fn(async (name: string) => void name);
+  const renameFolder = vi.fn(async (id: string, name: string) => {
+    void id;
+    void name;
+  });
+  const deleteFolder = vi.fn(async (id: string) => void id);
+  const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
-    meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
-    finalizedSegments, partialText, error, busy, systemAudioStatus, captureSource, templates,
+    meetings, selectedMeeting, modelsStatus, devices, selectedDevice, defaultDevice, outputDevices, defaultOutputDevice, recordingState, level,
+    finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, setSplitRatio, setTranscriptCollapsed, setMeetingArchived,
+    splitRatio, transcriptCollapsed, importing, importProgress, folders, expandedFolders,
+    setSplitRatio, setTranscriptCollapsed, setMeetingArchived,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
@@ -75,10 +109,18 @@ describe('MeetingsShellPage — archive forwarding', () => {
     cancelSummarization: vi.fn(noop), exportMeeting: vi.fn(noop), selectDevice: vi.fn(),
     selectCaptureSource: vi.fn(), selectAudioSource: vi.fn(), selectSummaryLanguage: vi.fn(),
     requestSystemAudioPermission: vi.fn(noop),
+    loadFolders, createFolder, renameFolder, deleteFolder, toggleFolderExpanded,
+    modelDownload: signal(undefined),
+    speakerHistory: signal([]),
+    undoLastSpeakerOp: vi.fn(async () => undefined),
   } as unknown as MeetingsFacade;
 
   beforeEach(() => {
-    setMeetingArchived.mockClear();
+    loadFolders.mockClear();
+    createFolder.mockClear();
+    renameFolder.mockClear();
+    deleteFolder.mockClear();
+    toggleFolderExpanded.mockClear();
     const routeParamMap = new BehaviorSubject<ParamMap>(convertToParamMap({}));
     TestBed.configureTestingModule({
       providers: [
@@ -95,19 +137,55 @@ describe('MeetingsShellPage — archive forwarding', () => {
     return fixture;
   };
 
-  it('forwards an archive-toggle request from the sidebar to the facade', () => {
-    const fixture = createFixture();
+  it('shell calls facade.loadFolders() on init', () => {
+    // Act
+    createFixture();
 
-    fixture.componentInstance.onMeetingArchiveToggled({ id: toMeetingId('m1'), archived: true });
-
-    expect(setMeetingArchived).toHaveBeenCalledWith('m1', true);
+    // Assert
+    expect(loadFolders).toHaveBeenCalled();
   });
 
-  it('forwards an unarchive request from the sidebar to the facade', () => {
+  it('calls facade.createFolder when the sidebar emits folderCreated', () => {
+    // Arrange
     const fixture = createFixture();
 
-    fixture.componentInstance.onMeetingArchiveToggled({ id: toMeetingId('m1'), archived: false });
+    // Act
+    fixture.componentInstance.onFolderCreated('Client Work');
 
-    expect(setMeetingArchived).toHaveBeenCalledWith('m1', false);
+    // Assert
+    expect(createFolder).toHaveBeenCalledWith('Client Work');
+  });
+
+  it('calls facade.renameFolder when the sidebar emits folderRenamed', () => {
+    // Arrange
+    const fixture = createFixture();
+
+    // Act
+    fixture.componentInstance.onFolderRenamed({ id: toFolderId('f1'), name: 'New Name' });
+
+    // Assert
+    expect(renameFolder).toHaveBeenCalledWith('f1', 'New Name');
+  });
+
+  it('calls facade.deleteFolder when the sidebar emits folderDeleted', () => {
+    // Arrange
+    const fixture = createFixture();
+
+    // Act
+    fixture.componentInstance.onFolderDeleted(toFolderId('f1'));
+
+    // Assert
+    expect(deleteFolder).toHaveBeenCalledWith('f1');
+  });
+
+  it('calls facade.toggleFolderExpanded when the sidebar emits folderToggled', () => {
+    // Arrange
+    const fixture = createFixture();
+
+    // Act
+    fixture.componentInstance.onFolderToggled(toFolderId('f1'));
+
+    // Assert
+    expect(toggleFolderExpanded).toHaveBeenCalledWith('f1');
   });
 });

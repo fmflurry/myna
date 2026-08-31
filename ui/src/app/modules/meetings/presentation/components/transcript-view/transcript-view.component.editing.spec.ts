@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
+import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import { TranscriptViewComponent, type TranscriptSegmentEdit } from './transcript-view.component';
 
 describe('TranscriptViewComponent — inline segment editing', () => {
@@ -7,8 +8,8 @@ describe('TranscriptViewComponent — inline segment editing', () => {
     const fixture = TestBed.createComponent(TranscriptViewComponent);
     fixture.componentRef.setInput('transcript', {
       segments: [
-        { startSec: 0, endSec: 5, text: 'Welcome everyone' },
-        { startSec: 75, endSec: 80, text: 'Next topic' },
+        transcriptSegment({ startSec: 0, endSec: 5, text: 'Welcome everyone' }),
+        transcriptSegment({ startSec: 75, endSec: 80, text: 'Next topic' }),
       ],
     });
     if (editable !== undefined) {

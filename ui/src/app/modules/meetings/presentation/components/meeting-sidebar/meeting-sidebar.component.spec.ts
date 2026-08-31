@@ -6,9 +6,9 @@ import { MeetingSidebarComponent } from './meeting-sidebar.component';
 
 describe('MeetingSidebarComponent', () => {
   const meetings: Meeting[] = [
-    { id: toMeetingId('m1'), title: 'Standup', createdAt: new Date(2026, 7, 27, 14, 2), durationSec: 1920, summaries: [], archived: false, hasAudio: false },
-    { id: toMeetingId('m2'), title: 'Client review', createdAt: new Date(2026, 7, 27, 11, 30), durationSec: 3480, summaries: [], archived: false, hasAudio: false },
-    { id: toMeetingId('m3'), title: '1:1 Marie', createdAt: new Date(2026, 7, 26, 9, 0), durationSec: 1440, summaries: [], archived: true, hasAudio: false },
+    { id: toMeetingId('m1'), title: 'Standup', createdAt: new Date(2026, 7, 27, 14, 2), durationSec: 1920, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
+    { id: toMeetingId('m2'), title: 'Client review', createdAt: new Date(2026, 7, 27, 11, 30), durationSec: 3480, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
+    { id: toMeetingId('m3'), title: '1:1 Marie', createdAt: new Date(2026, 7, 26, 9, 0), durationSec: 1440, summaries: [], archived: true, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
   ];
 
   const createFixture = () => {
@@ -114,13 +114,14 @@ describe('MeetingSidebarComponent', () => {
 
   // --- archive disclosure: a collapsible "Archive (N)" section, sibling to
   // (never nested inside) the main listbox. Requires `activeMeetings` /
-  // `archivedMeetings` / `archiveExpanded` computed signals and a
-  // `meetingArchiveToggled` output forwarded from each row.
+  // `archivedMeetings` / `archiveExpanded` computed signals. Archiving a
+  // meeting is drag-and-drop only (see meeting-sidebar.component.drag.spec.ts) —
+  // there is no per-row archive button/output any more.
 
   it('shows no archive section when nothing is archived', () => {
     const fixture = TestBed.createComponent(MeetingSidebarComponent);
     fixture.componentRef.setInput('meetings', [
-      { id: toMeetingId('a1'), title: 'Only one', createdAt: new Date(2026, 7, 27), durationSec: 60, summaries: [], archived: false, hasAudio: false },
+      { id: toMeetingId('a1'), title: 'Only one', createdAt: new Date(2026, 7, 27), durationSec: 60, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
     fixture.detectChanges();
 
@@ -173,13 +174,24 @@ describe('MeetingSidebarComponent', () => {
     expect(fixture.nativeElement.querySelector('section.archive')).toBeNull();
   });
 
-  it('forwards meetingArchiveToggled from a row', () => {
+  it('emits importRequested when the header Import button is clicked', () => {
     const fixture = createFixture();
-    const emitted: { id: string; archived: boolean }[] = [];
-    fixture.componentInstance.meetingArchiveToggled.subscribe((request) => emitted.push(request));
+    let emitCount = 0;
+    fixture.componentInstance.importRequested.subscribe(() => {
+      emitCount += 1;
+    });
 
-    fixture.nativeElement.querySelector('app-meeting-list-item .archive').click();
+    fixture.nativeElement.querySelector('.import-button').click();
 
-    expect(emitted).toEqual([{ id: 'm1', archived: true }]);
+    expect(emitCount).toBe(1);
+  });
+
+  it('disables the header Import button while importDisabled is true', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('importDisabled', true);
+    fixture.detectChanges();
+
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('.import-button');
+    expect(button.disabled).toBe(true);
   });
 });

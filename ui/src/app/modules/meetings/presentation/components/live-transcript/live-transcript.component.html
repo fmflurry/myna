@@ -2,13 +2,24 @@
   @for (segment of finalizedSegments(); track $index) {
     <p class="final">
       <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
+      @if (hasSpeakerLabel(segment.speaker)) {
+        <span class="speaker-label {{ speakerAccentClass(segment.speaker) }}">{{ speakerLabel(segment.speaker) }}</span>
+      }
       <span class="text">{{ segment.text }}</span>
     </p>
   }
-  @if (partialText()) {
+  @if (partialTextMe()) {
     <p class="partial">
       <span class="timestamp" aria-hidden="true"></span>
-      <span class="text">{{ partialText() }}</span>
+      <span class="speaker-label {{ speakerAccentClass('me') }}">{{ speakerLabel('me') }}</span>
+      <span class="text">{{ partialTextMe() }}</span>
+    </p>
+  }
+  @if (partialTextOthers()) {
+    <p class="partial">
+      <span class="timestamp" aria-hidden="true"></span>
+      <span class="speaker-label {{ speakerAccentClass('others') }}">{{ speakerLabel('others') }}</span>
+      <span class="text">{{ partialTextOthers() }}</span>
     </p>
   }
   @if (isEmpty()) {

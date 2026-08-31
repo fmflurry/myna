@@ -12,6 +12,27 @@
   background: var(--color-surface);
 }
 
+.sidebar-toolbar {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3) 0;
+}
+
+.import-button {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.import-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .search {
   display: flex;
   align-items: center;
@@ -63,6 +84,47 @@
   font-size: 0.85rem;
 }
 
+.new-folder-trigger {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.new-folder-trigger:hover {
+  color: var(--color-accent);
+}
+
+.new-folder-form {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-2) var(--space-3);
+}
+
+.new-folder-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+}
+
+.new-folder-input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 .archive {
   flex-shrink: 0;
   border-top: 1px solid var(--color-border);
@@ -94,4 +156,37 @@
 .archive .list {
   flex: none;
   max-height: 40vh;
+}
+
+/*
+ * Drop-affordance styling for the two native (non-folder-section) drop
+ * targets: the uncategorized `.list` and `section.archive`. Mirrors
+ * folder-section.component.scss — border-style (dashed vs solid) carries
+ * the accepting/hover distinction so it never depends on colour alone
+ * (WCAG 1.4.1); the "Move here"/"Drop to archive" text cues are the
+ * second, non-visual signal.
+ */
+.list.drop-accepting,
+.archive.drop-accepting {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: -2px;
+}
+
+.list.drop-hover,
+.archive.drop-hover {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.drop-hint {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.archive .empty-hint {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
 }

@@ -37,8 +37,10 @@ export class EditableSegmentComponent {
 
   constructor() {
     afterRenderEffect(() => {
-      if (this.editing()) {
-        this.textArea()?.nativeElement.focus();
+      const el = this.textArea()?.nativeElement;
+      if (this.editing() && el) {
+        el.focus();
+        this.autoSize();
       }
     });
   }
@@ -53,6 +55,23 @@ export class EditableSegmentComponent {
 
   protected onInput(event: Event): void {
     this.draft.set((event.target as HTMLTextAreaElement).value);
+    this.autoSize();
+  }
+
+  /**
+   * Grows the textarea to fit its entire content so the whole segment stays
+   * visible while editing, at the same typography as the non-editing section
+   * (font, line-height and color are inherited via CSS). Runs when editing
+   * begins (via `afterRenderEffect`, once the textarea is in the DOM) and on
+   * every input.
+   */
+  private autoSize(): void {
+    const el = this.textArea()?.nativeElement;
+    if (!el) {
+      return;
+    }
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   }
 
   protected onKeydown(event: KeyboardEvent): void {
