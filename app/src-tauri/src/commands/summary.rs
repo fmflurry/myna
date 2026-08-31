@@ -18,11 +18,13 @@ use time::OffsetDateTime;
 
 use myna_llm::{resolve, RenderContext, SummaryOptions, Template};
 
+use crate::commands::recording::lock_session;
 use crate::domain::{Meeting, MeetingId, Summary, SummaryRef};
 use crate::dto::SummaryDto;
 use crate::error::AppError;
 use crate::events::{SummaryDonePayload, TokenPayload, SUMMARY_DONE, SUMMARY_TOKEN};
 use crate::paths;
+use crate::session::guard_not_recording;
 use crate::state::AppState;
 use crate::store::MeetingStore;
 
@@ -156,6 +158,112 @@ pub fn cancel_summarization(state: State<'_, AppState>) {
     state.cancel_summary.store(true, Ordering::SeqCst);
 }
 
+/// Maximum length, in Unicode scalar values, a persisted summary's markdown
+/// may have after editing via [`edit_summary`]. Summaries are LLM-generated
+/// documents a user lightly corrects, not free-form notebooks; the cap keeps
+/// a stray paste from writing megabytes into `summaries/`.
+pub const MAX_SUMMARY_MARKDOWN_LENGTH: usize = 100_000;
+
+/// Trims and length-caps a proposed summary markdown edit.
+///
+/// Returns [`AppError::Store`] when the trimmed markdown is empty — unlike
+/// [`crate::commands::meetings::normalize_title`], a whitespace-only summary
+/// edit is rejected rather than treated as "no change": the user explicitly
+/// asked to overwrite the summary, and silently keeping the old text would
+/// look like the edit did nothing.
+///
+/// The cap counts Unicode scalar values (`chars()`, not bytes), so
+/// multi-byte content is never split mid-character.
+pub fn normalize_summary_markdown(input: &str) -> Result<String, AppError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Store(
+            "summary markdown must not be empty".to_string(),
+        ));
+    }
+    Ok(trimmed.chars().take(MAX_SUMMARY_MARKDOWN_LENGTH).collect())
+}
+
+/// Overwrites a previously persisted summary's markdown in place.
+///
+/// Refuses with [`AppError::Busy`] when `meeting_id` is the meeting the
+/// active recording session (if any) is currently recording into — see
+/// [`guard_not_recording`]. Fails with [`AppError::NotFound`] when no
+/// summary exists for the (`template`, `language`) pair — editing never
+/// creates one; only [`summarize_meeting`] does.
+///
+/// Idempotent: when the normalized markdown matches the persisted text, the
+/// summary is returned unchanged without rewriting the file (and without
+/// disturbing its `created_at`). Otherwise the markdown is overwritten via
+/// [`MeetingStore::save_summary`] and the summary's original `created_at`
+/// (read before the write) is preserved — an edit is a content correction,
+/// not a regeneration.
+///
+/// `async fn`: the read-modify-write is genuine filesystem I/O dispatched
+/// to [`tauri::async_runtime::spawn_blocking`], mirroring
+/// [`edit_transcript_segment`-style commands](crate::commands::meetings).
+#[tauri::command]
+pub async fn edit_summary(
+    app: AppHandle,
+    meeting_id: String,
+    template: String,
+    language: String,
+    markdown: String,
+) -> Result<SummaryDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        edit_summary_blocking(&app, id, &template, &language, &markdown)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "edit_summary worker thread panicked".to_string(),
+        ))
+    })
+}
+
+fn edit_summary_blocking(
+    app: &AppHandle,
+    id: MeetingId,
+    template: &str,
+    language: &str,
+    markdown: &str,
+) -> Result<SummaryDto, AppError> {
+    let state = app.state::<AppState>();
+    let active_meeting_id = lock_session(&state)?
+        .as_ref()
+        .map(|session| session.meeting_id);
+    guard_not_recording(active_meeting_id, id)?;
+    edit_summary_from(state.store.as_ref(), id, template, language, markdown)
+}
+
+/// Does the work of [`edit_summary`] over [`MeetingStore`] directly (rather
+/// than [`State<AppState>`]) so it is unit-testable against a
+/// `tempfile::tempdir()`-backed `FsMeetingStore` without a Tauri app
+/// context — mirrors [`get_summary_from`].
+pub fn edit_summary_from(
+    store: &dyn MeetingStore,
+    id: MeetingId,
+    template: &str,
+    language: &str,
+    markdown: &str,
+) -> Result<SummaryDto, AppError> {
+    let normalized = normalize_summary_markdown(markdown)?;
+    // NotFound propagates: covers both an unknown meeting and a known
+    // meeting with no saved summary for this (template, language) pair.
+    let existing = store.read_summary(id, template, language)?;
+    if existing.markdown == normalized {
+        return Ok(SummaryDto::from(existing));
+    }
+    store.save_summary(id, template, language, &normalized)?;
+    Ok(SummaryDto::from(Summary {
+        template: existing.template,
+        markdown: normalized,
+        created_at: existing.created_at,
+        language: existing.language,
+    }))
+}
+
 /// Does the actual work of [`summarize_meeting`], factored out so the
 /// caller can unconditionally release the busy flag afterwards regardless
 /// of outcome.
@@ -192,6 +300,9 @@ fn run_summarization(
         created_at,
         path,
         language: language_code.to_string(),
+        // A freshly generated summary is never stale — clears the flag if
+        // an earlier ref for this (template, language) pair had it set.
+        stale: false,
     });
     state.store.save(&updated)?;
 
@@ -264,7 +375,11 @@ fn load_template(app: &AppHandle, template_name: &str) -> Result<Template, AppEr
 /// output language, failing if the meeting has no transcript yet. Rendering
 /// against a template happens later, inside `summarize_transcript`, which
 /// needs the unrendered context to re-render per map-reduce chunk.
-fn build_render_context(
+///
+/// `pub` (rather than private) so integration tests can assert the prompt
+/// text handed to Qwen is speaker-attributed, mirroring
+/// `get_summary_from`'s visibility for the same reason.
+pub fn build_render_context(
     meeting: &Meeting,
     language_label: &str,
 ) -> Result<RenderContext, AppError> {
@@ -274,7 +389,7 @@ fn build_render_context(
         .ok_or_else(|| AppError::NotFound(format!("transcript for meeting {}", meeting.id)))?;
 
     Ok(RenderContext {
-        transcript: transcript.full_text(),
+        transcript: transcript.attributed_text_with_names(&meeting.speaker_names),
         duration: format_duration(meeting.duration_sec),
         title: meeting.title.clone(),
         language: language_label.to_string(),
