@@ -38,3 +38,13 @@ data/
 /node_modules
 /ui/.angular
 /lcov.info
+
+# Defence-in-depth: this app records real meetings and downloads model
+# weights. CLAUDE.md documents `recordings/meeting.wav` /
+# `recordings/meeting.txt` as working paths — catch any recording or model
+# artifact placed outside the already-ignored `models/`/`data/` dirs before
+# it can be staged and pushed to a public repo.
+recordings/
+*.wav
+*.gguf
+*.onnx
