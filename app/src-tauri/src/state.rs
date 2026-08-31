@@ -6,31 +6,63 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use myna_llm::Summarizer;
-use myna_stt::{SttConfig, SttEngine};
+use myna_stt::{DiarizeConfig, Diarizer, SttConfig, SttEngine};
 use tauri::AppHandle;
 
 use crate::error::AppError;
 use crate::paths;
 use crate::session::RecordingSession;
+use crate::store::folder_store::FsFolderStore;
 use crate::store::fs_store::FsMeetingStore;
 
 /// Directory name (under the resolved models root) containing the
 /// Parakeet-TDT STT model artifacts.
 const STT_MODEL_DIR_NAME: &str = "parakeet-tdt-0.6b-v3-int8";
 
+/// Directory (under the resolved models root) containing the pyannote-3.0
+/// speaker-segmentation model artifact [`Diarizer`] loads, nested one level
+/// further than most other model dirs — see [`DIARIZE_SEG_FILE_NAME`].
+const DIARIZE_SEG_DIR_NAME: &str =
+    "pyannote-segmentation-3-0/sherpa-onnx-pyannote-segmentation-3-0";
+/// File name of the pyannote segmentation model, within
+/// [`DIARIZE_SEG_DIR_NAME`].
+const DIARIZE_SEG_FILE_NAME: &str = "model.int8.onnx";
+/// Directory (under the resolved models root) containing the NeMo TitaNet
+/// speaker-embedding model artifact [`Diarizer`] loads.
+const DIARIZE_EMB_DIR_NAME: &str = "nemo-titanet";
+/// File name of the NeMo TitaNet embedding model, within
+/// [`DIARIZE_EMB_DIR_NAME`].
+const DIARIZE_EMB_FILE_NAME: &str = "nemo_en_titanet_small.onnx";
+
 /// Lower bound on the number of threads the STT engine decodes with,
 /// regardless of detected parallelism.
 pub const STT_ENGINE_THREADS_MIN: i32 = 2;
 
 /// Upper bound on the number of threads the STT engine decodes with.
-/// Decode is CPU-bound and single-utterance, so beyond a handful of
-/// threads there are diminishing returns and it starts starving other
-/// work (audio capture, UI) on the same machine.
-pub const STT_ENGINE_THREADS_MAX: i32 = 8;
+///
+/// sherpa-onnx's `OfflineModelConfig` exposes a single `num_threads` field
+/// applied to *all three* Parakeet-TDT ORT sessions (encoder, decoder,
+/// joiner) — there is no per-session control. The transducer decoder and
+/// joiner run tiny per-step ops (one frame/token at a time), far too small
+/// to parallelize; profiling showed those pools spending nearly all their
+/// time spinning in `ThreadPoolTempl::WorkerLoop`/`SpinPause` rather than
+/// doing useful work. ONNX Runtime's own fix for this,
+/// `session.intra_op.allow_spinning`, exists in the linked runtime but is
+/// unreachable through sherpa-onnx 1.13.6 (no config field, no env-var
+/// equivalent) — bounding `num_threads` down is the only lever available.
+/// `8` previously accepted that spin cost in exchange for encoder
+/// throughput (the encoder *is* real parallel work — measured 146-158% CPU
+/// in `.LGemmU8X8`/`Im2col`); `4` trades some encoder wall-time for
+/// materially less idle spinning in the decoder/joiner pools.
+pub const STT_ENGINE_THREADS_MAX: i32 = 4;
 
 /// Fallback thread count used when [`std::thread::available_parallelism`]
-/// fails to detect the machine's CPU count.
-pub const STT_ENGINE_THREADS_FALLBACK: i32 = 8;
+/// fails to detect the machine's CPU count. Kept equal to
+/// [`STT_ENGINE_THREADS_MAX`] so `clamp_thread_count(None)` returns the
+/// same tuned value rather than reintroducing the 8-thread spin cost
+/// documented on [`STT_ENGINE_THREADS_MAX`] through the undetected-CPU
+/// fallback path.
+pub const STT_ENGINE_THREADS_FALLBACK: i32 = 4;
 
 /// Number of threads the STT engine decodes with: detected available
 /// parallelism, clamped to [`STT_ENGINE_THREADS_MIN`] and
@@ -64,9 +96,15 @@ const LLM_MODEL_FILE_NAME: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 /// Application state managed by Tauri and injected into every command.
 pub struct AppState {
     pub store: Arc<FsMeetingStore>,
+    pub folders: Arc<FsFolderStore>,
     pub session: Mutex<Option<RecordingSession>>,
     stt_engine: OnceLock<Arc<SttEngine>>,
     summarizer: OnceLock<Arc<Summarizer>>,
+    /// Cached speaker diarizer, loaded on first use by
+    /// [`AppState::diarizer`] — mirrors [`AppState::stt_engine`]'s
+    /// once-per-app-lifetime caching for the same reason (seconds-scale
+    /// model load).
+    diarizer: OnceLock<Arc<Diarizer>>,
     /// Shared cancellation flag for the in-flight summarization, if any.
     /// Reset to `false` at the start of every run by
     /// [`AppState::begin_summarization`]; the in-flight
@@ -76,19 +114,31 @@ pub struct AppState {
     /// `true` while a summarization is running, guarding against
     /// concurrent `summarize_meeting` calls.
     summary_busy: AtomicBool,
+    /// Shared cancellation flag for the in-flight import or re-transcribe,
+    /// if any. Reset to `false` at the start of every run by
+    /// [`AppState::begin_import`]; the in-flight
+    /// `ingest::transcribe_wav_streaming` call observes it and stops.
+    pub cancel_import: Arc<AtomicBool>,
+    /// `true` while an import or re-transcribe is running, guarding against
+    /// concurrent `import_audio`/`retranscribe_meeting` calls.
+    import_busy: AtomicBool,
 }
 
 impl AppState {
-    /// Builds fresh state rooted at `store`, with no active session and no
-    /// STT engine or summarizer loaded yet.
-    pub fn new(store: FsMeetingStore) -> Self {
+    /// Builds fresh state rooted at `store`/`folders`, with no active
+    /// session and no STT engine or summarizer loaded yet.
+    pub fn new(store: FsMeetingStore, folders: FsFolderStore) -> Self {
         Self {
             store: Arc::new(store),
+            folders: Arc::new(folders),
             session: Mutex::new(None),
             stt_engine: OnceLock::new(),
             summarizer: OnceLock::new(),
+            diarizer: OnceLock::new(),
             cancel_summary: Arc::new(AtomicBool::new(false)),
             summary_busy: AtomicBool::new(false),
+            cancel_import: Arc::new(AtomicBool::new(false)),
+            import_busy: AtomicBool::new(false),
         }
     }
 
@@ -136,6 +186,32 @@ impl AppState {
         Ok(Arc::clone(self.summarizer.get_or_init(|| summarizer)))
     }
 
+    /// Returns the cached speaker diarizer, loading it on first use. Mirrors
+    /// [`AppState::stt_engine`]'s caching discipline and its callers-must-
+    /// serialize-first contract — `commands::import::diarize_meeting_blocking`
+    /// serializes through [`AppState::begin_import`] before calling this,
+    /// exactly like the STT engine and summarizer do for their own busy
+    /// guards.
+    pub fn diarizer(&self, app: &AppHandle) -> Result<Arc<Diarizer>, AppError> {
+        if let Some(diarizer) = self.diarizer.get() {
+            return Ok(Arc::clone(diarizer));
+        }
+
+        let models_root = paths::models_root(app);
+        let diarizer = Arc::new(Diarizer::load(&DiarizeConfig {
+            segmentation_model: models_root
+                .join(DIARIZE_SEG_DIR_NAME)
+                .join(DIARIZE_SEG_FILE_NAME),
+            embedding_model: models_root
+                .join(DIARIZE_EMB_DIR_NAME)
+                .join(DIARIZE_EMB_FILE_NAME),
+            num_threads: stt_engine_threads(),
+            ..DiarizeConfig::default()
+        })?);
+
+        Ok(Arc::clone(self.diarizer.get_or_init(|| diarizer)))
+    }
+
     /// Marks a summarization as in-flight and resets
     /// [`AppState::cancel_summary`] for the new run, failing with
     /// [`AppError::Busy`] if one is already running.
@@ -152,5 +228,30 @@ impl AppState {
     /// [`AppState::begin_summarization`].
     pub fn end_summarization(&self) {
         self.summary_busy.store(false, Ordering::SeqCst);
+    }
+
+    /// Marks an import (or re-transcribe) as in-flight and resets
+    /// [`AppState::cancel_import`] for the new run, failing with
+    /// [`AppError::Busy`] if one is already running. Mirrors
+    /// [`AppState::begin_summarization`].
+    pub fn begin_import(&self) -> Result<(), AppError> {
+        if self.import_busy.swap(true, Ordering::SeqCst) {
+            return Err(AppError::Busy("an import is already in progress"));
+        }
+        self.cancel_import.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Marks the in-flight import (or re-transcribe) as finished, regardless
+    /// of outcome. Must be called exactly once per successful
+    /// [`AppState::begin_import`]. Mirrors [`AppState::end_summarization`].
+    pub fn end_import(&self) {
+        self.import_busy.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether an import or re-transcribe is currently in flight — read-only
+    /// accessor for `commands::recording::start_recording_blocking`'s guard.
+    pub fn import_busy(&self) -> bool {
+        self.import_busy.load(Ordering::SeqCst)
     }
 }

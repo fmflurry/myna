@@ -36,6 +36,30 @@ pub async fn default_input_device() -> Result<DeviceInfo, AppError> {
         })
 }
 
+/// Lists all available audio output devices.
+#[tauri::command]
+pub async fn list_output_devices() -> Result<Vec<DeviceInfo>, AppError> {
+    tauri::async_runtime::spawn_blocking(|| Ok(myna_audio::list_output_devices()?))
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::Store(
+                "list_output_devices worker thread panicked".to_string(),
+            ))
+        })
+}
+
+/// Returns the host's default audio output device.
+#[tauri::command]
+pub async fn default_output_device() -> Result<DeviceInfo, AppError> {
+    tauri::async_runtime::spawn_blocking(|| Ok(myna_audio::default_output_device()?))
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::Store(
+                "default_output_device worker thread panicked".to_string(),
+            ))
+        })
+}
+
 /// Reports whether system-audio capture is currently available, without
 /// prompting the user.
 #[tauri::command]

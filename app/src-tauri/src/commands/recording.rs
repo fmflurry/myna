@@ -23,14 +23,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use time::OffsetDateTime;
 
 use crate::commands::meetings::resolve_new_title;
-use crate::domain::MeetingId;
 use crate::dto::{AudioSourceDto, MeetingDto};
 use crate::error::AppError;
-use crate::events::{RecordingStatePayload, RECORDING_STATE};
+use crate::events::{emit_recording_state, ErrorPayload, RecordingStatePayload, APP_ERROR};
 use crate::paths;
 use crate::session::{
-    guard_start, guard_stop, resolve_capture_source, resolve_system_source_id, CaptureSelection,
-    RecordingSession, RecordingState,
+    guard_start, guard_stop, resolve_capture_source, resolve_system_source_id, AudioPaths,
+    CaptureSelection, RecordingSession, RecordingState,
 };
 use crate::state::AppState;
 use crate::store::MeetingStore;
@@ -40,6 +39,14 @@ use crate::store::MeetingStore;
 const VAD_MODEL_DIR_NAME: &str = "silero-vad";
 /// File name of the Silero VAD model, within [`VAD_MODEL_DIR_NAME`].
 const VAD_MODEL_FILE_NAME: &str = "silero_vad.onnx";
+
+/// [`ErrorPayload`]'s `code` field, emitted by [`stop_recording_blocking`]
+/// when the recording's [`crate::session::DecodeChannel`] dropped one or
+/// more audio chunks — see [`emit_dropped_audio_warning`].
+const DROPPED_AUDIO_CHUNKS_CODE: &str = "AUDIO_CHUNKS_DROPPED";
+/// Plain-language [`ErrorPayload`] `message` for [`DROPPED_AUDIO_CHUNKS_CODE`].
+const DROPPED_AUDIO_CHUNKS_MESSAGE: &str = "Some audio was not transcribed. The recording is \
+     intact — re-transcribe from audio to recover the full transcript.";
 
 /// Starts recording a new meeting titled `title` on `device` (the host's
 /// default input device when `None`), from `source` (the microphone when
@@ -93,11 +100,15 @@ fn start_recording_blocking(
 ) -> Result<MeetingDto, AppError> {
     let state = app.state::<AppState>();
     let mut session_slot = lock_session(&state)?;
-    guard_start(session_slot.is_some())?;
+    guard_start(session_slot.is_some(), state.import_busy())?;
 
     let effective_title = resolve_new_title(&title, OffsetDateTime::now_utc());
     let meeting = state.store.create(&effective_title)?;
-    let audio_path = state.store.audio_path(meeting.id);
+    let audio_paths = AudioPaths {
+        playback: state.store.audio_path(meeting.id),
+        mic: state.store.mic_track_path(meeting.id),
+        system: state.store.system_track_path(meeting.id),
+    };
     let effective_source = resolve_capture_source(source, myna_audio::system_audio_status());
     let device_info = match effective_source {
         CaptureSource::Microphone | CaptureSource::Mixed => Some(resolve_device(device)?),
@@ -123,7 +134,7 @@ fn start_recording_blocking(
         app.clone(),
         meeting.id,
         selection,
-        audio_path,
+        audio_paths,
         engine,
         &vad_cfg,
     )?;
@@ -131,7 +142,13 @@ fn start_recording_blocking(
     let session_source = session.source;
     let session_system_source = session.system_source();
     *session_slot = Some(session);
-    emit_state(
+    // Note: this initial event carries `system_source: None` whenever the
+    // capture worker hasn't resolved the system-audio source yet (the normal
+    // case — the Core Audio attach takes longer than these few statements).
+    // The worker emits a follow-up `recording://state` with the resolved
+    // source once it has one; see
+    // `crate::session::announce_resolved_system_source`.
+    emit_recording_state(
         app,
         Some(meeting.id),
         RecordingState::Recording,
@@ -168,7 +185,7 @@ fn stop_recording_blocking(app: &AppHandle) -> Result<MeetingDto, AppError> {
     let source = session.source;
     let system_source = session.system_source();
 
-    emit_state(
+    emit_recording_state(
         app,
         Some(meeting_id),
         RecordingState::Stopping,
@@ -176,16 +193,27 @@ fn stop_recording_blocking(app: &AppHandle) -> Result<MeetingDto, AppError> {
         system_source.clone(),
     );
     let stop_result = session.stop();
-    emit_state(app, None, RecordingState::Idle, source, system_source);
+    emit_recording_state(app, None, RecordingState::Idle, source, system_source);
 
-    let transcript = stop_result?;
+    let (transcript, dropped_chunks) = stop_result?;
     let meeting = state.store.get(meeting_id)?;
+    let audio_path = state.store.audio_path(meeting_id);
     let updated = meeting
         .with_transcript(transcript)
-        .with_duration(duration_sec);
+        .with_duration(duration_sec)
+        .with_audio_path(audio_path.clone())
+        .with_dropped_audio_chunks(dropped_chunks);
     state.store.save(&updated)?;
 
-    Ok(MeetingDto::from(updated))
+    if dropped_chunks > 0 {
+        emit_dropped_audio_warning(app);
+    }
+
+    Ok(MeetingDto::from_meeting(
+        updated,
+        crate::ingest::has_audio(&audio_path),
+        crate::ingest::has_audio(&state.store.system_track_path(meeting_id)),
+    ))
 }
 
 /// Cancels the active recording, discarding its audio and meeting record
@@ -211,7 +239,7 @@ fn cancel_recording_blocking(app: &AppHandle) -> Result<(), AppError> {
     let source = session.source;
     let system_source = session.system_source();
 
-    emit_state(
+    emit_recording_state(
         app,
         Some(meeting_id),
         RecordingState::Stopping,
@@ -219,7 +247,7 @@ fn cancel_recording_blocking(app: &AppHandle) -> Result<(), AppError> {
         system_source.clone(),
     );
     let stop_result = session.stop();
-    emit_state(app, None, RecordingState::Idle, source, system_source);
+    emit_recording_state(app, None, RecordingState::Idle, source, system_source);
     stop_result?;
 
     state.store.delete(meeting_id)
@@ -280,18 +308,15 @@ fn take_session(state: &State<'_, AppState>) -> Result<RecordingSession, AppErro
         .expect("guard_stop confirmed a session is present"))
 }
 
-fn emit_state(
-    app: &AppHandle,
-    meeting_id: Option<MeetingId>,
-    state: RecordingState,
-    source: CaptureSource,
-    system_source: Option<myna_audio::SystemAudioSource>,
-) {
-    let payload = RecordingStatePayload {
-        meeting_id: meeting_id.map(|id| id.to_string()),
-        state,
-        source,
-        system_source: system_source.map(AudioSourceDto::from),
+/// Emits [`APP_ERROR`] warning that one or more audio chunks were silently
+/// dropped during the just-finished recording (see
+/// [`crate::session::DecodeChannel`]). The recording's audio file itself is
+/// unaffected — the WAV write happens before the decode handoff — so this
+/// is recoverable by re-transcribing rather than a hard failure.
+fn emit_dropped_audio_warning(app: &AppHandle) {
+    let payload = ErrorPayload {
+        code: DROPPED_AUDIO_CHUNKS_CODE.to_string(),
+        message: DROPPED_AUDIO_CHUNKS_MESSAGE.to_string(),
     };
-    let _ = app.emit(RECORDING_STATE, payload);
+    let _ = app.emit(APP_ERROR, payload);
 }

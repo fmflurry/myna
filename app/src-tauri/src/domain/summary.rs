@@ -18,6 +18,24 @@ pub struct SummaryRef {
     /// `meeting.json` written before this field existed.
     #[serde(default = "default_summary_language")]
     pub language: String,
+    /// Whether this summary was generated from a transcript that has since
+    /// been replaced (e.g. by a re-transcribe). The markdown itself is
+    /// never deleted when this flips to `true` — only the flag changes, so
+    /// the UI can warn without silently destroying user-visible content.
+    /// Defaults to `false` when deserializing a `meeting.json` written
+    /// before this field existed.
+    #[serde(default)]
+    pub stale: bool,
+}
+
+impl SummaryRef {
+    /// Returns a copy of this summary ref with `stale` replaced.
+    pub fn with_stale(&self, stale: bool) -> Self {
+        Self {
+            stale,
+            ..self.clone()
+        }
+    }
 }
 
 /// A generated summary's content, loaded from disk.

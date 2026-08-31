@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 use crate::domain::meeting::{Meeting, MeetingId};
+use crate::domain::placement::effective_position;
 use crate::domain::summary::Summary;
 use crate::error::AppError;
 use crate::store::MeetingStore;
@@ -15,6 +16,8 @@ const MEETINGS_DIR: &str = "meetings";
 const MEETING_FILE: &str = "meeting.json";
 const MEETING_TMP_FILE: &str = "meeting.json.tmp";
 const AUDIO_FILE: &str = "audio.wav";
+const MIC_TRACK_FILE: &str = "track-mic.wav";
+const SYSTEM_TRACK_FILE: &str = "track-system.wav";
 const SUMMARIES_DIR: &str = "summaries";
 const FALLBACK_TEMPLATE_NAME: &str = "template";
 
@@ -117,7 +120,17 @@ impl MeetingStore for FsMeetingStore {
             .filter_map(|entry| Self::read_meeting_file(&entry.path().join(MEETING_FILE)).ok())
             .collect();
 
-        meetings.sort_by_key(|meeting| std::cmp::Reverse(meeting.created_at));
+        // Ascending effective position (see `domain::placement`), then
+        // `created_at` DESC, then `id` as a final deterministic tie-break.
+        // `f64::total_cmp` -- never `partial_cmp().unwrap()` -- since
+        // `effective_position` is never NaN but clippy has no way to know
+        // that.
+        meetings.sort_by(|a, b| {
+            effective_position(a)
+                .total_cmp(&effective_position(b))
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| a.id.to_string().cmp(&b.id.to_string()))
+        });
         Ok(meetings)
     }
 
@@ -144,6 +157,14 @@ impl MeetingStore for FsMeetingStore {
 
     fn audio_path(&self, id: MeetingId) -> PathBuf {
         self.meeting_dir(id).join(AUDIO_FILE)
+    }
+
+    fn mic_track_path(&self, id: MeetingId) -> PathBuf {
+        self.meeting_dir(id).join(MIC_TRACK_FILE)
+    }
+
+    fn system_track_path(&self, id: MeetingId) -> PathBuf {
+        self.meeting_dir(id).join(SYSTEM_TRACK_FILE)
     }
 
     fn save_summary(

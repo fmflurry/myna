@@ -4,10 +4,12 @@
 //! names so the Angular UI can consume them without a translation layer.
 
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 
-use myna_audio::CaptureSource;
+use myna_audio::{CaptureSource, SystemAudioSource};
 use myna_stt::TranscriptSegment;
 
+use crate::domain::MeetingId;
 use crate::dto::AudioSourceDto;
 use crate::session::RecordingState;
 
@@ -41,8 +43,37 @@ pub struct RecordingStatePayload {
     /// or `Mixed` — after any fallback to all-output applied when the
     /// requested source id could no longer be resolved. `None` while
     /// `source` is `Microphone`, or before the system-audio backend has
-    /// resolved a source yet.
+    /// resolved a source yet — in which case a follow-up event carrying the
+    /// resolved source is emitted once it does (see
+    /// [`crate::session::announce_resolved_system_source`]).
+    ///
+    /// Renamed on the wire: the Angular adapter
+    /// (`tauri-recorder.adapter.ts`) reads `effectiveSystemSource` off this
+    /// event — a plain camelCase rendering would emit `systemSource` and
+    /// the UI would permanently read `null` even for a healthy mixed
+    /// recording.
+    #[serde(rename = "effectiveSystemSource")]
     pub system_source: Option<AudioSourceDto>,
+}
+
+/// Builds and emits a [`RECORDING_STATE`] event. Shared by
+/// `start_recording`'s initial emission (which necessarily carries
+/// `system_source: None` — the capture backend hasn't resolved a source yet)
+/// and the session worker's follow-up emission once it has.
+pub fn emit_recording_state(
+    app: &AppHandle,
+    meeting_id: Option<MeetingId>,
+    state: RecordingState,
+    source: CaptureSource,
+    system_source: Option<SystemAudioSource>,
+) {
+    let payload = RecordingStatePayload {
+        meeting_id: meeting_id.map(|id| id.to_string()),
+        state,
+        source,
+        system_source: system_source.map(AudioSourceDto::from),
+    };
+    let _ = app.emit(RECORDING_STATE, payload);
 }
 
 /// Payload for [`RECORDING_LEVEL`].
@@ -59,6 +90,10 @@ pub struct LevelPayload {
 pub struct PartialPayload {
     pub meeting_id: String,
     pub text: String,
+    /// The flat stored speaker label (see [`myna_stt::Speaker`]) so a live,
+    /// still-forming caption can be attributed the same way a finalized
+    /// segment is.
+    pub speaker: String,
 }
 
 /// Payload for [`TRANSCRIPT_FINAL`].
@@ -94,4 +129,29 @@ pub struct SummaryDonePayload {
     pub template: String,
     pub language: String,
     pub markdown: String,
+}
+
+/// Emitted periodically while an audio import or re-transcribe runs,
+/// reporting which phase it's in and how far through the source audio it
+/// has processed.
+pub const IMPORT_PROGRESS: &str = "import://progress";
+
+/// Phase an in-flight import or re-transcribe is currently in, carried by
+/// [`ImportProgressPayload`].
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportPhase {
+    Converting,
+    Transcribing,
+    Done,
+}
+
+/// Payload for [`IMPORT_PROGRESS`].
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProgressPayload {
+    pub meeting_id: String,
+    pub phase: ImportPhase,
+    pub processed_sec: f32,
+    pub total_sec: f32,
 }

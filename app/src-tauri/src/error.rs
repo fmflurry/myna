@@ -46,6 +46,10 @@ pub enum AppError {
     /// A filesystem path was invalid or could not be resolved.
     #[error("path error: {0}")]
     Path(String),
+
+    /// The in-flight operation was cancelled by the user.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl AppError {
@@ -62,6 +66,7 @@ impl AppError {
             AppError::Busy(_) => "BUSY",
             AppError::ModelsMissing(_) => "MODELS_MISSING",
             AppError::Path(_) => "PATH",
+            AppError::Cancelled => "CANCELLED",
         }
     }
 }

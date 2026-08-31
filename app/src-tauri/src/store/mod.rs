@@ -1,10 +1,13 @@
-//! Persistence port for meetings: the [`MeetingStore`] trait and its
-//! filesystem-backed implementation ([`fs_store::FsMeetingStore`]).
+//! Persistence ports for meetings and folders: the [`MeetingStore`] and
+//! [`FolderStore`] traits and their filesystem-backed implementations
+//! ([`fs_store::FsMeetingStore`], [`folder_store::FsFolderStore`]).
 
+pub mod folder_store;
 pub mod fs_store;
 
 use std::path::PathBuf;
 
+use crate::domain::folder::{Folder, FolderId};
 use crate::domain::meeting::{Meeting, MeetingId};
 use crate::domain::summary::Summary;
 use crate::error::AppError;
@@ -32,8 +35,21 @@ pub trait MeetingStore {
     /// Deletes a meeting and all of its associated files.
     fn delete(&self, id: MeetingId) -> Result<(), AppError>;
 
-    /// Returns the path at which a meeting's audio recording should live.
+    /// Returns the path at which a meeting's device-native-rate stereo
+    /// playback/export recording should live.
     fn audio_path(&self, id: MeetingId) -> PathBuf;
+
+    /// Returns the path at which a meeting's 16 kHz mono microphone STT
+    /// track should live. Only ever written when the recording's capture
+    /// source could populate a mic track — see
+    /// `crate::session::source_has_mic`.
+    fn mic_track_path(&self, id: MeetingId) -> PathBuf;
+
+    /// Returns the path at which a meeting's 16 kHz mono system-audio STT
+    /// track should live. Only ever written when the recording's capture
+    /// source could populate a system track — see
+    /// `crate::session::source_has_system`.
+    fn system_track_path(&self, id: MeetingId) -> PathBuf;
 
     /// Persists a generated summary's markdown for a meeting/template/
     /// language triple, returning the path it was written to. Different
@@ -55,4 +71,23 @@ pub trait MeetingStore {
         template: &str,
         language: &str,
     ) -> Result<Summary, AppError>;
+}
+
+/// Persistence port for folders.
+///
+/// Implementations own the on-disk (or otherwise durable) layout; callers
+/// interact only through this trait so the storage backend can be swapped
+/// without touching domain logic.
+pub trait FolderStore {
+    /// Lists all folders, sorted by `(position, created_at)`.
+    fn list(&self) -> Result<Vec<Folder>, AppError>;
+
+    /// Creates and persists a new folder with the given name.
+    fn create(&self, name: &str) -> Result<Folder, AppError>;
+
+    /// Persists a (possibly updated) folder, overwriting any prior state.
+    fn save(&self, folder: &Folder) -> Result<(), AppError>;
+
+    /// Deletes a folder by id.
+    fn delete(&self, id: FolderId) -> Result<(), AppError>;
 }

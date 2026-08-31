@@ -114,6 +114,37 @@ fn delete_removes_the_entire_meeting_directory() {
     assert!(!meeting_dir.exists());
 }
 
+/// Required test (c): discarding/deleting a recording must remove all
+/// THREE audio files — the device-native-rate playback copy and both
+/// per-track STT WAVs — never leaking a 690 MB/h orphan. `delete` removes
+/// the whole meeting directory, so this also guards against a future
+/// change that moves any of these three files outside it.
+#[test]
+fn delete_removes_all_three_audio_files() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let meeting = store.create("Has three audio files").expect("create");
+
+    let playback_path = store.audio_path(meeting.id);
+    let mic_path = store.mic_track_path(meeting.id);
+    let system_path = store.system_track_path(meeting.id);
+    fs::write(&playback_path, b"stub playback wav").expect("write playback stub");
+    fs::write(&mic_path, b"stub mic wav").expect("write mic stub");
+    fs::write(&system_path, b"stub system wav").expect("write system stub");
+    assert!(playback_path.exists());
+    assert!(mic_path.exists());
+    assert!(system_path.exists());
+
+    // Act
+    store.delete(meeting.id).expect("delete");
+
+    // Assert
+    assert!(!playback_path.exists(), "playback wav must be removed");
+    assert!(!mic_path.exists(), "mic track wav must be removed");
+    assert!(!system_path.exists(), "system track wav must be removed");
+}
+
 #[test]
 fn get_of_unknown_id_yields_not_found() {
     // Arrange
@@ -159,11 +190,15 @@ fn edited_segment_text_and_timestamps_survive_a_save_and_get_json_round_trip() {
             start_sec: 0.0,
             end_sec: 1.5,
             text: "hello team".to_string(),
+            speaker: myna_stt::Speaker::default(),
+            speaker_pinned: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 1.5,
             end_sec: 3.0,
             text: "let's begin".to_string(),
+            speaker: myna_stt::Speaker::default(),
+            speaker_pinned: false,
         });
     let created = store.create("Needs an edit").expect("create");
     let with_transcript = created.with_transcript(transcript);
@@ -198,6 +233,8 @@ fn with_transcript_returns_a_new_meeting_and_leaves_the_original_untouched() {
         start_sec: 0.0,
         end_sec: 1.5,
         text: "hello team".to_string(),
+        speaker: myna_stt::Speaker::default(),
+        speaker_pinned: false,
     });
 
     // Act
@@ -281,12 +318,14 @@ fn with_summary_replaces_only_the_matching_template_and_language_pair() {
         language: "en".to_string(),
         created_at: OffsetDateTime::now_utc(),
         path: PathBuf::from("summaries/key-points.en.md"),
+        stale: false,
     };
     let fr_ref = SummaryRef {
         template: "key-points".to_string(),
         language: "fr".to_string(),
         created_at: OffsetDateTime::now_utc(),
         path: PathBuf::from("summaries/key-points.fr.md"),
+        stale: false,
     };
     let en_ref_updated = SummaryRef {
         created_at: OffsetDateTime::now_utc() + Duration::seconds(10),
@@ -383,6 +422,132 @@ fn save_and_get_round_trip_the_archived_flag() {
 }
 
 #[test]
+fn meeting_json_predating_stale_and_dropped_audio_chunks_still_deserializes_with_defaults() {
+    // Arrange: a `meeting.json` written before Phase 6 (`stale` on
+    // `SummaryRef`) and Phase 7 (`dropped_audio_chunks` on `Meeting`)
+    // existed — neither field is present anywhere in the JSON.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let id = MeetingId::new();
+    let meeting_dir = dir.path().join("meetings").join(id.to_string());
+    fs::create_dir_all(&meeting_dir).expect("create meeting dir");
+    let legacy_json = format!(
+        r#"{{
+            "id": "{id}",
+            "title": "Pre-stale-and-drop-count meeting",
+            "created_at": "2024-01-01T00:00:00Z",
+            "duration_sec": 0.0,
+            "audio_path": null,
+            "transcript": null,
+            "summaries": [
+                {{
+                    "template": "key-points",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "path": "summaries/key-points.md",
+                    "language": "en"
+                }}
+            ]
+        }}"#
+    );
+    fs::write(meeting_dir.join("meeting.json"), legacy_json).expect("write legacy meeting.json");
+
+    // Act
+    let fetched = store.get(id).expect("get should succeed on legacy schema");
+
+    // Assert
+    assert_eq!(fetched.dropped_audio_chunks, 0);
+    assert_eq!(fetched.summaries.len(), 1);
+    assert!(!fetched.summaries[0].stale);
+}
+
+#[test]
+fn save_and_get_round_trip_dropped_audio_chunks_and_reset_to_zero() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let created = store.create("Recording with drops").expect("create");
+
+    // Act: persist a non-zero drop count, as `stop_recording_blocking`
+    // does when `RecordingSession::stop` reports dropped chunks.
+    let with_drops = created.with_dropped_audio_chunks(7);
+    store.save(&with_drops).expect("save with drops");
+    let fetched_with_drops = store.get(created.id).expect("get after saving drops");
+
+    // Assert
+    assert_eq!(fetched_with_drops.dropped_audio_chunks, 7);
+
+    // Act: a successful re-transcribe resets the count to 0.
+    let reset = fetched_with_drops.with_dropped_audio_chunks(0);
+    store.save(&reset).expect("save reset");
+    let fetched_reset = store.get(created.id).expect("get after reset");
+
+    // Assert
+    assert_eq!(fetched_reset.dropped_audio_chunks, 0);
+}
+
+#[test]
+fn with_all_summaries_stale_flips_every_ref_and_leaves_the_original_untouched() {
+    // Arrange
+    let original = Meeting::new("Re-transcribed meeting");
+    let en_ref = SummaryRef {
+        template: "key-points".to_string(),
+        language: "en".to_string(),
+        created_at: OffsetDateTime::now_utc(),
+        path: PathBuf::from("summaries/key-points.en.md"),
+        stale: false,
+    };
+    let fr_ref = SummaryRef {
+        template: "action-items".to_string(),
+        language: "fr".to_string(),
+        created_at: OffsetDateTime::now_utc(),
+        path: PathBuf::from("summaries/action-items.fr.md"),
+        stale: false,
+    };
+    let with_summaries = original.with_summary(en_ref).with_summary(fr_ref);
+
+    // Act
+    let staled = with_summaries.with_all_summaries_stale();
+
+    // Assert: immutability — the input meeting's summaries are untouched.
+    assert!(with_summaries.summaries.iter().all(|s| !s.stale));
+
+    // Assert: every summary on the returned copy is now stale, and no
+    // summary markdown was removed in the process.
+    assert_eq!(staled.summaries.len(), 2);
+    assert!(staled.summaries.iter().all(|s| s.stale));
+}
+
+#[test]
+fn generating_a_fresh_summary_clears_stale_on_the_replaced_ref() {
+    // Arrange: a meeting with one summary already marked stale by a prior
+    // re-transcribe.
+    let stale_ref = SummaryRef {
+        template: "key-points".to_string(),
+        language: "en".to_string(),
+        created_at: OffsetDateTime::now_utc(),
+        path: PathBuf::from("summaries/key-points.en.md"),
+        stale: true,
+    };
+    let meeting = Meeting::new("Needs a fresh summary").with_summary(stale_ref);
+
+    // Act: regenerating the same (template, language) pair, as
+    // `commands::summary::run_summarization` does, saves a fresh,
+    // non-stale ref.
+    let fresh_ref = SummaryRef {
+        template: "key-points".to_string(),
+        language: "en".to_string(),
+        created_at: OffsetDateTime::now_utc() + Duration::seconds(10),
+        path: PathBuf::from("summaries/key-points.en.md"),
+        stale: false,
+    };
+    let updated = meeting.with_summary(fresh_ref);
+
+    // Assert: exactly one summary for this pair, and it is no longer stale.
+    assert_eq!(updated.summaries.len(), 1);
+    assert!(!updated.summaries[0].stale);
+}
+
+#[test]
 fn meeting_json_predating_the_language_field_still_deserializes_with_default_en() {
     // Arrange
     let dir = tempfile::tempdir().expect("tempdir");
@@ -415,4 +580,249 @@ fn meeting_json_predating_the_language_field_still_deserializes_with_default_en(
     // Assert
     assert_eq!(fetched.summaries.len(), 1);
     assert_eq!(fetched.summaries[0].language, "en");
+}
+
+/// Regression test: a `meeting.json` written before per-segment speaker
+/// attribution existed has transcript segments with only `start_sec` /
+/// `end_sec` / `text` — no `speaker` key anywhere. `TranscriptSegment.speaker`
+/// must be `#[serde(default)]`, or `fs_store::read_meeting_file` silently
+/// drops this meeting from both `get` and `list` (see
+/// `list_skips_a_corrupt_meeting_json_without_erroring` for the drop
+/// behavior this would otherwise trigger unintentionally).
+#[test]
+fn meeting_json_with_a_legacy_transcript_missing_speaker_keys_still_loads() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let id = MeetingId::new();
+    let meeting_dir = dir.path().join("meetings").join(id.to_string());
+    fs::create_dir_all(&meeting_dir).expect("create meeting dir");
+    let legacy_json = format!(
+        r#"{{
+            "id": "{id}",
+            "title": "Pre-speaker-attribution meeting",
+            "created_at": "2024-01-01T00:00:00Z",
+            "duration_sec": 3.0,
+            "audio_path": null,
+            "transcript": {{
+                "segments": [
+                    {{"start_sec": 0.0, "end_sec": 1.5, "text": "hello team"}},
+                    {{"start_sec": 1.5, "end_sec": 3.0, "text": "let's begin"}}
+                ]
+            }},
+            "summaries": []
+        }}"#
+    );
+    fs::write(meeting_dir.join("meeting.json"), legacy_json).expect("write legacy meeting.json");
+
+    // Act
+    let fetched = store
+        .get(id)
+        .expect("get should succeed on a legacy meeting.json missing speaker keys");
+    let listed = store
+        .list()
+        .expect("list should not drop the legacy meeting");
+
+    // Assert: `get` returns it with segments defaulted to an unknown speaker.
+    let transcript = fetched.transcript.expect("transcript present");
+    assert_eq!(transcript.segments.len(), 2);
+    assert_eq!(transcript.segments[0].speaker, myna_stt::Speaker::unknown());
+    assert_eq!(transcript.segments[1].speaker, myna_stt::Speaker::unknown());
+
+    // Assert: `list` does not silently drop it either.
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, id);
+}
+
+// ---- Manual meeting ordering (`position`) ------------------------------
+
+/// Critical regression test: a `meeting.json` written before manual
+/// ordering existed has no `position` key anywhere in the JSON. Adding a
+/// required (non-`Option` or non-`#[serde(default)]`) field would break
+/// every meeting recorded before this feature shipped — mirrors
+/// `meeting_json_without_folder_id_field_still_deserializes` in
+/// `tests/folders.rs`.
+#[test]
+fn meeting_json_without_position_field_still_deserializes() {
+    // Arrange
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let id = MeetingId::new();
+    let meeting_dir = dir.path().join("meetings").join(id.to_string());
+    fs::create_dir_all(&meeting_dir).expect("create meeting dir");
+    let legacy_json = format!(
+        r#"{{
+            "id": "{id}",
+            "title": "Pre-placement meeting",
+            "created_at": "2024-01-01T00:00:00Z",
+            "duration_sec": 0.0,
+            "audio_path": null,
+            "transcript": null,
+            "summaries": []
+        }}"#
+    );
+    fs::write(meeting_dir.join("meeting.json"), legacy_json).expect("write legacy meeting.json");
+
+    // Act
+    let fetched = store
+        .get(id)
+        .expect("get should succeed on a legacy meeting.json missing position");
+
+    // Assert
+    assert_eq!(fetched.position, None);
+}
+
+/// Day-zero parity guard: when no meeting has ever been manually
+/// reordered, `list()`'s new position-aware sort must produce *exactly*
+/// the same sequence as the old `created_at` DESC sort it replaces.
+#[test]
+fn list_with_no_positions_matches_created_at_desc_exactly() {
+    // Arrange: five unplaced meetings with distinct `created_at` values —
+    // the state of every existing installation before this feature ships.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let now = OffsetDateTime::now_utc();
+    let meetings: Vec<Meeting> = (0..5)
+        .map(|i| Meeting {
+            created_at: now - Duration::seconds(i * 10),
+            ..Meeting::new(format!("Meeting {i}"))
+        })
+        .collect();
+    for meeting in &meetings {
+        store.save(meeting).expect("save");
+    }
+
+    // Act
+    let listed = store.list().expect("list");
+
+    // Assert: order is exactly `created_at` DESC, unchanged from before
+    // this feature existed.
+    let ids: Vec<MeetingId> = listed.iter().map(|meeting| meeting.id).collect();
+    let expected_ids: Vec<MeetingId> = meetings.iter().map(|meeting| meeting.id).collect();
+    assert_eq!(ids, expected_ids);
+}
+
+#[test]
+fn list_interleaves_a_placed_meeting_among_unplaced_ones() {
+    // Arrange: two unplaced meetings, older and newer, plus a third
+    // meeting given an explicit `position` that lands strictly between
+    // their effective positions (negated `created_at` seconds).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let now = OffsetDateTime::now_utc();
+
+    let older = Meeting {
+        created_at: now - Duration::seconds(20),
+        ..Meeting::new("Older, unplaced")
+    };
+    let newer = Meeting {
+        created_at: now,
+        ..Meeting::new("Newer, unplaced")
+    };
+    let older_effective = -(older.created_at.unix_timestamp() as f64);
+    let newer_effective = -(newer.created_at.unix_timestamp() as f64);
+    let midpoint = newer_effective + (older_effective - newer_effective) / 2.0;
+    let placed = Meeting::new("Explicitly placed between them").with_position(Some(midpoint));
+
+    for meeting in [&older, &newer, &placed] {
+        store.save(meeting).expect("save");
+    }
+
+    // Act
+    let listed = store.list().expect("list");
+
+    // Assert: ascending effective position puts the newer unplaced meeting
+    // first, the explicitly placed one in the middle, and the older
+    // unplaced meeting last.
+    let titles: Vec<&str> = listed
+        .iter()
+        .map(|meeting| meeting.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        vec![
+            "Newer, unplaced",
+            "Explicitly placed between them",
+            "Older, unplaced",
+        ]
+    );
+}
+
+#[test]
+fn list_order_is_deterministic_for_equal_positions() {
+    // Arrange: two meetings share the same explicit position but have
+    // distinct `created_at` — the second tie-break level.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store_at(dir.path());
+    let now = OffsetDateTime::now_utc();
+    let shared_position = 42.0;
+
+    let older_same_position = Meeting {
+        created_at: now - Duration::seconds(10),
+        ..Meeting::new("Older, same position").with_position(Some(shared_position))
+    };
+    let newer_same_position = Meeting {
+        created_at: now,
+        ..Meeting::new("Newer, same position").with_position(Some(shared_position))
+    };
+
+    // A third pair shares both position AND created_at exactly — the
+    // final tie-break level is `id`.
+    let same_instant = now - Duration::seconds(30);
+    let tied_a = Meeting {
+        created_at: same_instant,
+        ..Meeting::new("Tied A").with_position(Some(7.0))
+    };
+    let tied_b = Meeting {
+        created_at: same_instant,
+        ..Meeting::new("Tied B").with_position(Some(7.0))
+    };
+
+    for meeting in [&older_same_position, &newer_same_position, &tied_a, &tied_b] {
+        store.save(meeting).expect("save");
+    }
+
+    // Act
+    let listed_once = store.list().expect("list once");
+    let listed_again = store.list().expect("list again");
+
+    // Assert: `created_at` DESC breaks the tie between the first pair.
+    let titles: Vec<&str> = listed_once
+        .iter()
+        .map(|meeting| meeting.title.as_str())
+        .collect();
+    let newer_idx = titles
+        .iter()
+        .position(|title| *title == "Newer, same position")
+        .expect("newer meeting present");
+    let older_idx = titles
+        .iter()
+        .position(|title| *title == "Older, same position")
+        .expect("older meeting present");
+    assert!(newer_idx < older_idx);
+
+    // Assert: the fully-tied pair sorts in a stable, id-derived order.
+    // The expected order is computed from the pair's own UUID string
+    // form, which orders identically to the underlying bytes for
+    // canonical lowercase UUIDs, so this holds regardless of whether the
+    // implementation compares `MeetingId` directly or via its string
+    // form.
+    let mut expected_tied_order = [("Tied A", tied_a.id), ("Tied B", tied_b.id)];
+    expected_tied_order.sort_by_key(|(_, id)| id.to_string());
+    let expected_titles: Vec<&str> = expected_tied_order
+        .iter()
+        .map(|(title, _)| *title)
+        .collect();
+    let tied_titles_in_listed_order: Vec<&str> = listed_once
+        .iter()
+        .filter(|meeting| meeting.title == "Tied A" || meeting.title == "Tied B")
+        .map(|meeting| meeting.title.as_str())
+        .collect();
+    assert_eq!(tied_titles_in_listed_order, expected_titles);
+
+    // Assert: determinism — repeated `list()` calls produce the same
+    // order.
+    let ids_once: Vec<MeetingId> = listed_once.iter().map(|meeting| meeting.id).collect();
+    let ids_again: Vec<MeetingId> = listed_again.iter().map(|meeting| meeting.id).collect();
+    assert_eq!(ids_once, ids_again);
 }
