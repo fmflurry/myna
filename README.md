@@ -76,7 +76,10 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 
 **Platform support:** Myna is developed and tested on macOS only. Windows and Linux builds are not yet verified — see Roadmap.
 
-### 1. Install & Launch
+### Recommended: Download the .dmg
+Grab the latest macOS `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases), open it and drag Myna to Applications, then launch. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). Requires macOS 14.4+.
+
+### Build from Source
 ```bash
 npm install
 npm --prefix ui install
@@ -84,7 +87,6 @@ npx tauri dev
 ```
 Opens the Myna window. Ready to record.
 
-### 2. Download Models In-App
 On first run, Myna's onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
 
 For production builds:

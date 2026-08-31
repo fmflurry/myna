@@ -4,24 +4,29 @@ Welcome to Myna, your local-first AI meeting recorder and summarizer. This guide
 
 ## First Run
 
-### 1. Install Dependencies
+### Recommended: Download the .dmg
+Grab the latest macOS `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases), open it and drag Myna to Applications, then launch. The Myna window opens. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
+
+The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
+
+You are now ready to record.
+
+### Build from Source
 
 ```bash
 npm install                    # Tauri dependencies
 npm --prefix ui install        # Angular UI
 ```
 
-### 2. Launch Myna
+Launch Myna:
 
 ```bash
 npx tauri dev
 ```
 
-The Myna window opens. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
+On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
 
 The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
-
-You are now ready to record.
 
 ## Choosing a Capture Source
 
