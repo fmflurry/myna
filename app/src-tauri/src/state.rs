@@ -254,4 +254,58 @@ impl AppState {
     pub fn import_busy(&self) -> bool {
         self.import_busy.load(Ordering::SeqCst)
     }
+
+    /// Panic-safe counterpart to [`AppState::begin_import`]/
+    /// [`AppState::end_import`]: acquires the same busy flag (same
+    /// precondition, same [`AppError::Busy`] failure), but returns an RAII
+    /// [`ImportGuard`] whose [`Drop`] calls `end_import()` instead of
+    /// requiring the caller to call it manually. Because `Drop` runs during
+    /// unwinding, a panic anywhere while the guard is alive still releases
+    /// the flag — unlike the manual `begin_import()?; <work>; end_import();`
+    /// pattern, where a panic in `<work>` skips `end_import()` and leaves
+    /// `import_busy` stuck `true` forever (see
+    /// `tests/import_guard_panic_safety.rs`).
+    ///
+    /// Additive: [`AppState::begin_import`]/[`AppState::end_import`]
+    /// themselves are untouched, since two pre-existing tests depend on
+    /// their current unbound-call semantics.
+    pub fn import_guard(&self) -> Result<ImportGuard<'_>, AppError> {
+        self.begin_import()?;
+        Ok(ImportGuard { state: self })
+    }
+
+    /// Panic-safe counterpart to [`AppState::begin_summarization`]/
+    /// [`AppState::end_summarization`] — mirrors [`AppState::import_guard`]
+    /// for `summary_busy`. See that method's docs for the full rationale.
+    pub fn summarization_guard(&self) -> Result<SummarizationGuard<'_>, AppError> {
+        self.begin_summarization()?;
+        Ok(SummarizationGuard { state: self })
+    }
+}
+
+/// RAII guard returned by [`AppState::import_guard`]. Releases the import
+/// busy flag via [`AppState::end_import`] when dropped — including during a
+/// panic unwind — so callers hold this for the whole guarded body instead of
+/// calling `end_import()` manually at the end.
+pub struct ImportGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for ImportGuard<'_> {
+    fn drop(&mut self) {
+        self.state.end_import();
+    }
+}
+
+/// RAII guard returned by [`AppState::summarization_guard`]. Releases the
+/// summarization busy flag via [`AppState::end_summarization`] when dropped
+/// — including during a panic unwind. Mirrors [`ImportGuard`].
+pub struct SummarizationGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for SummarizationGuard<'_> {
+    fn drop(&mut self) {
+        self.state.end_summarization();
+    }
 }

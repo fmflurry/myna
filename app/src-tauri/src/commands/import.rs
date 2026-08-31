@@ -6,8 +6,10 @@
 //! synchronous body runs inside a single
 //! [`tauri::async_runtime::spawn_blocking`] closure — the same contract
 //! `commands::recording` and `commands::summary` document: the busy guard
-//! ([`AppState::begin_import`]/[`AppState::end_import`]) is taken
-//! synchronously, before any `.await`, so it is never held across one.
+//! ([`AppState::import_guard`], an RAII wrapper over
+//! [`AppState::begin_import`]/[`AppState::end_import`] whose `Drop` releases
+//! the flag even if the guarded body panics) is taken synchronously, before
+//! any `.await`, so it is never held across one.
 //!
 //! Both pipelines stream the source WAV through
 //! [`crate::ingest::transcribe_wav_streaming`] with live partials disabled
@@ -31,7 +33,7 @@ use myna_stt::{
 
 use crate::commands::meetings::resolve_new_title;
 use crate::commands::recording::lock_session;
-use crate::domain::MeetingId;
+use crate::domain::{Meeting, MeetingId};
 use crate::dto::MeetingDto;
 use crate::error::AppError;
 use crate::events::{
@@ -41,6 +43,7 @@ use crate::ingest;
 use crate::paths;
 use crate::session::{guard_not_recording, LevelThrottle};
 use crate::state::AppState;
+use crate::store::fs_store::FsMeetingStore;
 use crate::store::MeetingStore;
 
 /// Minimum spacing, in milliseconds, between [`IMPORT_PROGRESS`] emissions
@@ -95,16 +98,16 @@ fn import_audio_blocking(
     let state = app.state::<AppState>();
     let recording_active = lock_session(&state)?.is_some();
     ingest::guard_import(state.import_busy(), recording_active)?;
-    state.begin_import()?;
+    let _guard = state.import_guard()?;
 
-    let result = run_import(app, &state, path, title);
-    state.end_import();
-    result
+    run_import(app, &state, path, title)
 }
 
 /// Does the actual work of [`import_audio`], factored out so the caller can
-/// unconditionally release the busy flag afterwards regardless of outcome —
-/// mirrors `commands::summary::run_summarization`.
+/// hold [`AppState::import_guard`] across the whole call — that guard's
+/// `Drop` releases the busy flag regardless of outcome, including a panic
+/// partway through this function, unlike a manual `end_import()` call which
+/// a panic would skip entirely. Mirrors `commands::summary::run_summarization`.
 fn run_import(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -215,16 +218,15 @@ fn retranscribe_meeting_blocking(
     drop(session_slot);
     guard_not_recording(active_meeting_id, id)?;
     ingest::guard_import(state.import_busy(), recording_active)?;
-    state.begin_import()?;
+    let _guard = state.import_guard()?;
 
-    let result = run_retranscribe(app, &state, id, path);
-    state.end_import();
-    result
+    run_retranscribe(app, &state, id, path)
 }
 
 /// Does the actual work of [`retranscribe_meeting`], factored out so the
-/// caller can unconditionally release the busy flag afterwards regardless
-/// of outcome.
+/// caller can hold [`AppState::import_guard`] across the whole call — that
+/// guard's `Drop` releases the busy flag regardless of outcome, including a
+/// panic partway through this function.
 ///
 /// Speaker attribution, in priority order (see
 /// [`ingest::resolve_retranscribe_tracks`]):
@@ -265,8 +267,11 @@ fn run_retranscribe(
     // other failure) mid-conversion or mid-transcribe must leave the
     // meeting's existing `audio.wav` and transcript byte-for-byte untouched.
     // Only the supplied-replacement staged file is ever promoted over
-    // `audio_dest` (once transcription of it has fully succeeded, below) —
-    // the fallback-conversion staged file is always discarded instead.
+    // `audio_dest`, and only via `promote_and_persist_retranscribe` below,
+    // once transcription of it has fully succeeded AND the previous
+    // transcript has been backed up AND the new meeting state has been
+    // persisted — never eagerly. The fallback-conversion staged file is
+    // always discarded instead, never promoted.
     let (transcript, total_sec, promote_staged) = match path {
         Some(supplied) => {
             // Validated against *this* meeting's own destination: refuses
@@ -327,24 +332,13 @@ fn run_retranscribe(
         }
     };
 
-    if let Some(staged) = &promote_staged {
-        fs::rename(staged, &audio_dest)?;
-    }
-
-    if let Some(previous_transcript) = &meeting.transcript {
-        let meeting_dir = audio_dest
-            .parent()
-            .ok_or_else(|| AppError::Path("audio path has no parent directory".to_string()))?;
-        ingest::backup_transcript(meeting_dir, previous_transcript, &meeting.speaker_names)?;
-    }
-
     // The fresh transcript invalidates every summary generated from the
     // old one, and clears whatever dropped-audio-chunk count the previous
     // recording/transcribe left behind — this transcribe pass is clean.
     // `speaker_names` is cleared too: after re-clustering, `others:1` is
     // likely a different human, and displaying an old name over someone
     // else's words would be the app lying about who spoke. The old map was
-    // just snapshotted into `transcript.previous.json` above, so it's
+    // just snapshotted into `transcript.previous.json` below, so it's
     // recoverable on disk even though it's gone from the live meeting.
     let updated = meeting
         .with_all_summaries_stale()
@@ -353,7 +347,34 @@ fn run_retranscribe(
         .with_audio_path(audio_dest.clone())
         .with_dropped_audio_chunks(0)
         .with_speaker_names(BTreeMap::new());
-    state.store.save(&updated)?;
+    let previous_transcript = meeting
+        .transcript
+        .as_ref()
+        .map(|transcript| (transcript, &meeting.speaker_names));
+
+    match &promote_staged {
+        Some(staged) => {
+            if let Err(err) = promote_and_persist_retranscribe(
+                state.store.as_ref(),
+                staged,
+                &audio_dest,
+                previous_transcript,
+                &updated,
+            ) {
+                let _ = fs::remove_file(staged);
+                return Err(err);
+            }
+        }
+        None => {
+            if let Some((previous_transcript, speaker_names)) = previous_transcript {
+                let meeting_dir = audio_dest.parent().ok_or_else(|| {
+                    AppError::Path("audio path has no parent directory".to_string())
+                })?;
+                ingest::backup_transcript(meeting_dir, previous_transcript, speaker_names)?;
+            }
+            state.store.save(&updated)?;
+        }
+    }
 
     emit_import_progress(app, id, ImportPhase::Done, total_sec, total_sec);
 
@@ -362,6 +383,57 @@ fn run_retranscribe(
         ingest::has_audio(&audio_dest),
         ingest::has_audio(&state.store.system_track_path(id)),
     ))
+}
+
+/// Promotes a staged replacement audio file over `audio_dest` and persists
+/// `updated`'s transcript, as a single all-or-nothing step for
+/// [`run_retranscribe`]'s replace-audio branch.
+///
+/// Order is the whole fix: `previous_transcript`'s backup (via
+/// [`ingest::backup_transcript`], when `Some`) and `updated`'s persistence
+/// (via [`MeetingStore::save`]) both run *before* `staged` is ever promoted
+/// over `audio_dest`. If either of those two steps fails, this returns `Err`
+/// without ever touching `audio_dest` — it stays byte-identical to what it
+/// was before the call, consistent with the still-old, unmodified persisted
+/// transcript `store.get` would return. Only once both steps have fully
+/// succeeded is `staged` renamed over `audio_dest`, a single same-directory
+/// [`fs::rename`] the OS performs atomically (it either fully replaces
+/// `audio_dest`'s contents or leaves them untouched, never a partial write).
+///
+/// This closes the bug this helper replaces: the old code renamed `staged`
+/// over `audio_dest` unconditionally, first, so a later failure in backup or
+/// persistence left `audio_dest` holding the NEW audio while the persisted
+/// transcript still described the OLD one — permanently desynced, since the
+/// old transcript's segment timestamps refer to audio that no longer exists
+/// on disk. The one residual edge case this does not cover: a failure of the
+/// final promote-rename itself, after backup and persistence have both
+/// already succeeded, would leave `audio_dest` OLD while the persisted
+/// transcript is already the NEW one — an same-directory `rename` failing
+/// after both prior steps succeeded is not exercised by any test here and is
+/// not otherwise guarded against.
+///
+/// `staged` is not cleaned up on error here — the caller
+/// ([`run_retranscribe`]) does that in its own `Err` branch, mirroring every
+/// other tmp file in this module.
+pub fn promote_and_persist_retranscribe(
+    store: &FsMeetingStore,
+    staged: &Path,
+    audio_dest: &Path,
+    previous_transcript: Option<(&Transcript, &BTreeMap<String, String>)>,
+    updated: &Meeting,
+) -> Result<(), AppError> {
+    if let Some((transcript, speaker_names)) = previous_transcript {
+        let meeting_dir = audio_dest
+            .parent()
+            .ok_or_else(|| AppError::Path("audio path has no parent directory".to_string()))?;
+        ingest::backup_transcript(meeting_dir, transcript, speaker_names)?;
+    }
+
+    store.save(updated)?;
+
+    fs::rename(staged, audio_dest)?;
+
+    Ok(())
 }
 
 /// Requests cancellation of the in-flight import or re-transcribe, if any.
@@ -433,16 +505,15 @@ fn diarize_meeting_blocking(app: &AppHandle, meeting_id: String) -> Result<Meeti
 
     let recording_active = lock_session(&state)?.is_some();
     ingest::guard_import(state.import_busy(), recording_active)?;
-    state.begin_import()?;
+    let _guard = state.import_guard()?;
 
-    let result = run_diarize(app, &state, id);
-    state.end_import();
-    result
+    run_diarize(app, &state, id)
 }
 
 /// Does the actual work of [`diarize_meeting`], factored out so the caller
-/// can unconditionally release the busy flag afterwards regardless of
-/// outcome — mirrors [`run_retranscribe`].
+/// can hold [`AppState::import_guard`] across the whole call — that guard's
+/// `Drop` releases the busy flag regardless of outcome, including a panic
+/// partway through this function — mirrors [`run_retranscribe`].
 fn run_diarize(
     app: &AppHandle,
     state: &State<'_, AppState>,

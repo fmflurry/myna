@@ -6,9 +6,12 @@
 //! dispatcher runs them on the async runtime's blocking-pool threads
 //! instead of the main thread — see the module-level note in
 //! `crate::commands` for why this matters. The busy guard
-//! ([`AppState::begin_summarization`]/[`AppState::end_summarization`]) is
-//! still taken synchronously, before any `.await`, so it is never held
-//! across one.
+//! ([`AppState::summarization_guard`], an RAII wrapper over
+//! [`AppState::begin_summarization`]/[`AppState::end_summarization`] whose
+//! `Drop` releases the flag regardless of outcome, including a panic) is
+//! acquired before the blocking work is spawned and held for the rest of
+//! `summarize_meeting`'s scope, releasing the flag exactly once when that
+//! scope ends.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -48,10 +51,15 @@ const SECONDS_PER_HOUR: u32 = SECONDS_PER_MINUTE * 60;
 /// this command never occupies the main thread for the seconds-to-minutes
 /// an LLM generation can take — that main-thread stall was the reported bug
 /// ("the whole application is frozen during the generation runtime").
-/// [`AppState::begin_summarization`]/[`AppState::end_summarization`] bracket
-/// the spawned work but are called directly on this async fn's own
-/// execution, never inside the blocking closure, so no lock or guard state
-/// is held across the `.await`.
+/// [`AppState::summarization_guard`] (an RAII wrapper over
+/// [`AppState::begin_summarization`]/[`AppState::end_summarization`] whose
+/// `Drop` releases the flag regardless of outcome, including a panic) is
+/// acquired before the blocking work is spawned and held for this whole
+/// `async fn`'s scope — including across the `.await` below — so the flag
+/// is released exactly once, whether the spawned work returns `Ok`, `Err`,
+/// or panics (`spawn_blocking` itself already isolates a panic into a
+/// `JoinError` rather than unwinding into this frame, but holding the guard
+/// this way needs no such assumption to stay correct).
 #[tauri::command]
 pub async fn summarize_meeting(
     app: AppHandle,
@@ -60,10 +68,11 @@ pub async fn summarize_meeting(
     language: Option<String>,
 ) -> Result<SummaryDto, AppError> {
     let id = parse_meeting_id(&meeting_id)?;
-    app.state::<AppState>().begin_summarization()?;
+    let state = app.state::<AppState>();
+    let _guard = state.summarization_guard()?;
 
     let app_for_worker = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let state = app_for_worker.state::<AppState>();
         run_summarization(&app_for_worker, &state, id, template, language)
     })
@@ -72,10 +81,7 @@ pub async fn summarize_meeting(
         Err(AppError::Store(
             "summarization worker thread panicked".to_string(),
         ))
-    });
-
-    app.state::<AppState>().end_summarization();
-    result
+    })
 }
 
 /// Reads a previously persisted summary's markdown for a meeting/template/
@@ -265,8 +271,8 @@ pub fn edit_summary_from(
 }
 
 /// Does the actual work of [`summarize_meeting`], factored out so the
-/// caller can unconditionally release the busy flag afterwards regardless
-/// of outcome.
+/// caller can hold [`AppState::summarization_guard`] across the whole call —
+/// that guard's `Drop` releases the busy flag regardless of outcome.
 fn run_summarization(
     app: &AppHandle,
     state: &State<'_, AppState>,
