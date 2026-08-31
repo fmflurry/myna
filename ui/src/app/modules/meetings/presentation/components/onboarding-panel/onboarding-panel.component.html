@@ -22,7 +22,7 @@
 
     <div class="download">
       <code>{{ downloadCommand }}</code>
-      <button type="button" (click)="copyDownloadCommand()">
+      <button type="button" class="copy-download-command" (click)="copyDownloadCommand()">
         {{ copied() ? 'Copied!' : 'Copy' }}
       </button>
     </div>
