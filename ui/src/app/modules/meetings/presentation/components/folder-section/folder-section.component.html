@@ -1,0 +1,71 @@
+<div
+  class="folder-section"
+  [class.drop-accepting]="dropAccepting()"
+  [class.drop-hover]="effectiveHover()"
+>
+  <div class="folder-header" tabindex="-1" (keydown.escape)="onHeaderEscape($event)">
+    @if (mode() === 'renaming') {
+      <input
+        class="rename-input"
+        type="text"
+        aria-label="Rename folder"
+        [value]="renameDraft()"
+        (input)="onRenameInput($event)"
+        (keydown.enter)="commitRename($event)"
+        (keydown.escape)="cancelRename($event)"
+        (click)="$event.stopPropagation()"
+      />
+    } @else {
+      <button
+        type="button"
+        class="folder-toggle"
+        [attr.aria-expanded]="expanded()"
+        [attr.aria-controls]="bodyId()"
+        (click)="onToggleClick($event)"
+      >
+        <span class="chevron" aria-hidden="true">&#9656;</span>
+        <span class="folder-name">{{ folder().name }}</span>
+        <span class="count">{{ meetings().length }}</span>
+        @if (effectiveHover()) {
+          <span class="drop-hint">Move here</span>
+        }
+      </button>
+    }
+
+    @if (mode() === 'confirming-delete') {
+      <span class="confirm-actions">
+        <button type="button" class="confirm-yes" (click)="confirmDelete($event)">Yes</button>
+        <button type="button" class="confirm-no" (click)="cancelDelete($event)">No</button>
+      </span>
+    } @else if (mode() === 'idle') {
+      <button type="button" class="rename" aria-label="Rename folder" (click)="startRename($event)">&#9998;</button>
+      <button type="button" class="delete" aria-label="Delete folder" (click)="startDelete($event)">&times;</button>
+    }
+  </div>
+
+  @if (expanded()) {
+    <div [id]="bodyId()" class="list" role="listbox" [attr.aria-label]="folder().name + ' meetings'">
+      @if (meetings().length === 0) {
+        <p class="empty-hint">Empty — move a meeting here</p>
+      } @else {
+        @for (meeting of meetings(); track meeting.id) {
+          <app-meeting-list-item
+            [meeting]="meeting"
+            [selected]="meeting.id === selectedId()"
+            [disabled]="selectionDisabled()"
+            [recording]="meeting.id === recordingMeetingId()"
+            [dragEnabled]="dragEnabled()"
+            [dropIndicatorEnabled]="rowDropEnabled()"
+            (opened)="meetingSelected.emit($event)"
+            (deleteRequested)="meetingDeleted.emit($event)"
+            (dragStarted)="meetingDragStarted.emit($event)"
+            (dragEnded)="meetingDragEnded.emit()"
+            (dropOnRow)="meetingDropOnRow.emit({ id: meeting.id, edge: $event })"
+            (keydown.alt.arrowdown)="meetingReorderRequested.emit({ id: meeting.id, direction: 'down' })"
+            (keydown.alt.arrowup)="meetingReorderRequested.emit({ id: meeting.id, direction: 'up' })"
+          />
+        }
+      }
+    </div>
+  }
+</div>

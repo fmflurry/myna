@@ -1,0 +1,30 @@
+<section class="speakers-panel" aria-label="Speakers">
+  <h3 class="panel-title">Speakers</h3>
+  <ul class="speaker-rows">
+    @for (row of rows(); track row.label) {
+      <li class="speaker-row">
+        <span class="speaker-role">{{ row.removable ? 'Speaker' : 'Me' }}</span>
+        <input
+          type="text"
+          class="speaker-name"
+          [value]="row.name"
+          [placeholder]="row.removable ? 'Unnamed' : 'You'"
+          [attr.aria-label]="'Display name for ' + (row.name !== '' ? row.name : row.label)"
+          (change)="commitRename(row, $event)"
+          (keyup.enter)="commitRename(row, $event)"
+        />
+        @if (row.removable) {
+          <button type="button" class="remove-speaker" (click)="remove(row)">Remove&hellip;</button>
+        }
+      </li>
+    }
+  </ul>
+  <button
+    type="button"
+    class="undo-speaker-op"
+    [disabled]="history().length === 0"
+    (click)="undoRequested.emit()"
+  >
+    {{ undoLabel() }}
+  </button>
+</section>

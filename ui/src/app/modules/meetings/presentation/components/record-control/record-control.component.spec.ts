@@ -138,6 +138,26 @@ describe('RecordControlComponent', () => {
     expect(fixture.nativeElement.querySelector('.degraded-source')?.textContent).toContain('Mic only');
   });
 
+  it('replaces the degraded "Mic only" label with the source name once the backend resolves it after the initial state event', () => {
+    // The initial recording://state event carries no effective system
+    // source — the capture backend hasn't resolved one yet.
+    const fixture = createFixture('recording');
+    fixture.componentRef.setInput('captureSource', 'mixed' satisfies CaptureSource);
+    fixture.componentRef.setInput('effectiveSystemSource', null);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.degraded-source')?.textContent).toContain('Mic only');
+
+    // The worker's follow-up recording://state event resolves the source.
+    fixture.componentRef.setInput(
+      'effectiveSystemSource',
+      { id: 'app:teams', name: 'Teams' } satisfies AudioSource,
+    );
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.degraded-source')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.effective-source')?.textContent).toContain('Teams');
+  });
+
   it('shows an accessible "preparing" status and disables capture settings while the model loads', () => {
     const fixture = createFixture('idle');
     fixture.componentRef.setInput('startingRecording', true);
