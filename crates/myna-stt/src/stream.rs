@@ -81,6 +81,30 @@ const PRE_SPEECH_RETAIN_SEC: f32 = 1.0;
 /// separate constants are needed.
 const PRE_ROLL_SEC: f32 = 0.3;
 
+/// Hard cap, in seconds, on how much audio [`SimulatedStreamer::drain_finals`]
+/// will ever hand to the decoder in one call — the fix for Parakeet-TDT v3's
+/// French->English language-drift bug.
+///
+/// Parakeet-TDT v3 has no language pin: it decodes greedily over one joint
+/// vocabulary shared by 25 languages, and its prediction network is
+/// autoregressive, so once a long enough decode window drifts into an
+/// English attractor it stays English for the rest of the segment. Measured
+/// directly on real French meeting audio (same contiguous span, only the
+/// window boundary moved): 5s decoded correctly, 7s decoded correctly, 8s
+/// failed, 12s failed, and 33s failed — the last of these is exactly the
+/// production bug this constant fixes (`VadConfig::max_speech_sec: 30.0`
+/// produced a measured 33.12s segment, because `VoiceActivityDetector::
+/// accept_waveform` only *tightens* the VAD past `max_speech_sec`, it never
+/// force-closes a segment — see [`crate::vad::VadConfig::max_speech_sec`]'s
+/// doc comment). `7.0` is pinned to the last confirmed-safe measurement,
+/// not merely "under 8", to keep margin below the observed failure.
+///
+/// [`SimulatedStreamer::drain_finals`] enforces this by splitting any VAD
+/// segment longer than this cap into consecutive chunks via
+/// [`split_into_chunks`] and decoding each one separately, rather than ever
+/// decoding a single window longer than this.
+const MAX_DECODE_CHUNK_SEC: f32 = 7.0;
+
 /// Maximum trailing window, in seconds, decoded for a live partial
 /// hypothesis. [`SimulatedStreamer::maybe_partial`] re-decodes the growing
 /// utterance buffer from scratch every [`PARTIAL_INTERVAL_SEC`]; decoding
@@ -446,31 +470,47 @@ impl SimulatedStreamer {
         }
     }
 
-    /// Drains finished VAD segments, decoding each into a [`SttEvent::Final`]
-    /// and resetting the in-progress utterance state.
+    /// Drains finished VAD segments, decoding each into one or more
+    /// [`SttEvent::Final`]s and resetting the in-progress utterance state.
     ///
     /// Prepends up to [`PRE_ROLL_SEC`] of already-buffered raw audio ahead
     /// of the VAD's own reported segment start before decoding — see
     /// [`PRE_ROLL_SEC`]'s docs for why the VAD's boundary alone truncates
     /// the leading word of an utterance.
+    ///
+    /// The (already pre-rolled) decode range is then split via
+    /// [`split_into_chunks`] into pieces no longer than
+    /// [`MAX_DECODE_CHUNK_SEC`], each decoded and emitted as its own
+    /// `Final` — see that constant's docs for why a single long decode
+    /// must never reach the engine directly. Chunk timestamps stay
+    /// absolute to the recording (derived from each chunk's own absolute
+    /// sample offsets, never reset per chunk), so seek and diarization
+    /// alignment are unaffected by the split.
     fn drain_finals(&mut self) -> Result<Vec<SttEvent>, SttError> {
         let mut events = Vec::new();
+        let cap_samples = (MAX_DECODE_CHUNK_SEC * TARGET_SAMPLE_RATE as f32) as usize;
         for (start_sample, samples) in self.vad.drain_segments() {
             let (decode_start_sample, decode_samples) = self.with_pre_roll(start_sample, samples);
-            let text = self
-                .engine
-                .transcribe_samples(TARGET_SAMPLE_RATE, &decode_samples)?;
-            let start_sec = decode_start_sample as f32 / TARGET_SAMPLE_RATE as f32;
-            let end_sec = start_sec + decode_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
-            events.push(SttEvent::Final {
-                segment: TranscriptSegment {
-                    start_sec,
-                    end_sec,
-                    text,
-                    speaker: Speaker::default(),
-                    speaker_pinned: false,
-                },
-            });
+            let chunks = split_into_chunks(decode_start_sample, decode_samples.len(), cap_samples);
+            for (chunk_start_sample, chunk_end_sample) in chunks {
+                let local_start = chunk_start_sample - decode_start_sample;
+                let local_end = chunk_end_sample - decode_start_sample;
+                let text = self.engine.transcribe_samples(
+                    TARGET_SAMPLE_RATE,
+                    &decode_samples[local_start..local_end],
+                )?;
+                let start_sec = chunk_start_sample as f32 / TARGET_SAMPLE_RATE as f32;
+                let end_sec = chunk_end_sample as f32 / TARGET_SAMPLE_RATE as f32;
+                events.push(SttEvent::Final {
+                    segment: TranscriptSegment {
+                        start_sec,
+                        end_sec,
+                        text,
+                        speaker: Speaker::default(),
+                        speaker_pinned: false,
+                    },
+                });
+            }
             self.reset_utterance();
         }
         Ok(events)
@@ -616,6 +656,59 @@ impl SimulatedStreamer {
         self.speech_started = false;
         self.partial_commit.reset();
     }
+}
+
+/// Splits the absolute sample range `[start_sample, start_sample +
+/// total_samples)` into contiguous `(chunk_start, chunk_end)` pairs, each
+/// no longer than `cap_samples` — the hard decode-segment cap that fixes
+/// the Parakeet-TDT French->English language-drift bug (see
+/// [`MAX_DECODE_CHUNK_SEC`]).
+///
+/// Pure sample-index arithmetic, no I/O — [`SttEngine`] wraps a concrete
+/// `sherpa_onnx::OfflineRecognizer` with no trait seam and no fake, so this
+/// pure function is the only unit-testable seam for the splitting logic,
+/// mirroring why [`PartialThrottle`] and [`PartialCommitState`] above are
+/// split out the same way.
+///
+/// A trailing remainder shorter than `cap_samples *
+/// MERGE_REMAINDER_FRACTION` (10% of the cap) is folded into the previous
+/// chunk instead of becoming its own degenerate near-zero-length chunk.
+/// That threshold is chosen so a segment only marginally over the cap
+/// (e.g. `cap + 0.2s`, `0.2s` being ~2.9% of a `7.0s` cap) still yields
+/// exactly one chunk, while a genuine multi-second remainder (e.g. the
+/// trailing 6s of a 20s segment split against a 7s cap) still stands on
+/// its own — 10% of the cap sits comfortably between the two. Merging
+/// avoids the extra split entirely: per CLAUDE.md, every additional split
+/// costs a word plus its leading capital/trailing punctuation, which is
+/// the same reason `min_silence_sec` of `0.25` was rejected in favor of
+/// `0.5`.
+fn split_into_chunks(
+    start_sample: usize,
+    total_samples: usize,
+    cap_samples: usize,
+) -> Vec<(usize, usize)> {
+    if total_samples <= cap_samples {
+        return vec![(start_sample, start_sample + total_samples)];
+    }
+
+    const MERGE_REMAINDER_FRACTION: f32 = 0.1;
+    let merge_threshold = (cap_samples as f32 * MERGE_REMAINDER_FRACTION) as usize;
+
+    let mut chunks = Vec::new();
+    let mut chunk_start = 0usize;
+    while total_samples - chunk_start > cap_samples {
+        let mut chunk_end = chunk_start + cap_samples;
+        let remainder = total_samples - chunk_end;
+        if remainder <= merge_threshold {
+            chunk_end = total_samples;
+        }
+        chunks.push((start_sample + chunk_start, start_sample + chunk_end));
+        chunk_start = chunk_end;
+    }
+    if chunk_start < total_samples {
+        chunks.push((start_sample + chunk_start, start_sample + total_samples));
+    }
+    chunks
 }
 
 #[cfg(test)]
@@ -767,8 +860,11 @@ mod tests {
 
     #[test]
     fn window_start_is_strictly_smaller_than_a_full_max_speech_buffer() {
-        // A 30s utterance (`VadConfig::max_speech_sec`) at TARGET_SAMPLE_RATE
-        // is the largest buffer `maybe_partial` can see. Finals (`decode_tail`,
+        // A 30s buffer here is just a large synthetic upper bound to exercise
+        // against, not a live production ceiling: `VadConfig::max_speech_sec`
+        // and `MAX_DECODE_CHUNK_SEC` both cap real segments at 7s (see
+        // `MAX_DECODE_CHUNK_SEC`'s doc comment for the language-drift
+        // measurements behind that cap). Finals (`decode_tail`,
         // `drain_finals`) decode `&self.buffer`/full VAD segments directly and
         // are untouched by `PartialCommitState::window_start` — this asserts
         // the windowed partial path is bounded well below that full-length
@@ -1039,6 +1135,194 @@ mod tests {
         assert!(
             !saw_partial,
             "emit_partials=false must suppress all Partial events"
+        );
+    }
+
+    // --- Hard cap on decode-segment length (French->English language-drift fix) ---
+    //
+    // Parakeet-TDT v3 has no language pin and decodes greedily over one
+    // joint 8k vocabulary shared by 25 languages. Measured on real French
+    // meeting audio, a decode window beyond ~7-8s falls into an English
+    // attractor and (because the transducer's prediction network is
+    // autoregressive) never recovers for the rest of the segment.
+    // `VadConfig::max_speech_sec` is *not* a hard cap:
+    // `VoiceActivityDetector::accept_waveform` only *tightens* the VAD once
+    // the buffer exceeds it — it never force-closes a segment. That is how
+    // a `max_speech_sec: 30.0` setting produced a measured 33.12s segment
+    // in production. So the cap must be enforced here, in `drain_finals`,
+    // by splitting any VAD segment longer than `MAX_DECODE_CHUNK_SEC` into
+    // consecutive chunks before decoding, via a new pure `split_into_chunks`
+    // free function.
+    //
+    // `split_into_chunks` must be pure sample-index arithmetic — no engine,
+    // no I/O — mirroring exactly why `PartialCommitState`/`PartialThrottle`
+    // above are split out the same way: `SttEngine` wraps a real ONNX
+    // recognizer with no trait seam and no fake, so it cannot be
+    // constructed in this test environment without downloaded model
+    // artifacts (see the `#[ignore]`d test above). Testing the pure
+    // splitting function directly is the only seam available.
+    //
+    // Chosen splitting contract (see individual test docs for the
+    // reasoning behind each point):
+    //   - a segment over the cap becomes multiple contiguous, ordered
+    //     chunks, each no longer than the cap;
+    //   - splitting happens *after* `with_pre_roll` has already widened the
+    //     segment once at its leading edge, so chunk boundaries within the
+    //     (already pre-rolled) segment are exactly contiguous — no overlap
+    //     is re-introduced between chunks;
+    //   - chunk sample offsets stay absolute (relative to the whole
+    //     recording), never reset to 0 per chunk;
+    //   - a segment at or under the cap is returned unchanged, as today's
+    //     single-chunk behaviour;
+    //   - a small remainder just over the cap is merged into the previous
+    //     chunk rather than becoming its own degenerate near-zero-length
+    //     trailing chunk (CLAUDE.md: shorter segments cost a word and its
+    //     capitalisation per split — the same reason `min_silence_sec`
+    //     0.25 was rejected).
+
+    fn samples(sec: f32) -> usize {
+        (sec * TARGET_SAMPLE_RATE as f32) as usize
+    }
+
+    #[test]
+    fn split_into_chunks_breaks_a_segment_longer_than_the_cap_into_multiple_finals() {
+        // A ~20s segment against a ~7s cap must become 3 chunks (7s + 7s +
+        // 6s), not one 20s decode that crosses the measured 8s
+        // language-drift knee.
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(0, samples(20.0), cap);
+
+        assert_eq!(
+            chunks.len(),
+            3,
+            "a 20s segment against a 7s cap must split into 3 chunks, not decode as one Final"
+        );
+    }
+
+    #[test]
+    fn every_chunk_produced_is_no_longer_than_the_cap() {
+        // The assertion that actually prevents the language-drift bug: no
+        // matter how the segment is subdivided, no single chunk handed to
+        // the decoder may exceed the cap.
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(0, samples(20.0), cap);
+
+        for (i, (start, end)) in chunks.iter().enumerate() {
+            let len = end - start;
+            assert!(
+                len <= cap,
+                "chunk {i} is {len} samples, exceeding the {cap}-sample cap that prevents \
+                 the language-drift bug"
+            );
+        }
+    }
+
+    #[test]
+    fn chunks_are_contiguous_and_ordered_with_no_gap_or_overlap_between_them() {
+        // Splitting happens *after* `with_pre_roll` has already widened the
+        // segment once at its leading edge (see `PRE_ROLL_SEC`'s docs) —
+        // that widening is a one-time adjustment to the whole segment's
+        // start, not a per-chunk overlap. So chunk boundaries within the
+        // (already pre-rolled) segment must be exactly contiguous: chunk
+        // n's end sample equals chunk n+1's start sample, with nothing
+        // dropped and nothing double-decoded between them.
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(0, samples(20.0), cap);
+
+        for pair in chunks.windows(2) {
+            let (_, prev_end) = pair[0];
+            let (next_start, _) = pair[1];
+            assert_eq!(
+                prev_end, next_start,
+                "chunk boundaries must be exactly contiguous, no gap or overlap"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_timestamps_stay_absolute_to_the_recording_not_reset_per_chunk() {
+        // Regression guard: a wrong-timestamp regression here would
+        // silently break seek and diarization alignment. Start well into a
+        // recording (mirrors the real 47s-in production example) so a bug
+        // that resets each chunk's start back to 0 is caught.
+        let start_sample = samples(47.0);
+        let total = samples(20.0);
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(start_sample, total, cap);
+
+        assert_eq!(
+            chunks.first().unwrap().0,
+            start_sample,
+            "the first chunk must start at the segment's absolute start sample, not 0"
+        );
+        assert_eq!(
+            chunks.last().unwrap().1,
+            start_sample + total,
+            "the last chunk must end at the segment's absolute end sample"
+        );
+    }
+
+    #[test]
+    fn a_segment_at_or_under_the_cap_is_unchanged_and_produces_exactly_one_chunk() {
+        // No-regression guard: today's one-Final-per-VAD-segment behaviour
+        // must be preserved for the (overwhelmingly common) case where the
+        // segment never approaches the cap.
+        let start_sample = samples(10.0);
+        let total = samples(6.5); // < 7.0s cap
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(start_sample, total, cap);
+
+        assert_eq!(chunks, vec![(start_sample, start_sample + total)]);
+    }
+
+    #[test]
+    fn a_segment_exactly_at_the_cap_is_not_split() {
+        let cap = samples(7.0);
+
+        let chunks = split_into_chunks(0, cap, cap);
+
+        assert_eq!(chunks, vec![(0, cap)]);
+    }
+
+    #[test]
+    fn a_fractionally_over_cap_segment_merges_the_remainder_instead_of_a_degenerate_trailing_chunk()
+    {
+        // Chosen behaviour: merge a small trailing remainder into the
+        // previous chunk (accepting that chunk running marginally over the
+        // cap) rather than emit a near-zero-length final chunk on its own.
+        // A cap+0.2s segment must decode as one chunk, not a 7.0s chunk
+        // plus a throwaway 0.2s one.
+        let cap = samples(7.0);
+        let total = samples(7.2);
+
+        let chunks = split_into_chunks(0, total, cap);
+
+        assert_eq!(
+            chunks.len(),
+            1,
+            "a small overshoot past the cap must merge into one chunk, not create a \
+             degenerate trailing sliver"
+        );
+        assert_eq!(chunks[0], (0, total));
+    }
+
+    #[test]
+    fn max_decode_chunk_sec_is_pinned_to_the_confirmed_safe_side_of_the_language_drift_knee() {
+        // Knee measured on real audio (same contiguous span, only the
+        // window boundary differs): 5s ok, 7s ok, 8s fails, 12s fails, 33s
+        // fails (the production bug: a 33.12s segment). `MAX_DECODE_CHUNK_SEC`
+        // is the value `drain_finals` must pass to `split_into_chunks` as
+        // its cap — pinned at the last confirmed-good value, not merely
+        // "under 8", to keep margin.
+        assert_eq!(
+            MAX_DECODE_CHUNK_SEC, 7.0,
+            "the hard decode-chunk cap must be pinned to the last measured-safe value (7s), \
+             leaving margin below the measured 8s language-drift failure"
         );
     }
 }

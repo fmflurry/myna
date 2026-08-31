@@ -48,13 +48,23 @@ pub struct VadConfig {
     pub threshold: f32,
     pub min_silence_sec: f32,
     pub min_speech_sec: f32,
-    /// Caps how long a single speech segment may run before the VAD
-    /// force-closes it. `30.0` favors real meeting speech, where a single
-    /// utterance routinely runs well past the upstream (k2-fsa/sherpa-onnx)
-    /// sample value of `5.0`; a lower cap silently truncates long sentences
-    /// mid-word. The tradeoff: a longer cap means fewer, later `Final`
-    /// events (and a bigger re-decode buffer) for utterances that do run
-    /// long, trading some latency/coherence for not losing speech.
+    /// **Not a hard cap.** Despite the name, `VoiceActivityDetector::
+    /// accept_waveform` never force-closes a segment once it exceeds this
+    /// value — it only *tightens* the VAD's own closing behaviour
+    /// (shorter `min_silence`, higher `threshold`), which can still let a
+    /// segment run well past this value. That gap is exactly how a
+    /// previous `max_speech_sec: 30.0` setting produced a measured 33.12s
+    /// segment in production, which in turn triggered Parakeet-TDT v3's
+    /// French->English language-drift bug (see
+    /// `crate::stream::MAX_DECODE_CHUNK_SEC`'s doc comment for the
+    /// measurements). The real hard cap is enforced in `crate::stream` by
+    /// `SimulatedStreamer::drain_finals`, which splits any VAD segment
+    /// longer than `MAX_DECODE_CHUNK_SEC` into consecutive decoded chunks.
+    /// This field is defence-in-depth, not the enforcement mechanism: it
+    /// is kept in step with `MAX_DECODE_CHUNK_SEC` so that, even if the
+    /// streamer's own splitter ever regressed, the VAD's tightening
+    /// behaviour would still kick in at the same ~7s threshold instead of
+    /// the old 30s ceiling.
     pub max_speech_sec: f32,
 }
 
@@ -68,7 +78,7 @@ impl Default for VadConfig {
             threshold: 0.5,
             min_silence_sec: DEFAULT_MIN_SILENCE_SEC,
             min_speech_sec: 0.25,
-            max_speech_sec: 30.0,
+            max_speech_sec: 7.0,
         }
     }
 }
@@ -145,5 +155,38 @@ mod tests {
 
         assert_eq!(cfg.min_silence_sec, DEFAULT_MIN_SILENCE_SEC);
         assert_eq!(DEFAULT_MIN_SILENCE_SEC, 0.5);
+    }
+
+    #[test]
+    fn default_max_speech_sec_matches_the_streamer_hard_cap_as_defence_in_depth() {
+        // `max_speech_sec` used to be documented as the mechanism that
+        // "force-closes" an over-long segment — it is not:
+        // `VoiceActivityDetector::accept_waveform` only *tightens* the VAD
+        // (shorter min_silence, higher threshold) once the buffer exceeds
+        // it, and never force-closes. That gap is exactly how a
+        // `max_speech_sec: 30.0` setting produced a measured 33.12s speech
+        // segment in production, which in turn triggered Parakeet-TDT's
+        // French->English language-drift bug (decodes beyond ~7-8s fall
+        // into an English attractor and never recover for the rest of the
+        // segment).
+        //
+        // The real hard cap now lives in `crate::stream` as
+        // `MAX_DECODE_CHUNK_SEC` (`SimulatedStreamer::drain_finals` splits
+        // any VAD segment longer than that into consecutive decoded
+        // chunks). This default is lowered from `30.0` to match that same
+        // value so the two layers agree on one "at most ~7s of speech"
+        // policy: if the streamer's own splitter ever has a bug, the VAD's
+        // own (non-authoritative) tightening kicks in at the same
+        // threshold instead of letting a segment run all the way to the
+        // old 30s ceiling. `max_speech_sec` is defence-in-depth now, not
+        // the enforcement mechanism.
+        let cfg = VadConfig::default();
+
+        assert_eq!(
+            cfg.max_speech_sec, 7.0,
+            "max_speech_sec must be lowered to match the streamer's own hard decode-chunk \
+             cap now that it is defence-in-depth rather than the primary enforcement \
+             mechanism for the language-drift fix"
+        );
     }
 }
