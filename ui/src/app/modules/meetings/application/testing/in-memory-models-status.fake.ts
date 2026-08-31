@@ -7,6 +7,7 @@ const DEFAULT_STATUS: ModelsStatus = {
   parakeet: { present: true, expectedFiles: ['model.onnx'] },
   qwen: { present: true, expectedFiles: ['model.gguf'] },
   silero: { present: true, expectedFiles: ['silero_vad.onnx'] },
+  diarization: { present: true, expectedFiles: ['model.int8.onnx', 'nemo_en_titanet_small.onnx'] },
   allPresent: true,
 };
 

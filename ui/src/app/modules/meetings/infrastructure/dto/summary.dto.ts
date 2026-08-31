@@ -10,6 +10,8 @@ export interface SummaryRefDto {
   readonly createdAt: string;
   readonly path: string;
   readonly language: string;
+  /** Set true on every summary ref when the meeting is re-transcribed; cleared when that summary is regenerated. */
+  readonly stale: boolean;
 }
 
 /** Mirrors the Rust `SummaryDto` — a summary's full generated content. */

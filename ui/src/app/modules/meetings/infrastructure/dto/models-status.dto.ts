@@ -10,5 +10,6 @@ export interface ModelsStatusDto {
   readonly parakeet: ModelSlotDto;
   readonly qwen: ModelSlotDto;
   readonly silero: ModelSlotDto;
+  readonly diarization?: ModelSlotDto;
   readonly allPresent: boolean;
 }

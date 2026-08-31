@@ -9,6 +9,9 @@ export function mapSummaryDtoToDomain(dto: SummaryDto): Summary {
     markdown: dto.markdown,
     createdAt: new Date(dto.createdAt),
     language: dto.language,
+    // A freshly generated summary is never stale — `SummaryDto` (from
+    // `summarize_meeting`/`get_summary`) carries no `stale` field on the wire.
+    stale: false,
   };
 }
 
@@ -28,6 +31,7 @@ export function mapSummaryRefDtoToDomain(dto: SummaryRefDto): Summary {
     markdown: '',
     createdAt: new Date(dto.createdAt),
     language: dto.language,
+    stale: dto.stale,
   };
 }
 

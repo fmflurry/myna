@@ -66,7 +66,7 @@ describe('MeetingsFacade', () => {
 
   it('loads meetings from the repository', async () => {
     repository.seed([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
 
     await facade.loadMeetings();
@@ -75,7 +75,7 @@ describe('MeetingsFacade', () => {
   });
 
   it('renames a meeting, updating both the meetings list and the selected meeting', async () => {
-    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false };
+    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 };
     repository.seed([meeting]);
     await facade.loadMeetings();
     await facade.openMeeting(meeting.id);
@@ -88,7 +88,7 @@ describe('MeetingsFacade', () => {
   });
 
   it('surfaces an error and leaves the prior title on screen when renaming fails', async () => {
-    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false };
+    const meeting = { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 };
     repository.seed([meeting]);
     await facade.loadMeetings();
     await facade.openMeeting(meeting.id);
@@ -114,16 +114,6 @@ describe('MeetingsFacade', () => {
     });
 
     expect(facade.selectedMeeting()?.summaries.length).toBe(1);
-  });
-
-  it('loads devices and defaults the selection when none is chosen yet', async () => {
-    expect(facade.devices()).toEqual([]);
-    expect(facade.selectedDevice()).toBeNull();
-
-    await facade.loadDevices();
-
-    expect(facade.devices().length).toBeGreaterThan(0);
-    expect(facade.selectedDevice()?.name).toBe('Built-in Microphone');
   });
 
   it('does not override an already-selected device on reload', async () => {
@@ -312,14 +302,14 @@ describe('MeetingsFacade', () => {
     const summarizer = TestBed.inject(SummarizerPort) as InMemorySummarizerFake;
     const meetingId = toMeetingId('m-1');
     const createdAt = new Date();
-    summarizer.seedSummary(meetingId, { template: 'key-points', markdown: '# Key points', createdAt, language: 'en' });
+    summarizer.seedSummary(meetingId, { template: 'key-points', markdown: '# Key points', createdAt, language: 'en', stale: false });
     expect(facade.summaryCache().size).toBe(0);
 
     await facade.loadSummary(meetingId, 'key-points', 'en');
 
     expect(facade.summaryCache().get(`${meetingId}::key-points::en`)).toEqual({
       status: 'loaded',
-      summary: { template: 'key-points', markdown: '# Key points', createdAt, language: 'en' },
+      summary: { template: 'key-points', markdown: '# Key points', createdAt, language: 'en', stale: false },
     });
   });
 

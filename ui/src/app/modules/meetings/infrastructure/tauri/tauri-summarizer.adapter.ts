@@ -49,6 +49,8 @@ export class TauriSummarizerAdapter extends SummarizerPort {
         markdown: dto.markdown,
         createdAt: new Date(),
         language: dto.language,
+        // A summary just streamed in from generation is never stale.
+        stale: false,
       })),
     );
   }
@@ -60,5 +62,10 @@ export class TauriSummarizerAdapter extends SummarizerPort {
   override async getSummary(id: MeetingId, template: string, language: string): Promise<Summary | null> {
     const dto = await invokeCommand('get_summary', { meetingId: id, template, language });
     return dto ? mapSummaryDtoToDomain(dto) : null;
+  }
+
+  override async editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<Summary> {
+    const dto = await invokeCommand('edit_summary', { meetingId: id, template, language, markdown });
+    return mapSummaryDtoToDomain(dto);
   }
 }

@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
+import { toFolderId } from '../../core/models/folder.model';
 import { toMeetingId } from '../../core/models/meeting.model';
 import { installTauriInternalsStub, uninstallTauriInternalsStub } from './testing/tauri-internals.stub';
 import { TauriMeetingRepositoryAdapter } from './tauri-meeting-repository.adapter';
@@ -116,6 +117,114 @@ describe('TauriMeetingRepositoryAdapter', () => {
     expect(receivedCmd).toBe('set_meeting_archived');
     expect(receivedArgs).toEqual({ meetingId: 'm-1', archived: true });
     expect(meeting.archived).toBe(true);
+  });
+
+  it('setFolder() invokes set_meeting_folder with { meetingId, folderId } and maps the returned MeetingDto', async () => {
+    let receivedCmd: string | undefined;
+    let receivedArgs: unknown;
+    installTauriInternalsStub((cmd, args) => {
+      receivedCmd = cmd;
+      receivedArgs = args;
+      return {
+        id: 'm-1',
+        title: 'Standup',
+        createdAt: '2026-01-15T09:00:00Z',
+        durationSec: 60,
+        audioPath: null,
+        transcript: null,
+        summaries: [],
+        folderId: 'f-1',
+      };
+    });
+
+    const meeting = await adapter.setFolder(toMeetingId('m-1'), toFolderId('f-1'));
+
+    expect(receivedCmd).toBe('set_meeting_folder');
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', folderId: 'f-1' });
+    expect(meeting.folderId).toBe(toFolderId('f-1'));
+  });
+
+  it('setFolder() with null clears the folder', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return {
+        id: 'm-1',
+        title: 'Standup',
+        createdAt: '2026-01-15T09:00:00Z',
+        durationSec: 60,
+        audioPath: null,
+        transcript: null,
+        summaries: [],
+      };
+    });
+
+    await adapter.setFolder(toMeetingId('m-1'), null);
+
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', folderId: null });
+  });
+
+  it('place() invokes set_meeting_placement with the exact arg shape and maps the returned MeetingDto', async () => {
+    let receivedCmd: string | undefined;
+    let receivedArgs: unknown;
+    installTauriInternalsStub((cmd, args) => {
+      receivedCmd = cmd;
+      receivedArgs = args;
+      return {
+        id: 'm-1',
+        title: 'Standup',
+        createdAt: '2026-01-15T09:00:00Z',
+        durationSec: 60,
+        audioPath: null,
+        transcript: null,
+        summaries: [],
+        folderId: 'f-1',
+      };
+    });
+
+    const meeting = await adapter.place(
+      toMeetingId('m-1'),
+      toFolderId('f-1'),
+      true,
+      toMeetingId('m-0'),
+      toMeetingId('m-2'),
+    );
+
+    expect(receivedCmd).toBe('set_meeting_placement');
+    expect(receivedArgs).toEqual({
+      meetingId: 'm-1',
+      folderId: 'f-1',
+      archived: true,
+      previousId: 'm-0',
+      nextId: 'm-2',
+    });
+    expect(meeting.folderId).toBe(toFolderId('f-1'));
+  });
+
+  it('place() passes a null folderId and null previousId/nextId through as null', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return {
+        id: 'm-1',
+        title: 'Standup',
+        createdAt: '2026-01-15T09:00:00Z',
+        durationSec: 60,
+        audioPath: null,
+        transcript: null,
+        summaries: [],
+      };
+    });
+
+    await adapter.place(toMeetingId('m-1'), null, false, null, null);
+
+    expect(receivedArgs).toEqual({
+      meetingId: 'm-1',
+      folderId: null,
+      archived: false,
+      previousId: null,
+      nextId: null,
+    });
   });
 
   it('export() maps the domain format to the Rust wire value', async () => {

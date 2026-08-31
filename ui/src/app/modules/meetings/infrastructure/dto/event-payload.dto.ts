@@ -31,6 +31,7 @@ export interface LevelPayloadDto {
 export interface PartialPayloadDto {
   readonly meetingId: string;
   readonly text: string;
+  readonly speaker: string;
 }
 
 /** Payload for the `transcript://final` event. */

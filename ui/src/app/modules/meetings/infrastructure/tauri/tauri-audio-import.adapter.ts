@@ -28,7 +28,16 @@ export class TauriAudioImportAdapter extends AudioImportPort {
     await invokeCommand('cancel_import', {});
   }
 
+  override async diarize(id: MeetingId): Promise<Meeting> {
+    const dto = await invokeCommand('diarize_meeting', { meetingId: id });
+    return mapMeetingDtoToDomain(dto);
+  }
+
   override progress(): Observable<ImportProgress> {
     return onEvent('import://progress').pipe(map(mapImportProgressDtoToDomain));
+  }
+
+  override errors(): Observable<{ readonly code: string; readonly message: string }> {
+    return onEvent('error://occurred');
   }
 }

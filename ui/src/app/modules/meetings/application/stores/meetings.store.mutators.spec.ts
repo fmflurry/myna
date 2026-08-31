@@ -33,7 +33,7 @@ describe('MeetingsStore meetings-list mutators', () => {
     const previous = store.meetings();
 
     store.setMeetings([
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
 
     expect(store.meetings()).not.toBe(previous);
@@ -41,8 +41,8 @@ describe('MeetingsStore meetings-list mutators', () => {
 
   it('updateMeeting replaces the matching entry in the meetings list without mutating it in place', () => {
     const original = [
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
-      { id: toMeetingId('m-2'), title: 'Planning', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
+      { id: toMeetingId('m-2'), title: 'Planning', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ];
     store.setMeetings(original);
     const previous = store.meetings();
@@ -61,7 +61,8 @@ describe('MeetingsStore meetings-list mutators', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
-      hasAudio: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
     store.setMeetings([meeting]);
     store.setSelectedMeeting(meeting);
@@ -79,7 +80,8 @@ describe('MeetingsStore meetings-list mutators', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
-      hasAudio: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
     const other = { ...selected, id: toMeetingId('m-2'), title: 'Planning' };
     store.setMeetings([selected, other]);
@@ -92,7 +94,7 @@ describe('MeetingsStore meetings-list mutators', () => {
 
   it('addMeeting prepends a new meeting ahead of the existing list without mutating it in place', () => {
     const existing = [
-      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false },
+      { id: toMeetingId('m-1'), title: 'Standup', createdAt: new Date(), durationSec: 0, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ];
     store.setMeetings(existing);
     const previous = store.meetings();
@@ -103,7 +105,8 @@ describe('MeetingsStore meetings-list mutators', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
-      hasAudio: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
 
     store.addMeeting(fresh);
@@ -120,7 +123,8 @@ describe('MeetingsStore meetings-list mutators', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
-      hasAudio: false,
+      hasAudio: false, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
     store.setMeetings([original]);
 

@@ -1,3 +1,4 @@
+import { toFolderId } from '../../core/models/folder.model';
 import type { Meeting } from '../../core/models/meeting.model';
 import { toMeetingId } from '../../core/models/meeting.model';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
@@ -21,6 +22,9 @@ export function mapMeetingDtoToDomain(dto: MeetingDto): Meeting {
     summaries: dto.summaries.map(mapSummaryRefDtoToDomain),
     archived: dto.archived,
     hasAudio: dto.hasAudio,
+    hasSystemTrack: dto.hasSystemTrack,
+    droppedAudioChunks: dto.droppedAudioChunks,
+    ...(dto.folderId !== null && dto.folderId !== undefined ? { folderId: toFolderId(dto.folderId) } : {}),
   };
 }
 

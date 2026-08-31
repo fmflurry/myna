@@ -18,4 +18,13 @@ export interface MeetingDto {
   readonly summaries: readonly SummaryRefDto[];
   readonly archived: boolean;
   readonly hasAudio: boolean;
+  readonly hasSystemTrack: boolean;
+  readonly droppedAudioChunks: number;
+  /**
+   * The meeting's folder, or `null` when unfiled. Same `Option<T>`-as-
+   * key-or-null modeling as `audioPath`/`transcript` on the wire; typed
+   * optional here (rather than required) so DTO literals predating this
+   * field (still exercised by existing specs) keep type-checking.
+   */
+  readonly folderId?: string | null;
 }

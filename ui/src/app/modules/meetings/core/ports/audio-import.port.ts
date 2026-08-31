@@ -13,11 +13,14 @@ export interface ImportProgress {
 
 /**
  * Maps onto the frozen Rust commands import_audio, retranscribe_meeting,
- * cancel_import, plus the import://progress event.
+ * cancel_import, diarize_meeting, plus the import://progress event.
  */
 export abstract class AudioImportPort {
   abstract importFile(path: string, title?: string): Promise<Meeting>;
   abstract retranscribe(id: MeetingId, path?: string): Promise<Meeting>;
   abstract cancel(): Promise<void>;
+  /** User-triggered speaker detection over an already-recorded meeting's system-audio track; see `diarize_meeting`. */
+  abstract diarize(id: MeetingId): Promise<Meeting>;
   abstract progress(): Observable<ImportProgress>;
+  abstract errors(): Observable<{ readonly code: string; readonly message: string }>;
 }

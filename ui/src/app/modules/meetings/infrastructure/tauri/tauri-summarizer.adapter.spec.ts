@@ -131,4 +131,22 @@ describe('TauriSummarizerAdapter', () => {
 
     expect(summary).toBeNull();
   });
+
+  it('editSummary() invokes edit_summary with camelCase args and maps the returned SummaryDto', async () => {
+    let receivedCmd: string | undefined;
+    let receivedArgs: unknown;
+    installTauriInternalsStub((cmd, args) => {
+      receivedCmd = cmd;
+      receivedArgs = args;
+      return { template: 'key-points', markdown: '# Edited', createdAt: '2026-01-15T10:00:00Z', language: 'en' };
+    });
+
+    const summary = await adapter.editSummary(toMeetingId('m-1'), 'key-points', 'en', '# Edited');
+
+    expect(receivedCmd).toBe('edit_summary');
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', template: 'key-points', language: 'en', markdown: '# Edited' });
+    expect(summary.markdown).toBe('# Edited');
+    expect(summary.createdAt).toEqual(new Date('2026-01-15T10:00:00Z'));
+    expect(summary.language).toBe('en');
+  });
 });

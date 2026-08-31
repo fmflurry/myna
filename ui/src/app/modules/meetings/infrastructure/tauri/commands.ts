@@ -1,11 +1,12 @@
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { AudioSourceDto, DeviceInfoDto } from '../dto/device.dto';
+import type { FolderDto } from '../dto/folder.dto';
 import type { MeetingDto } from '../dto/meeting.dto';
 import type { ModelsStatusDto } from '../dto/models-status.dto';
 import type { RecordingStatePayloadDto } from '../dto/event-payload.dto';
 import type { SummaryDto, SummaryLanguageDto } from '../dto/summary.dto';
 import type { TemplateDto } from '../dto/template.dto';
-import type { TranscriptDto } from '../dto/transcript.dto';
+import type { TranscriptDto, TranscriptSegmentWireDto } from '../dto/transcript.dto';
 
 /**
  * The frozen Rust command surface, registered verbatim in
@@ -16,6 +17,8 @@ import type { TranscriptDto } from '../dto/transcript.dto';
 export const COMMAND_NAMES = [
   'list_input_devices',
   'default_input_device',
+  'list_output_devices',
+  'default_output_device',
   'list_audio_sources',
   'start_recording',
   'stop_recording',
@@ -42,6 +45,23 @@ export const COMMAND_NAMES = [
   'import_audio',
   'retranscribe_meeting',
   'cancel_import',
+  'diarize_meeting',
+  'list_folders',
+  'create_folder',
+  'rename_folder',
+  'delete_folder',
+  'set_meeting_folder',
+  'set_meeting_placement',
+  'edit_summary',
+  'rename_speaker',
+  'remove_speaker',
+  'set_segment_speaker',
+  'delete_transcript_segment',
+  'merge_transcript_segment_up',
+  'restore_transcript_segments',
+  'start_model_download',
+  'start_diarization_download',
+  'cancel_model_download',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -61,6 +81,8 @@ export type ExportFormatDto = 'markdown' | 'text' | 'json';
 export interface CommandSignatures {
   readonly list_input_devices: { args: NoArgs; result: readonly DeviceInfoDto[] };
   readonly default_input_device: { args: NoArgs; result: DeviceInfoDto };
+  readonly list_output_devices: { args: NoArgs; result: readonly DeviceInfoDto[] };
+  readonly default_output_device: { args: NoArgs; result: DeviceInfoDto };
   readonly list_audio_sources: { args: NoArgs; result: readonly AudioSourceDto[] };
   readonly start_recording: {
     args: {
@@ -119,6 +141,80 @@ export interface CommandSignatures {
     result: MeetingDto;
   };
   readonly cancel_import: { args: NoArgs; result: void };
+  readonly diarize_meeting: {
+    args: { readonly meetingId: string };
+    result: MeetingDto;
+  };
+  readonly list_folders: { args: NoArgs; result: readonly FolderDto[] };
+  readonly create_folder: { args: { readonly name: string }; result: FolderDto };
+  readonly rename_folder: {
+    args: { readonly folderId: string; readonly name: string };
+    result: FolderDto;
+  };
+  readonly delete_folder: { args: { readonly folderId: string }; result: void };
+  readonly set_meeting_folder: {
+    args: { readonly meetingId: string; readonly folderId: string | null };
+    result: MeetingDto;
+  };
+  readonly set_meeting_placement: {
+    args: {
+      readonly meetingId: string;
+      readonly folderId: string | null;
+      readonly archived: boolean;
+      readonly previousId: string | null;
+      readonly nextId: string | null;
+    };
+    result: MeetingDto;
+  };
+  readonly edit_summary: {
+    args: {
+      readonly meetingId: string;
+      readonly template: string;
+      readonly language: string;
+      readonly markdown: string;
+    };
+    result: SummaryDto;
+  };
+  readonly rename_speaker: {
+    args: { readonly meetingId: string; readonly label: string; readonly name: string };
+    result: MeetingDto;
+  };
+  readonly remove_speaker: {
+    args: { readonly meetingId: string; readonly label: string };
+    result: MeetingDto;
+  };
+  readonly set_segment_speaker: {
+    args: { readonly meetingId: string; readonly segmentIndex: number; readonly speaker: string };
+    result: MeetingDto;
+  };
+  readonly delete_transcript_segment: {
+    args: {
+      readonly meetingId: string;
+      readonly segmentIndex: number;
+      readonly expectedText: string;
+    };
+    result: MeetingDto;
+  };
+  readonly merge_transcript_segment_up: {
+    args: {
+      readonly meetingId: string;
+      readonly segmentIndex: number;
+      readonly expectedText: string;
+    };
+    result: MeetingDto;
+  };
+  readonly restore_transcript_segments: {
+    args: {
+      readonly meetingId: string;
+      readonly segmentIndex: number;
+      readonly removeCount: number;
+      readonly segments: readonly TranscriptSegmentWireDto[];
+    };
+    result: MeetingDto;
+  };
+  readonly start_model_download: { args: NoArgs; result: void };
+  readonly start_diarization_download: { args: NoArgs; result: void };
+  readonly cancel_model_download: { args: NoArgs; result: void };
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];

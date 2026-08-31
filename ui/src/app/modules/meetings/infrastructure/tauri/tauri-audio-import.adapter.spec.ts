@@ -18,6 +18,7 @@ const MEETING_DTO = {
   summaries: [],
   archived: false,
   hasAudio: true,
+  droppedAudioChunks: 0,
 };
 
 describe('TauriAudioImportAdapter', () => {

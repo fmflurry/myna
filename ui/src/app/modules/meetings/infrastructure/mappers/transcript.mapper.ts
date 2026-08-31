@@ -8,6 +8,7 @@ export function mapTranscriptSegmentDtoToDomain(dto: TranscriptSegmentDto): Tran
     startSec: dto.startSec,
     endSec: dto.endSec,
     text: dto.text,
+    speaker: dto.speaker ?? 'unknown',
   };
 }
 
@@ -20,6 +21,7 @@ export function mapRawTranscriptSegmentDtoToDomain(dto: RawTranscriptSegmentDto)
     startSec: dto.start_sec,
     endSec: dto.end_sec,
     text: dto.text,
+    speaker: dto.speaker ?? 'unknown',
   };
 }
 

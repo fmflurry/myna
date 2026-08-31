@@ -16,6 +16,7 @@ export function mapModelsStatusDtoToDomain(dto: ModelsStatusDto): ModelsStatus {
     parakeet: mapModelSlotDtoToDomain(dto.parakeet),
     qwen: mapModelSlotDtoToDomain(dto.qwen),
     silero: mapModelSlotDtoToDomain(dto.silero),
+    ...(dto.diarization ? { diarization: mapModelSlotDtoToDomain(dto.diarization) } : {}),
     allPresent: dto.allPresent,
   };
 }

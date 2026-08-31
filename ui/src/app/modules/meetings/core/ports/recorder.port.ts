@@ -34,6 +34,9 @@ export abstract class RecorderPort {
   abstract effectiveSystemSourceChanges(): Observable<AudioSource | null>;
   abstract listDevices(): Promise<readonly AudioDevice[]>;
   abstract defaultDevice(): Promise<AudioDevice>;
+  /** All available audio OUTPUT devices, for the "plays through" indicator; never used to select a capture device. */
+  abstract listOutputDevices(): Promise<readonly AudioDevice[]>;
+  abstract defaultOutputDevice(): Promise<AudioDevice>;
   /**
    * All capturable system-audio sources: always led by the all-output
    * source (`system:all`), followed by one entry per running application.

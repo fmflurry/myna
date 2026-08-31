@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { toMeetingId } from '../../core/models/meeting.model';
 import { MeetingRepositoryPort } from '../../core/ports/meeting-repository.port';
 import { InMemoryMeetingRepositoryFake } from '../testing/in-memory-meeting-repository.fake';
+import { transcriptSegment } from '../testing/transcript-segment.factory';
 import { EditTranscriptSegmentUseCase } from './edit-transcript-segment.usecase';
 
 describe('EditTranscriptSegmentUseCase', () => {
@@ -31,11 +32,12 @@ describe('EditTranscriptSegmentUseCase', () => {
         durationSec: 30,
         summaries: [],
         archived: false,
-        hasAudio: false,
+        hasAudio: false, hasSystemTrack: false,
+        droppedAudioChunks: 0,
         transcript: {
           segments: [
-            { startSec: 0, endSec: 5, text: 'first' },
-            { startSec: 5, endSec: 10, text: 'seconde' },
+            transcriptSegment({ startSec: 0, endSec: 5, text: 'first' }),
+            transcriptSegment({ startSec: 5, endSec: 10, text: 'seconde' }),
           ],
         },
       },

@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 
 import { toMeetingId } from '../../core/models/meeting.model';
 import { MeetingsError } from '../../core/models/recording-state.model';
+import { transcriptSegment } from '../testing/transcript-segment.factory';
 import { AppInfoPort } from '../../core/ports/app-info.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import { MeetingRepositoryPort } from '../../core/ports/meeting-repository.port';
@@ -61,11 +62,12 @@ describe('MeetingsFacade editTranscriptSegment', () => {
     durationSec: 0,
     summaries: [],
     archived: false,
-    hasAudio: false,
+    hasAudio: false, hasSystemTrack: false,
+    droppedAudioChunks: 0,
     transcript: {
       segments: [
-        { startSec: 0, endSec: 5, text: 'first' },
-        { startSec: 5, endSec: 10, text: 'second' },
+        transcriptSegment({ startSec: 0, endSec: 5, text: 'first' }),
+        transcriptSegment({ startSec: 5, endSec: 10, text: 'second' }),
       ],
     },
   };

@@ -1,11 +1,12 @@
 import type { Observable } from 'rxjs';
 
 import type { MeetingId } from '../models/meeting.model';
-import type { Transcript, TranscriptSegment } from '../models/transcript.model';
+import type { Speaker, Transcript, TranscriptSegment } from '../models/transcript.model';
 
 export interface TranscriptPartial {
   readonly meetingId: MeetingId;
   readonly text: string;
+  readonly speaker: Speaker;
 }
 
 export interface TranscriptFinal {

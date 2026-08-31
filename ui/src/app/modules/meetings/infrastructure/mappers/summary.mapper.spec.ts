@@ -14,6 +14,17 @@ describe('mapSummaryDtoToDomain', () => {
     expect(summary.createdAt).toEqual(new Date('2026-01-15T10:00:00Z'));
     expect(summary.language).toBe('fr');
   });
+
+  it('is never stale — a freshly generated summary always maps to stale: false', () => {
+    const summary = mapSummaryDtoToDomain({
+      template: 'key-points',
+      markdown: '# Key Points',
+      createdAt: '2026-01-15T10:00:00Z',
+      language: 'fr',
+    });
+
+    expect(summary.stale).toBe(false);
+  });
 });
 
 describe('mapSummaryRefDtoToDomain', () => {
@@ -23,6 +34,7 @@ describe('mapSummaryRefDtoToDomain', () => {
       createdAt: '2026-01-15T10:05:00Z',
       path: '/data/meetings/m-1/action-items.md',
       language: 'en',
+      stale: false,
     });
 
     expect(summary).toEqual({
@@ -30,7 +42,20 @@ describe('mapSummaryRefDtoToDomain', () => {
       markdown: '',
       createdAt: new Date('2026-01-15T10:05:00Z'),
       language: 'en',
+      stale: false,
     });
+  });
+
+  it('passes stale: true through unchanged', () => {
+    const summary = mapSummaryRefDtoToDomain({
+      template: 'action-items',
+      createdAt: '2026-01-15T10:05:00Z',
+      path: '/data/meetings/m-1/action-items.md',
+      language: 'en',
+      stale: true,
+    });
+
+    expect(summary.stale).toBe(true);
   });
 });
 

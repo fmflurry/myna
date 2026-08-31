@@ -16,7 +16,7 @@ import { invokeCommand, onEvent } from './ipc';
 export class TauriTranscriberAdapter extends TranscriberPort {
   override partials(): Observable<TranscriptPartial> {
     return onEvent('transcript://partial').pipe(
-      map((dto) => ({ meetingId: toMeetingId(dto.meetingId), text: dto.text })),
+      map((dto) => ({ meetingId: toMeetingId(dto.meetingId), text: dto.text, speaker: dto.speaker })),
     );
   }
 

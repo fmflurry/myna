@@ -34,4 +34,10 @@ export abstract class SummarizerPort {
    * ever saved for that exact pair — never thrown as an error.
    */
   abstract getSummary(id: MeetingId, template: string, language: string): Promise<Summary | null>;
+  /**
+   * Persists an edited summary's markdown for the (meeting, template,
+   * language) triple and resolves the saved summary. Write belongs here —
+   * alongside `getSummary` — not on `MeetingRepositoryPort`.
+   */
+  abstract editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<Summary>;
 }

@@ -30,6 +30,7 @@ export class InMemorySummarizerFake extends SummarizerPort {
       markdown: `# ${template.name}\n\nSummary body.`,
       createdAt: new Date(),
       language: language ?? DEFAULT_SUMMARY_LANGUAGE_CODE,
+      stale: false,
     };
     this.savedSummaries.set(this.savedSummaryKey(id, summary.template, summary.language), summary);
     this.doneSubject.next(summary);
@@ -54,6 +55,19 @@ export class InMemorySummarizerFake extends SummarizerPort {
 
   override async getSummary(id: MeetingId, template: string, language: string): Promise<Summary | null> {
     return this.savedSummaries.get(this.savedSummaryKey(id, template, language)) ?? null;
+  }
+
+  override async editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<Summary> {
+    const existing = await this.getSummary(id, template, language);
+    const edited: Summary = {
+      template,
+      markdown,
+      createdAt: existing?.createdAt ?? new Date(),
+      language,
+      stale: false,
+    };
+    this.savedSummaries.set(this.savedSummaryKey(id, template, language), edited);
+    return edited;
   }
 
   /** Test helper: push a synthetic streamed summary token. */

@@ -24,7 +24,7 @@ describe('SetMeetingArchivedUseCase', () => {
   it('archives a seeded meeting', async () => {
     const id = toMeetingId('m-7');
     repository.seed([
-      { id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: false, hasAudio: false },
+      { id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
 
     const archived = await useCase.set(id, true);
@@ -36,7 +36,7 @@ describe('SetMeetingArchivedUseCase', () => {
   it('unarchives back', async () => {
     const id = toMeetingId('m-7');
     repository.seed([
-      { id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: true, hasAudio: false },
+      { id, title: 'Planning', createdAt: new Date(), durationSec: 30, summaries: [], archived: true, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
 
     const unarchived = await useCase.set(id, false);
@@ -48,8 +48,8 @@ describe('SetMeetingArchivedUseCase', () => {
     const target = toMeetingId('target');
     const other = toMeetingId('other');
     repository.seed([
-      { id: target, title: 'Old name', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false },
-      { id: other, title: 'Untouched', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false },
+      { id: target, title: 'Old name', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
+      { id: other, title: 'Untouched', createdAt: new Date(), durationSec: 10, summaries: [], archived: false, hasAudio: false, hasSystemTrack: false, droppedAudioChunks: 0 },
     ]);
 
     await useCase.set(target, true);

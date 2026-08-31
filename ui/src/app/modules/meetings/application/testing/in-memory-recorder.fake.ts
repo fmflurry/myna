@@ -13,6 +13,7 @@ import { RecorderPort } from '../../core/ports/recorder.port';
 @Injectable()
 export class InMemoryRecorderFake extends RecorderPort {
   private readonly devices: readonly AudioDevice[] = [{ name: 'Built-in Microphone' }];
+  private readonly outputDevices: readonly AudioDevice[] = [{ name: 'Built-in Output' }];
   private audioSources: readonly AudioSource[] = [
     { id: ALL_SYSTEM_AUDIO_SOURCE_ID, name: 'All system audio' },
     { id: 'app:demo', name: 'Demo App' },
@@ -26,6 +27,7 @@ export class InMemoryRecorderFake extends RecorderPort {
   private nextId = 1;
   /** `unknown` mirrors the real backend's default: no preflight API exists for the audio permission. */
   private audioStatus: SystemAudioStatus = { kind: 'unknown' };
+  private lastRequestedDevice: string | undefined;
   private lastRequestedSource: CaptureSource | undefined;
   private lastRequestedSystemSource: string | undefined;
   private effectiveSystemSource: AudioSource | null = null;
@@ -36,7 +38,7 @@ export class InMemoryRecorderFake extends RecorderPort {
     source?: CaptureSource,
     systemSource?: string,
   ): Promise<Meeting> {
-    void deviceName;
+    this.lastRequestedDevice = deviceName;
     this.lastRequestedSource = source;
     this.lastRequestedSystemSource = systemSource;
     this.effectiveSystemSource = this.resolveEffectiveSystemSource(source, systemSource);
@@ -49,6 +51,8 @@ export class InMemoryRecorderFake extends RecorderPort {
       summaries: [],
       archived: false,
       hasAudio: false,
+      hasSystemTrack: false,
+      droppedAudioChunks: 0,
     };
     this.currentState = 'recording';
     this.stateSubject.next(this.currentState);
@@ -117,6 +121,18 @@ export class InMemoryRecorderFake extends RecorderPort {
     return first;
   }
 
+  override async listOutputDevices(): Promise<readonly AudioDevice[]> {
+    return this.outputDevices;
+  }
+
+  override async defaultOutputDevice(): Promise<AudioDevice> {
+    const [first] = this.outputDevices;
+    if (!first) {
+      throw new Error('No audio output devices available.');
+    }
+    return first;
+  }
+
   override async listAudioSources(): Promise<readonly AudioSource[]> {
     return this.audioSources;
   }
@@ -134,9 +150,24 @@ export class InMemoryRecorderFake extends RecorderPort {
     this.levelSubject.next(level);
   }
 
+  /**
+   * Test helper: push an effective system source onto the
+   * effectiveSystemSourceChanges() stream, simulating a `recording://state`
+   * event — e.g. the backend resolving the system source via a follow-up
+   * event after the initial one carried `null`.
+   */
+  emitEffectiveSystemSource(source: AudioSource | null): void {
+    this.effectiveSystemSourceSubject.next(source);
+  }
+
   /** Test helper: control what systemAudioStatus()/requestSystemAudioPermission() resolve to. */
   setSystemAudioStatus(status: SystemAudioStatus): void {
     this.audioStatus = status;
+  }
+
+  /** Test helper: the `deviceName` argument passed to the most recent start() call. */
+  getLastRequestedDevice(): string | undefined {
+    return this.lastRequestedDevice;
   }
 
   /** Test helper: the `source` argument passed to the most recent start() call. */

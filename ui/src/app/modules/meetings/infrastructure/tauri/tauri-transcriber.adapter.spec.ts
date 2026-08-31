@@ -27,9 +27,9 @@ describe('TauriTranscriberAdapter', () => {
     adapter.partials().subscribe((partial) => results.push(partial));
     await flushMicrotasks();
 
-    stub.emit('transcript://partial', { meetingId: 'm-1', text: 'partial text' });
+    stub.emit('transcript://partial', { meetingId: 'm-1', text: 'partial text', speaker: 'me' });
 
-    expect(results).toEqual([{ meetingId: toMeetingId('m-1'), text: 'partial text' }]);
+    expect(results).toEqual([{ meetingId: toMeetingId('m-1'), text: 'partial text', speaker: 'me' }]);
   });
 
   it('finals() maps the snake_case segment inside transcript://final', async () => {
@@ -47,7 +47,7 @@ describe('TauriTranscriberAdapter', () => {
     });
 
     expect(results).toEqual([
-      { meetingId: toMeetingId('m-1'), segment: { startSec: 0, endSec: 2, text: 'hello' } },
+      { meetingId: toMeetingId('m-1'), segment: { startSec: 0, endSec: 2, text: 'hello', speaker: 'unknown' } },
     ]);
   });
 
@@ -61,7 +61,7 @@ describe('TauriTranscriberAdapter', () => {
     const transcript = await adapter.transcriptFor(toMeetingId('m-1'));
 
     expect(receivedArgs).toEqual({ id: 'm-1' });
-    expect(transcript).toEqual({ segments: [{ startSec: 0, endSec: 1, text: 'hi' }] });
+    expect(transcript).toEqual({ segments: [{ startSec: 0, endSec: 1, text: 'hi', speaker: 'unknown' }] });
   });
 
   it('transcriptFor() returns an empty transcript when the Rust side has none yet', async () => {

@@ -71,6 +71,16 @@ export class TauriRecorderAdapter extends RecorderPort {
     return toAudioDevice(dto);
   }
 
+  override async listOutputDevices(): Promise<readonly AudioDevice[]> {
+    const dtos = await invokeCommand('list_output_devices', {});
+    return dtos.map(toAudioDevice);
+  }
+
+  override async defaultOutputDevice(): Promise<AudioDevice> {
+    const dto = await invokeCommand('default_output_device', {});
+    return toAudioDevice(dto);
+  }
+
   override async listAudioSources(): Promise<readonly AudioSource[]> {
     const dtos = await invokeCommand('list_audio_sources', {});
     return dtos.map(toAudioSource);

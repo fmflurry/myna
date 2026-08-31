@@ -72,7 +72,7 @@ describe('MeetingsFacade summarizingKey', () => {
 
     expect(facade.summarizingKey()).toEqual({ template: 'meeting-notes', language: 'en' });
 
-    resolveSummary({ template: 'meeting-notes', markdown: '# Notes', createdAt: new Date(), language: 'en' });
+    resolveSummary({ template: 'meeting-notes', markdown: '# Notes', createdAt: new Date(), language: 'en', stale: false });
     await pending;
 
     expect(facade.summarizingKey()).toBeNull();
@@ -97,7 +97,7 @@ describe('MeetingsFacade summarizingKey', () => {
     // DIFFERENT tab and must be free to show its own state.
     expect(facade.summarizingKey()).toEqual({ template: 'meeting-notes', language: 'en' });
 
-    resolveSummary({ template: 'meeting-notes', markdown: '# Notes', createdAt: new Date(), language: 'en' });
+    resolveSummary({ template: 'meeting-notes', markdown: '# Notes', createdAt: new Date(), language: 'en', stale: false });
     await pending;
   });
 

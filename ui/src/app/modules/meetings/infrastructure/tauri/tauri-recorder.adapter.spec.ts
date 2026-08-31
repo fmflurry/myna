@@ -163,6 +163,28 @@ describe('TauriRecorderAdapter', () => {
     expect(results).toEqual([{ id: 'app:teams', name: 'Teams' }, null]);
   });
 
+  it('effectiveSystemSourceChanges() maps a follow-up state event that resolves the source after the initial null', async () => {
+    const stub = installTauriInternalsStub((cmd) => {
+      throw new Error(`unexpected command '${cmd}'`);
+    });
+
+    const results: unknown[] = [];
+    adapter.effectiveSystemSourceChanges().subscribe((source) => results.push(source));
+    await flushMicrotasks();
+
+    // The initial recording://state event: the capture backend hasn't
+    // resolved the system source yet.
+    stub.emit('recording://state', { meetingId: 'm-1', state: 'recording', effectiveSystemSource: null });
+    // The worker's follow-up event once the system-audio tap is live.
+    stub.emit('recording://state', {
+      meetingId: 'm-1',
+      state: 'recording',
+      effectiveSystemSource: { id: 'app:teams', name: 'Teams' },
+    });
+
+    expect(results).toEqual([null, { id: 'app:teams', name: 'Teams' }]);
+  });
+
   it('listDevices() maps every DeviceInfoDto to an AudioDevice', async () => {
     installTauriInternalsStub(() => [{ name: 'Built-in Microphone' }]);
 

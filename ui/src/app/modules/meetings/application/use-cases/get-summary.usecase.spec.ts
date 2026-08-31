@@ -24,6 +24,7 @@ describe('GetSummaryUseCase', () => {
       markdown: '# Key points',
       createdAt: new Date('2026-01-15T10:00:00Z'),
       language: 'en',
+      stale: false,
     });
 
     const summary = await useCase.get(meetingId, 'key-points', 'en');

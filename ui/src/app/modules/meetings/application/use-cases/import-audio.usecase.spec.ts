@@ -29,7 +29,8 @@ describe('ImportAudioUseCase', () => {
       durationSec: 0,
       summaries: [],
       archived: false,
-      hasAudio: true,
+      hasAudio: true, hasSystemTrack: false,
+      droppedAudioChunks: 0,
     });
 
     const meeting = await useCase.import('/tmp/recording.m4a', 'Weekly sync');
