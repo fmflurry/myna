@@ -14,6 +14,53 @@ export interface SpeakerIdentity {
   readonly name: string;
 }
 
+/** An inline edit committed for the segment at `index` in the current transcript. */
+export interface TranscriptSegmentEdit {
+  readonly index: number;
+  readonly text: string;
+}
+
+/** A rename committed for the speaker label `label` (may be `'me'` or an `'others'` label). */
+export interface SpeakerRename {
+  readonly label: string;
+  readonly name: string;
+}
+
+/** A speaker reassignment for the segment at `index` to `speaker`. */
+export interface TranscriptSegmentSpeakerReassign {
+  readonly index: number;
+  readonly speaker: Speaker;
+}
+
+/** A speaker reassignment for every ABSOLUTE `index` in `indices` (a grouped block), to `speaker`, as ONE logical change. */
+export interface TranscriptSegmentGroupSpeakerReassign {
+  readonly indices: readonly number[];
+  readonly speaker: Speaker;
+}
+
+/**
+ * One speaker assigned to EVERY segment a text selection intersected — the
+ * floating toolbar's emit; the shell batches it into a single compound undo step.
+ */
+export interface TranscriptSelectionSpeakerAssignment {
+  readonly indices: readonly number[];
+  readonly speaker: Speaker;
+}
+
+/** A whole visible section asked to be deleted: the group's ABSOLUTE `indices`. The facade re-derives CAS texts from the store at call time. */
+export interface TranscriptSectionDelete {
+  readonly indices: readonly number[];
+}
+
+/** One row of the speaker chip's popup menu. */
+export interface SpeakerMenuItem {
+  readonly key: string;
+  readonly text: string;
+  /** Styles the row with the danger token — reserved for irreversible-feeling actions (section delete). */
+  readonly destructive?: true;
+  readonly action: () => void;
+}
+
 /**
  * Every named "others" identity known for this transcript, derived from
  * `speakerNames` alone — the canonical name registry (not from scanning
@@ -273,6 +320,26 @@ export function readSelectionToolbarIntent(
   // opens, just without an inline anchor (real browsers always have one).
   const rect = typeof range.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : null;
   return { kind: 'open', indices, rect };
+}
+
+/**
+ * Which open popups a document `click` should dismiss. Uses `closest()` on
+ * the event target rather than the component host, so it works whether or not
+ * the fixture's root is attached to `document`. Clicks inside the transcript
+ * never close the toolbar: a drag-select ends with a trailing `click` on the
+ * selection's common ancestor that would otherwise dismiss it.
+ */
+export function outsideClickClosures(
+  target: EventTarget | null,
+  chipMenuOpen: boolean,
+  selectionMenuOpen: boolean,
+): { readonly closeChip: boolean; readonly closeSelection: boolean } {
+  const element = target instanceof Element ? target : null;
+  const insideChip = element !== null && (element.closest('.speaker-menu') !== null || element.closest('.speaker-chip') !== null);
+  const closeChip = chipMenuOpen && !insideChip;
+  const closeSelection =
+    selectionMenuOpen && element !== null && element.closest('.selection-menu') === null && element.closest('.transcript') === null;
+  return { closeChip, closeSelection };
 }
 
 /** One segment within a rendered group, carrying its ABSOLUTE `transcript.segments` index. */

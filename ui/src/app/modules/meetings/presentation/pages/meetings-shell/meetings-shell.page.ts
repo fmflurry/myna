@@ -33,7 +33,7 @@ import type {
   TranscriptSegmentSpeakerReassign,
 } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, describeLatestSpeakerUndo, describeLatestTranscriptUndo, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, describeLatestSpeakerUndo, describeLatestTranscriptUndo, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -91,6 +91,8 @@ export class MeetingsShellPage implements OnInit {
   protected readonly speakerUndoLabel = computed(() => describeLatestSpeakerUndo(this.facade.speakerHistory()));
 
   private timerHandle: ReturnType<typeof setInterval> | undefined;
+  /** Serialises meeting-mutating ops so two unlocked read-modify-writes of meeting.json never overlap — see `MeetingOpQueue`. */
+  private readonly meetingOps = new MeetingOpQueue();
 
   constructor() {
     // Drives the live elapsed timer purely off `recordingState`, independent
@@ -256,12 +258,9 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.undoLastSpeakerOp();
   }
 
-  /** Runs a speaker op against the selected meeting's id; a no-op when nothing is selected. */
+  /** Runs a meeting mutation against the selected meeting's id, queued behind any in-flight op; a no-op when nothing is selected. */
   private withSelectedMeetingId(run: (id: MeetingId) => Promise<void>): void {
-    const meeting = this.facade.selectedMeeting();
-    if (meeting) {
-      void run(meeting.id);
-    }
+    this.meetingOps.enqueue(this.facade.selectedMeeting(), run);
   }
 
   onMeetingDeleted(id: MeetingId): void {

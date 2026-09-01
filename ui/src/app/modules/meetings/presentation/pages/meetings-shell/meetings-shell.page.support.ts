@@ -138,3 +138,32 @@ export async function runStopRecording(facade: MeetingsFacade, onDiarize: () => 
     onDiarize();
   }
 }
+
+/**
+ * Serialises backend meeting mutations. Speaker handlers can fire in the
+ * same synchronous tick — a New-speaker commit emits reassign THEN rename —
+ * and every op is an unlocked read-modify-write of meeting.json on the Rust
+ * side, so overlapping them loses a write. An op arriving while the queue is
+ * idle is dispatched IMMEDIATELY (single-op callers keep their synchronous
+ * dispatch); later ops chain behind the in-flight one. Facade ops never
+ * reject (errors land in the store's ERROR slot), but rejections are
+ * swallowed anyway so no future rejecting path can wedge the chain.
+ */
+export class MeetingOpQueue {
+  private tail: Promise<void> = Promise.resolve();
+  private queued = 0;
+
+  /** Queues `run` against `meeting` — a no-op when nothing is selected. */
+  enqueue(meeting: Meeting | undefined, run: (id: MeetingId) => Promise<void>): void {
+    if (meeting === undefined) {
+      return;
+    }
+    this.queued += 1;
+    this.tail = this.queued === 1
+      ? run(meeting.id).catch(() => undefined)
+      : this.tail.then(() => run(meeting.id)).catch(() => undefined);
+    void this.tail.then(() => {
+      this.queued -= 1;
+    });
+  }
+}

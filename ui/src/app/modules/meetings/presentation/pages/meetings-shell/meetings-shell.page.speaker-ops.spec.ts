@@ -91,7 +91,7 @@ describe('MeetingsShellPage — speaker chip-menu ops', () => {
     renameSpeaker, removeSpeaker, setSegmentSpeaker, setSegmentSpeakers,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
-    loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
+    loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop), clearSelection: vi.fn(),
     startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
     deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),
     cancelSummarization: vi.fn(noop), exportMeeting: vi.fn(noop), selectDevice: vi.fn(),
@@ -274,5 +274,50 @@ modelDownload: signal(undefined),
     expect(removeSpeaker).not.toHaveBeenCalled();
     expect(setSegmentSpeaker).not.toHaveBeenCalled();
     expect(setSegmentSpeakers).not.toHaveBeenCalled();
+  });
+
+  /** Flushes the microtask/timeout queue so chained promise continuations settle. */
+  const flush = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it('serialises consecutive speaker ops: a rename queued behind an in-flight reassign waits for it to settle', async () => {
+    selectedMeeting.set(
+      meetingWith([transcriptSegment({ startSec: 0, endSec: 5, text: 'first', speaker: 'unknown' })]),
+    );
+    let settleReassign: () => void = () => undefined;
+    setSegmentSpeaker.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { settleReassign = resolve; }),
+    );
+    const fixture = createFixture();
+
+    // Mirrors `NewSpeakerInput.commit`: the reassign is emitted synchronously
+    // THEN the rename keyed on the minted label. Both are unlocked
+    // read-modify-writes of meeting.json on the Rust side — they must never
+    // overlap, or the rename's write races the reassign's read.
+    fixture.componentInstance.onSegmentSpeakerReassigned({ index: 0, speaker: 'others:m1' });
+    fixture.componentInstance.onSpeakerRenamed({ label: 'others:m1', name: 'Jean' });
+
+    // An idle queue dispatches immediately, so the reassign is already in flight.
+    expect(setSegmentSpeaker).toHaveBeenCalledWith('m1', 0, 'others:m1');
+    expect(renameSpeaker).not.toHaveBeenCalled();
+
+    settleReassign();
+    await flush();
+
+    expect(renameSpeaker).toHaveBeenCalledWith('m1', 'others:m1', 'Jean');
+  });
+
+  it('never wedges the queue: a rejected speaker op still lets the next queued op run', async () => {
+    selectedMeeting.set(
+      meetingWith([transcriptSegment({ startSec: 0, endSec: 5, text: 'first', speaker: 'unknown' })]),
+    );
+    setSegmentSpeaker.mockImplementationOnce(() => Promise.reject(new Error('backend down')));
+    const fixture = createFixture();
+
+    fixture.componentInstance.onSegmentSpeakerReassigned({ index: 0, speaker: 'others:m1' });
+    fixture.componentInstance.onSpeakerRenamed({ label: 'others:m1', name: 'Jean' });
+
+    await flush();
+
+    expect(renameSpeaker).toHaveBeenCalledWith('m1', 'others:m1', 'Jean');
   });
 });

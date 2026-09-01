@@ -68,7 +68,7 @@ describe('TranscriptViewComponent — speaker chip menu', () => {
     expect(fixture.nativeElement.querySelector('.speaker-menu')).toBeNull();
   });
 
-  it('mints a fresh others:mN label via "New speaker…" that never collides with a diarizer-produced numeric sub-id', () => {
+  it('opens an inline name input on "New speaker…" instead of silently assigning the minted label (full flow: new-speaker.spec.ts)', () => {
     const fixture = createFixture();
     const emitted: TranscriptSegmentSpeakerReassign[] = [];
     fixture.componentInstance.segmentSpeakerReassigned.subscribe((event) => emitted.push(event));
@@ -80,8 +80,10 @@ describe('TranscriptViewComponent — speaker chip menu', () => {
       (el) => (el as HTMLElement).textContent?.trim() === 'New speaker…',
     ) as HTMLButtonElement;
     newSpeakerOption.click();
+    fixture.detectChanges();
 
-    expect(emitted).toEqual([{ index: 1, speaker: 'others:m1' }]);
+    expect(emitted).toEqual([]);
+    expect(fixture.nativeElement.querySelector('.new-speaker-row input')).not.toBeNull();
   });
 
   it('offers renaming only once the segment carries a sub-identity', () => {

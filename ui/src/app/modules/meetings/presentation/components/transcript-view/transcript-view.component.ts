@@ -19,62 +19,35 @@ import {
   chipText,
   computeAnchoredMenuPosition,
   groupConsecutiveSegments, lineDeleteMessage,
+  outsideClickClosures,
   readSelectionToolbarIntent,
   resolveSpeakerLabel,
   sectionDeleteMessage,
   speakerReassignOptions,
-  type AnchoredMenuPosition, type SpeakerReassignOption, type TranscriptSegmentGroup,
+  type AnchoredMenuPosition,
+  type SpeakerMenuItem,
+  type SpeakerReassignOption,
+  type SpeakerRename,
+  type TranscriptSectionDelete,
+  type TranscriptSelectionSpeakerAssignment,
+  type TranscriptSegmentEdit,
+  type TranscriptSegmentGroup,
+  type TranscriptSegmentGroupSpeakerReassign,
+  type TranscriptSegmentSpeakerReassign,
+} from './transcript-view.component.support';
+import { AutofocusDirective, NewSpeakerInput } from './transcript-view.component.new-speaker.support';
+
+export type {
+  SpeakerRename,
+  TranscriptSectionDelete,
+  TranscriptSelectionSpeakerAssignment,
+  TranscriptSegmentEdit,
+  TranscriptSegmentGroupSpeakerReassign,
+  TranscriptSegmentSpeakerReassign,
 } from './transcript-view.component.support';
 
 /** Size of the fixed CSS accent palette; see `.speaker-accent-N` in the stylesheet. */
 const SPEAKER_ACCENT_PALETTE_SIZE = 6;
-
-/** An inline edit committed for the segment at `index` in the current transcript. */
-export interface TranscriptSegmentEdit {
-  readonly index: number;
-  readonly text: string;
-}
-
-/** A rename committed for the speaker label `label` (may be `'me'` or an `'others'` label). */
-export interface SpeakerRename {
-  readonly label: string;
-  readonly name: string;
-}
-
-/** A speaker reassignment for the segment at `index` to `speaker`. */
-export interface TranscriptSegmentSpeakerReassign {
-  readonly index: number;
-  readonly speaker: Speaker;
-}
-
-/** A speaker reassignment for every ABSOLUTE `index` in `indices` (a grouped block), to `speaker`, as ONE logical change. */
-export interface TranscriptSegmentGroupSpeakerReassign {
-  readonly indices: readonly number[];
-  readonly speaker: Speaker;
-}
-
-/**
- * One speaker assigned to EVERY segment a text selection intersected — the
- * floating toolbar's emit; the shell batches it into a single compound undo step.
- */
-export interface TranscriptSelectionSpeakerAssignment {
-  readonly indices: readonly number[];
-  readonly speaker: Speaker;
-}
-
-/** A whole visible section asked to be deleted: the group's ABSOLUTE `indices`. The facade re-derives CAS texts from the store at call time. */
-export interface TranscriptSectionDelete {
-  readonly indices: readonly number[];
-}
-
-/** One row of the speaker chip's popup menu. */
-interface SpeakerMenuItem {
-  readonly key: string;
-  readonly text: string;
-  /** Styles the row with the danger token — reserved for irreversible-feeling actions (section delete). */
-  readonly destructive?: true;
-  readonly action: () => void;
-}
 
 /**
  * Renders a persisted transcript with mm:ss timestamps: each segment's text
@@ -85,7 +58,7 @@ interface SpeakerMenuItem {
  */
 @Component({
   selector: 'app-transcript-view',
-  imports: [EditableSegmentComponent],
+  imports: [AutofocusDirective, EditableSegmentComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './transcript-view.component.html',
   styleUrl: './transcript-view.component.scss',
@@ -124,6 +97,30 @@ export class TranscriptViewComponent implements OnDestroy {
   /** Viewport-clamped placement for the floating toolbar, computed from the selection rect. */
   protected readonly selectionMenuPosition = signal<AnchoredMenuPosition | null>(null);
 
+  /** Shared "New speaker…" inline name input — see `transcript-view.component.new-speaker.support.ts`. */
+  protected readonly newSpeaker = new NewSpeakerInput({
+    assign: (label) => {
+      const chipIndices = this.openIndices();
+      if (chipIndices.length > 0) {
+        this.reassign(chipIndices, label);
+        return true;
+      }
+      const selectionIndices = this.selectionIndices();
+      if (selectionIndices.length === 0) {
+        return false;
+      }
+      this.selectionSpeakerAssigned.emit({ indices: selectionIndices, speaker: label });
+      window.getSelection()?.removeAllRanges();
+      this.closeSelectionMenu();
+      return true;
+    },
+    renamed: (label, name) => this.speakerRenamed.emit({ label, name }),
+    closeAll: () => {
+      this.closeMenu();
+      this.closeSelectionMenu();
+    },
+  });
+
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /** The speaker label of the currently open segment, or `undefined` when no menu is open. */
@@ -132,8 +129,11 @@ export class TranscriptViewComponent implements OnDestroy {
     return index === null ? undefined : this.transcript()?.segments[index]?.speaker;
   });
 
-  /** AMBIGUOUS (spec asserts both, no unifying rule stated): rename shows for a `'me'` label, or any label carrying a sub-identity (named "others" speakers). */
+  /** AMBIGUOUS (spec asserts both, no unifying rule stated): rename shows for a `'me'` label, or any label carrying a sub-identity (named "others" speakers). Hidden while the New-speaker name input is open so the menu never shows two competing inputs. */
   protected readonly showRenameRow = computed(() => {
+    if (this.newSpeaker.pending() !== null) {
+      return false;
+    }
     const speaker = this.openSpeaker();
     if (speaker === undefined) {
       return false;
@@ -162,9 +162,12 @@ export class TranscriptViewComponent implements OnDestroy {
     if (indices.length === 0) {
       return [];
     }
-    const items: SpeakerMenuItem[] = speakerReassignOptions(this.transcript(), this.speakerNames()).map(
-      (option) => ({ key: option.key, text: option.text, action: () => this.reassign(indices, option.speaker) }),
-    );
+    const items: SpeakerMenuItem[] = speakerReassignOptions(this.transcript(), this.speakerNames()).map((option) => ({
+      key: option.key,
+      text: option.text,
+      // "New speaker…" reveals the inline name input instead of assigning the minted label silently.
+      action: option.key === 'new' ? () => this.newSpeaker.begin(option.speaker) : () => this.reassign(indices, option.speaker),
+    }));
     if (this.canRemoveSpeaker()) {
       items.push({ key: 'remove', text: 'Remove speaker…', action: () => this.removeSpeaker() });
     }
@@ -188,27 +191,17 @@ export class TranscriptViewComponent implements OnDestroy {
     }
   };
 
-  /**
-   * Closes an open menu on any click outside it and its trigger. Uses
-   * `closest()` on the event target rather than the injected host, so it works
-   * whether or not the fixture's root is attached to `document`. Clicks inside
-   * the transcript never close the toolbar: a drag-select ends with a trailing
-   * `click` on the selection's common ancestor that would otherwise dismiss it.
-   */
+  /** Closes an open menu on any click outside it and its trigger — see `outsideClickClosures`. */
   private readonly handleDocumentClick = (event: MouseEvent): void => {
-    const target = event.target;
-    if (
-      this.openIndex() !== null &&
-      !(target instanceof Element && (target.closest('.speaker-menu') || target.closest('.speaker-chip')))
-    ) {
+    const { closeChip, closeSelection } = outsideClickClosures(
+      event.target,
+      this.openIndex() !== null,
+      this.selectionMenuOpen(),
+    );
+    if (closeChip) {
       this.closeMenu();
     }
-    if (
-      this.selectionMenuOpen() &&
-      target instanceof Element &&
-      !target.closest('.selection-menu') &&
-      !target.closest('.transcript')
-    ) {
+    if (closeSelection) {
       this.closeSelectionMenu();
     }
   };
@@ -378,8 +371,12 @@ export class TranscriptViewComponent implements OnDestroy {
     this.selectionPickerOpen.set(!this.selectionPickerOpen());
   }
 
-  /** Assigns the picked speaker to every selected segment, then drops the selection and closes. */
+  /** Assigns the picked speaker to every selected segment, then drops the selection and closes. `New speaker…` instead reveals the shared inline name input. */
   protected onSelectionPickerSelect(option: SpeakerReassignOption): void {
+    if (option.key === 'new') {
+      this.newSpeaker.begin(option.speaker);
+      return;
+    }
     this.selectionSpeakerAssigned.emit({ indices: this.selectionIndices(), speaker: option.speaker });
     window.getSelection()?.removeAllRanges();
     this.closeSelectionMenu();
@@ -388,6 +385,7 @@ export class TranscriptViewComponent implements OnDestroy {
   private closeMenu(): void {
     this.openIndices.set([]);
     this.menuPosition.set(null);
+    this.newSpeaker.clear();
   }
 
   private closeSelectionMenu(): void {
@@ -395,5 +393,6 @@ export class TranscriptViewComponent implements OnDestroy {
     this.selectionPickerOpen.set(false);
     this.selectionIndices.set([]);
     this.selectionMenuPosition.set(null);
+    this.newSpeaker.clear();
   }
 }

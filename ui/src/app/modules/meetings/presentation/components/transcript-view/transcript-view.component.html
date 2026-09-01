@@ -29,6 +29,18 @@
                   <input type="text" [placeholder]="renamePlaceholder()" (keydown)="onRenameKeydown($event)" />
                 </div>
               }
+              @if (newSpeaker.pending() !== null) {
+                <div class="rename-row new-speaker-row">
+                  <input
+                    type="text"
+                    appAutofocus
+                    placeholder="New speaker name"
+                    aria-label="New speaker name"
+                    (keydown)="newSpeaker.onKeydown($event)"
+                    (blur)="newSpeaker.onBlur($event)"
+                  />
+                </div>
+              }
             </div>
           }
         </div>
@@ -96,6 +108,18 @@
       <div class="speaker-menu" role="menu">
         @for (item of selectionPickerItems(); track item.key) {
           <button type="button" role="menuitem" class="speaker-menu-item" (click)="onSelectionPickerSelect(item)">{{ item.text }}</button>
+        }
+        @if (newSpeaker.pending() !== null) {
+          <div class="rename-row new-speaker-row">
+            <input
+              type="text"
+              appAutofocus
+              placeholder="New speaker name"
+              aria-label="New speaker name"
+              (keydown)="newSpeaker.onKeydown($event)"
+              (blur)="newSpeaker.onBlur($event)"
+            />
+          </div>
         }
       </div>
     }
