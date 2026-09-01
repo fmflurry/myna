@@ -69,6 +69,12 @@ fn apply_overrides(overrides: SummaryOverrides) -> SummaryOptions {
 }
 
 fn main() -> Result<()> {
+    // Must run before any model is loaded (and before any other thread
+    // starts) — see `myna_llm::init_ggml_env` docs for why: it prevents a
+    // deterministic `abort()` on process exit once ggml's Metal device has
+    // registered weight buffers.
+    myna_llm::init_ggml_env();
+
     let Command::Summarize {
         model,
         template,

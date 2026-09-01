@@ -10,7 +10,7 @@ mod error;
 mod language;
 mod template;
 
-pub use engine::{Summarizer, SummaryOptions};
+pub use engine::{init_ggml_env, Summarizer, SummaryOptions};
 pub use error::LlmError;
 pub use language::{
     label_for, resolve, SummaryLanguage, DEFAULT_SUMMARY_LANGUAGE, SUMMARY_LANGUAGES,

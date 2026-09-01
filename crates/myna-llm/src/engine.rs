@@ -26,6 +26,7 @@ use std::num::NonZeroU32;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
 use encoding_rs::Decoder;
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -108,6 +109,86 @@ impl Default for SummaryOptions {
     }
 }
 
+/// Guards [`init_ggml_env`] so it only ever sets the environment once per
+/// process, however many entry points call it.
+static INIT_GGML_ENV: Once = Once::new();
+
+/// Disables ggml's Metal residency-set tracking, before any model is
+/// loaded, to prevent a deterministic `abort()` at process exit.
+///
+/// ## The bug
+///
+/// ggml unconditionally asserts that every Metal buffer has been freed
+/// before the Metal device itself is destroyed — this assert is **not**
+/// compiled out in release builds:
+///
+/// ```objc
+/// // llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m:656
+/// GGML_ASSERT([rsets->data count] == 0);
+/// ```
+///
+/// Myna's [`Summarizer`] (which owns the `LlamaModel` and its Metal weight
+/// buffers) is held in a `OnceLock` in `app/src-tauri/src/state.rs` that is
+/// never dropped, so those buffers stay registered in the device's
+/// residency set for the whole life of the process. On quit (⌘Q ->
+/// `-[NSApplication terminate:]` -> `exit()`), `__cxa_finalize_ranges` runs
+/// the static destructor for ggml's own
+/// `static std::vector<ggml_metal_device_ptr> devs;`
+/// (`ggml-metal-device.cpp:21`), which frees the device, hits the assert
+/// above, and `abort()`s — deterministically, every quit, once
+/// `Summarizer::load` has succeeded at least once in the process. Leaking
+/// harder on the Rust side cannot fix this: `devs` is registered via
+/// `__cxa_atexit` inside ggml's own translation unit, independent of Rust
+/// ownership.
+///
+/// ## The fix
+///
+/// Setting `GGML_METAL_NO_RESIDENCY=1` makes `ggml_metal_device_init` skip
+/// residency-set tracking entirely:
+///
+/// ```objc
+/// // llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m:863
+/// dev->props.use_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == nil;
+/// ```
+///
+/// With `use_residency_sets` false, `dev->rsets` stays `nil`, so
+/// `ggml_metal_rsets_free(NULL)` early-returns (`ggml-metal-device.m:651-653`)
+/// before it ever reaches the assert. The sibling call sites are
+/// consistent with this: `rsets_add`/`rsets_rm` both null-check and
+/// return early on `rset == nil` (`:988-990`, `:1002-1004`), and
+/// `rsets_keep_alive` null-checks the same way (`:1016-1018`) — so this is
+/// safe for the model's entire lifetime, not just at teardown.
+///
+/// ## Tradeoff
+///
+/// Without residency sets, Metal no longer keeps model weight buffers
+/// wired into GPU-resident memory ahead of use, so the first token
+/// generated after a long idle period may pay a one-time page-in cost.
+///
+/// ## Removal condition
+///
+/// Upstream llama.cpp still has this bug on `master`, with several stalled
+/// fix attempts (closest: llama.cpp#26857). Remove this workaround once one
+/// of those lands and ggml's teardown tolerates a live residency set.
+///
+/// ## Call sites
+///
+/// Called as the first statement of [`Summarizer::load`] so this crate is
+/// self-protecting regardless of caller, and additionally from the Tauri
+/// app's `main` (before any other thread starts) and the `myna-llm` CLI's
+/// `main`, so the environment is set before `LlamaBackend::init()` in every
+/// entry point. `std::env::set_var` is only guaranteed data-race-free
+/// absent concurrent env reads/writes from other threads; the `Once` guard
+/// makes every call after the first a no-op, so calling this from multiple
+/// entry points (or from `Summarizer::load` on a later, non-`main` thread)
+/// never re-triggers the mutation.
+pub fn init_ggml_env() {
+    INIT_GGML_ENV.call_once(|| {
+        #[cfg(target_os = "macos")]
+        std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
+    });
+}
+
 /// A loaded Qwen (or any GGUF chat) model ready to summarize prompts.
 pub struct Summarizer {
     backend: LlamaBackend,
@@ -119,7 +200,13 @@ impl Summarizer {
     ///
     /// Returns [`LlmError::ModelNotFound`] before touching llama.cpp at all
     /// if the path does not exist on disk.
+    ///
+    /// Calls [`init_ggml_env`] first (idempotent — see its docs) so this
+    /// crate is self-protecting against the ⌘Q Metal-teardown abort even
+    /// if a caller forgets to call it themselves.
     pub fn load(model_path: &Path) -> Result<Self, LlmError> {
+        init_ggml_env();
+
         if !model_path.exists() {
             return Err(LlmError::ModelNotFound(model_path.to_path_buf()));
         }
