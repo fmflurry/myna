@@ -111,6 +111,7 @@ describe('MeetingsShellPage — folders forwarding', () => {
     requestSystemAudioPermission: vi.fn(noop),
     loadFolders, createFolder, renameFolder, deleteFolder, toggleFolderExpanded,
     modelDownload: signal(undefined),
+    transcriptUndo: signal(null),
     speakerHistory: signal([]),
     undoLastSpeakerOp: vi.fn(async () => undefined),
   } as unknown as MeetingsFacade;

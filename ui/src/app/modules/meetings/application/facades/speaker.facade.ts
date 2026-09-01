@@ -8,6 +8,7 @@ import { MeetingsStore } from '../stores/meetings.store';
 import {
   runRemoveSpeakerWithHistory,
   runRenameSpeakerWithHistory,
+  runSetSegmentSpeakerGroupWithHistory,
   runSetSegmentSpeakerWithHistory,
   runUndoLastSpeakerOp,
 } from './meetings-facade-speaker-history.support';
@@ -38,6 +39,11 @@ export class SpeakerFacade {
 
   async setSegmentSpeaker(id: MeetingId, index: number, speaker: string): Promise<void> {
     await runSetSegmentSpeakerWithHistory(this.store, this.setSegmentSpeakerUseCase, id, index, speaker);
+  }
+
+  /** Reassigns every segment in `indices` as ONE compound undo step; see `runSetSegmentSpeakerGroupWithHistory`. */
+  async setSegmentSpeakers(id: MeetingId, indices: readonly number[], speaker: string): Promise<void> {
+    await runSetSegmentSpeakerGroupWithHistory(this.store, this.setSegmentSpeakerUseCase, id, indices, speaker);
   }
 
   async undoLastSpeakerOp(): Promise<void> {

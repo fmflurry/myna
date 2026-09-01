@@ -140,6 +140,39 @@ describe('MeetingsFacade speaker-op undo history', () => {
     expect(facade.speakerHistory()).toEqual([]);
   });
 
+  it('reassigns a group of segments as ONE compound op, mutated sequentially, undone in one step', async () => {
+    const setSpy = vi.spyOn(repository, 'setSegmentSpeaker');
+
+    await facade.setSegmentSpeakers(meetingId, [0, 2], 'me');
+
+    expect(setSpy).toHaveBeenCalledTimes(2);
+    expect(setSpy.mock.calls.map((call) => call[1])).toEqual([0, 2]);
+    expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.speaker)).toEqual([
+      'me',
+      'others',
+      'me',
+    ]);
+    expect(facade.speakerHistory()).toEqual([
+      {
+        kind: 'reassign-group',
+        meetingId,
+        segments: [
+          { index: 0, previousLabel: 'others:1' },
+          { index: 2, previousLabel: 'others:1' },
+        ],
+      },
+    ]);
+
+    await facade.undoLastSpeakerOp();
+
+    expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.speaker)).toEqual([
+      'others:1',
+      'others',
+      'others:1',
+    ]);
+    expect(facade.speakerHistory()).toEqual([]);
+  });
+
   it('pushes nothing when the forward mutation is rejected', async () => {
     vi.spyOn(repository, 'renameSpeaker').mockRejectedValueOnce(new MeetingsError('BUSY', 'Meeting is recording.'));
 

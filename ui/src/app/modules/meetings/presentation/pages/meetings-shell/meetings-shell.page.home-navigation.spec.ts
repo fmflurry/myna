@@ -136,6 +136,7 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
   const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
+    speakerHistory: signal([]), transcriptUndo: signal(null),
     meetings,
     selectedMeeting,
     modelsStatus,
@@ -199,6 +200,7 @@ describe('MeetingsShellPage home navigation (brand button)', () => {
     renameFolder,
     deleteFolder,
     toggleFolderExpanded,
+    modelDownload: signal(undefined),
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

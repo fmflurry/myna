@@ -127,6 +127,9 @@ describe('MeetingsShellPage non-blocking summarization', () => {
     exportMeeting, selectDevice, selectCaptureSource, selectAudioSource, selectSummaryLanguage,
     requestSystemAudioPermission,
     folders, expandedFolders, loadFolders, createFolder, renameFolder, deleteFolder, toggleFolderExpanded,
+    speakerHistory: signal([]),
+transcriptUndo: signal(null),
+modelDownload: signal(undefined),
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

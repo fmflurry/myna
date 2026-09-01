@@ -1,10 +1,17 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 
 import type { Meeting } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
+import { AudioPlayerComponent } from '../audio-player/audio-player.component';
+import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+
+class MockMeetingsFacade {
+  getAudioUrl = vi.fn().mockResolvedValue(null);
+}
 
 /**
  * Degraded-recording affordance: when a meeting's audio was silently dropped
@@ -15,6 +22,15 @@ import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
  * files).
  */
 describe('MeetingDetailPaneComponent degraded-recording affordance', () => {
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      imports: [MeetingDetailPaneComponent, AudioPlayerComponent],
+      providers: [
+        { provide: MeetingsFacade, useClass: MockMeetingsFacade },
+      ],
+    });
+  });
+
   const templates: SummaryTemplate[] = [{ name: 'key-points', description: 'Key points', prompt: 'p' }];
 
   const meeting: Meeting = {

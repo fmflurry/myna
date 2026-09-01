@@ -18,9 +18,25 @@
   line-height: var(--line-height-relaxed);
 }
 
-li {
+/** One rendered block: a run of consecutive same-speaker segments (or a lone segment). */
+.segment-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/** The single timestamp + speaker chip shown once for the whole group. */
+.segment-group-header {
   display: flex;
   gap: var(--space-3);
+}
+
+/** Every underlying segment's editable text, stacked below the shared header and indented to align under it. */
+.group-segments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: calc(3rem + var(--space-3));
 }
 
 .timestamp {
@@ -35,6 +51,40 @@ li {
 
 .text {
   flex: 1;
+}
+
+/** One entry line inside a group: the editable text plus its delete affordance. The padding permanently reserves the button's slot, so revealing it never reflows the text. */
+.segment-line {
+  position: relative;
+  display: flex;
+  padding-right: 1.75rem;
+}
+
+/**
+ * Per-line delete affordance. Hidden by opacity (never `visibility`, which
+ * would drop it from the tab order) and revealed on row hover or keyboard
+ * focus, so it stays reachable without a mouse.
+ */
+.line-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.15rem;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+
+  &:hover {
+    color: var(--color-danger-text);
+    background: var(--color-danger-soft);
+  }
+}
+
+.segment-line:hover .line-delete,
+.line-delete:focus {
+  opacity: 1;
 }
 
 .empty {
@@ -82,20 +132,26 @@ li {
  * `left`/`top`/`bottom`/`max-height` computed at click time from the
  * clicked chip's `getBoundingClientRect()` (see `computeMenuPosition`), so
  * it escapes any ancestor `overflow` clipping while staying inside this
- * component's own DOM (no CDK Overlay, no `document.body` portal).
+ * component's own DOM (no CDK Overlay, no `document.body` portal). Shared
+ * surface geometry with `.selection-menu` — both are fixed popovers with
+ * identical tokens so the dark theme follows automatically.
  */
-.speaker-menu {
+.speaker-menu,
+.selection-menu {
   position: fixed;
   z-index: var(--z-popover, 100);
   display: flex;
   flex-direction: column;
-  min-width: 10rem;
   overflow-y: auto;
   background: var(--color-surface, #fff);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.15));
   padding: 0.25rem;
+}
+
+.speaker-menu {
+  min-width: 10rem;
 
   /* Purely informational when flipped above the chip; layout itself is driven by the inline `bottom` style. */
   &.dropup {
@@ -119,6 +175,16 @@ li {
   &:hover {
     background: var(--color-surface-hover);
   }
+
+  /* Destructive rows (section delete) borrow the danger tokens so the menu
+     never dresses an irreversible-feeling action up as a neutral one. */
+  &.destructive {
+    color: var(--color-danger-text);
+
+    &:hover {
+      background: var(--color-danger-soft);
+    }
+  }
 }
 
 .rename-row {
@@ -140,4 +206,55 @@ li {
       opacity: 1;
     }
   }
+}
+
+/**
+ * Floating toolbar shown over a text selection inside the transcript.
+ * Positioned `fixed` with inline `left`/`top`/`bottom`/`max-height` computed
+ * from the selection range's `getBoundingClientRect()` (see
+ * `computeAnchoredMenuPosition(rect, true)` — bottom-anchored ABOVE the
+ * selection, flipping below near the viewport top), so it escapes the
+ * transcript's scroll clipping exactly like `.speaker-menu`.
+ */
+.selection-menu {
+  gap: 0.25rem;
+}
+
+.selection-menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/** The ~28px icon button that opens the speaker picker from the toolbar. */
+.selection-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+
+  &:hover {
+    background: var(--color-surface-hover);
+  }
+}
+
+.selection-scope {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* The picker inside the toolbar flows within it — the fixed popup geometry only applies to the chip menu. */
+.selection-menu .speaker-menu {
+  position: static;
+  box-shadow: none;
+  border: none;
+  padding: 0;
 }

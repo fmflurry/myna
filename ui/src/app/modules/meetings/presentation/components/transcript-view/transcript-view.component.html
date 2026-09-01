@@ -1,38 +1,103 @@
 @if (transcript() && transcript()!.segments.length > 0) {
   <ol class="transcript">
-    @for (segment of transcript()!.segments; track $index) {
-      <li>
-        <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
-        <button type="button" class="{{ chipClass(segment.speaker) }}" aria-haspopup="menu" (click)="onChipClick($event, $index)">{{ chipLabel(segment.speaker) }}</button>
-        @if (openIndex() === $index) {
-          <div
-            class="speaker-menu"
-            [class.dropup]="menuPosition()?.dropup"
-            role="menu"
-            [style.left.px]="menuPosition()?.left"
-            [style.top.px]="menuPosition()?.top"
-            [style.bottom.px]="menuPosition()?.bottom"
-            [style.max-height.px]="menuPosition()?.maxHeight"
-          >
-            @for (item of menuItems(); track item.key) {
-              <button type="button" role="menuitem" class="speaker-menu-item" (click)="item.action()">{{ item.text }}</button>
-            }
-            @if (showRenameRow()) {
-              <div class="rename-row">
-                <input type="text" [placeholder]="renamePlaceholder()" (keydown)="onRenameKeydown($event)" />
-              </div>
-            }
-          </div>
-        }
-        <app-editable-segment
-          class="text"
-          [text]="segment.text"
-          [editable]="editable()"
-          (textChanged)="onSegmentEdited($index, $event)"
-        />
+    @for (group of groups(); track firstEntryIndex(group)) {
+      <li class="segment-group">
+        <div class="segment-group-header">
+          <span class="timestamp">{{ formatTimestamp(group.startSec) }}</span>
+          <button type="button" class="{{ chipClass(group.speaker) }}" aria-haspopup="menu" (click)="onChipClick($event, groupIndices(group))">{{ chipLabel(group.speaker) }}</button>
+          @if (openIndex() === firstEntryIndex(group)) {
+            <div
+              class="speaker-menu"
+              [class.dropup]="menuPosition()?.dropup"
+              role="menu"
+              [style.left.px]="menuPosition()?.left"
+              [style.top.px]="menuPosition()?.top"
+              [style.bottom.px]="menuPosition()?.bottom"
+              [style.max-height.px]="menuPosition()?.maxHeight"
+            >
+              @for (item of menuItems(); track item.key) {
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="speaker-menu-item"
+                  [class.destructive]="item.destructive"
+                  (click)="item.action()"
+                >{{ item.text }}</button>
+              }
+              @if (showRenameRow()) {
+                <div class="rename-row">
+                  <input type="text" [placeholder]="renamePlaceholder()" (keydown)="onRenameKeydown($event)" />
+                </div>
+              }
+            </div>
+          }
+        </div>
+        <div class="group-segments">
+          @for (entry of group.entries; track entry.index) {
+            <div class="segment-line">
+              <app-editable-segment
+                class="text"
+                [attr.data-segment-index]="entry.index"
+                [text]="entry.segment.text"
+                [editable]="editable()"
+                (textChanged)="onSegmentEdited(entry.index, $event)"
+              />
+              <button
+                type="button"
+                class="line-delete"
+                [attr.data-line-delete-index]="entry.index"
+                aria-label="Delete this line"
+                title="Delete this line"
+                (click)="deleteLine(entry.index, entry.segment.text)"
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false">
+                  <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.8 9a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9L12 4" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M6.7 6.5v5M9.3 6.5v5" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+          }
+        </div>
       </li>
     }
   </ol>
 } @else {
   <p class="empty">No transcript available for this meeting.</p>
+}
+@if (selectionMenuOpen()) {
+  <div
+    class="selection-menu"
+    role="group"
+    aria-label="Speech attribution toolbar"
+    [style.left.px]="selectionMenuPosition()?.left"
+    [style.top.px]="selectionMenuPosition()?.top"
+    [style.bottom.px]="selectionMenuPosition()?.bottom"
+    [style.max-height.px]="selectionMenuPosition()?.maxHeight"
+  >
+    <div class="selection-menu-bar">
+      <button
+        type="button"
+        class="selection-trigger"
+        title="Attribute this speech to another speaker"
+        aria-label="Attribute this speech to another speaker"
+        aria-haspopup="menu"
+        [attr.aria-expanded]="selectionPickerOpen()"
+        (click)="onSelectionTriggerClick()"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false">
+          <circle cx="6" cy="5" r="2.5" />
+          <path d="M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke-linecap="round" />
+          <path d="M11.5 5h3M13 3.5v3" stroke-linecap="round" />
+        </svg>
+      </button>
+      <span class="selection-scope">{{ selectionIndices().length }} segment{{ selectionIndices().length === 1 ? '' : 's' }}</span>
+    </div>
+    @if (selectionPickerOpen()) {
+      <div class="speaker-menu" role="menu">
+        @for (item of selectionPickerItems(); track item.key) {
+          <button type="button" role="menuitem" class="speaker-menu-item" (click)="onSelectionPickerSelect(item)">{{ item.text }}</button>
+        }
+      </div>
+    }
+  </div>
 }

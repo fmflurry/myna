@@ -1,0 +1,141 @@
+@if (loading()) {
+  <div class="audio-player loading" role="status" aria-live="polite">
+    <span class="spinner" aria-hidden="true"></span>
+    <span>Loading audio...</span>
+  </div>
+} @else if (error()) {
+  <div class="audio-player error" role="alert">
+    <span class="error-icon" aria-hidden="true">⚠️</span>
+    <span>{{ error() }}</span>
+  </div>
+} @else if (!hasAudio()) {
+  <div class="audio-player no-audio" role="status">
+    <span>No recording available</span>
+  </div>
+} @else if (!url()) {
+  <div class="audio-player no-audio" role="status">
+    <span>No recording available</span>
+  </div>
+} @else {
+  <div class="audio-player">
+    <audio
+      #audioElement
+      [src]="url()"
+      preload="metadata"
+      [volume]="volume()"
+      [muted]="muted()"
+      [playbackRate]="playbackRate()"
+      (play)="onPlay()"
+      (pause)="onPause()"
+      (ended)="onEnded()"
+      (timeupdate)="onTimeUpdate()"
+      (durationchange)="onDurationChange()"
+      (error)="onMediaError()"
+    ></audio>
+
+    <div class="controls">
+      <button
+        type="button"
+        class="control-button play-pause"
+        [class.playing]="playing()"
+        [attr.aria-label]="playing() ? 'Pause' : 'Play'"
+        [attr.title]="playing() ? 'Pause' : 'Play'"
+        [attr.aria-pressed]="playing()"
+        (click)="togglePlayPause()"
+      >
+        @if (playing()) {
+          <svg class="control-icon icon-pause" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+            <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+            <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+          </svg>
+        } @else {
+          <svg class="control-icon icon-play" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+            <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+          </svg>
+        }
+      </button>
+
+      <!-- Static aria-label: a time-encoding label would be rewritten ~4×/s by
+           timeupdate. Screen readers get position from native range
+           aria-valuenow and the (silent) visual time readout below. -->
+      <input
+        type="range"
+        class="seek-slider"
+        min="0"
+        max="100"
+        step="0.1"
+        aria-label="Seek"
+        [value]="seekPercent()"
+        [attr.aria-valuemin]="0"
+        [attr.aria-valuemax]="100"
+        [attr.aria-valuenow]="seekPercent()"
+        (pointerdown)="onScrubStart()"
+        (focus)="onScrubStart()"
+        (blur)="onScrubCancel()"
+        (input)="seek($event)"
+        (pointerup)="onScrubEnd($event)"
+        (change)="onScrubEnd($event)"
+      />
+
+      <!-- Plain visual readout: no aria-live, or timeupdate would announce
+           the clock ~4×/s and drown every other announcement. -->
+      <div class="time-display">
+        <span>{{ currentTimeDisplay() }}</span>
+        <span class="separator">/</span>
+        <span>{{ durationDisplay() }}</span>
+      </div>
+
+      <div class="volume-controls">
+        <button
+          type="button"
+          class="control-button mute"
+          [class.muted]="muted() || volume() === 0"
+          [attr.aria-label]="muted() || volume() === 0 ? 'Unmute' : 'Mute'"
+          [attr.aria-pressed]="muted() || volume() === 0"
+          (click)="toggleMute()"
+        >
+          @if (muted() || volume() === 0) {
+            <span aria-hidden="true">🔇</span>
+          } @else if (volume() < 0.33) {
+            <span aria-hidden="true">🔈</span>
+          } @else if (volume() < 0.67) {
+            <span aria-hidden="true">🔉</span>
+          } @else {
+            <span aria-hidden="true">🔊</span>
+          }
+        </button>
+        <input
+          type="range"
+          class="volume-slider"
+          min="0"
+          max="1"
+          step="0.05"
+          [value]="volume()"
+          [attr.aria-label]="'Volume: ' + (volume() * 100).toFixed(0) + '%'"
+          [attr.aria-valuemin]="0"
+          [attr.aria-valuemax]="100"
+          [attr.aria-valuenow]="volume() * 100"
+          (input)="setVolume($event)"
+        />
+      </div>
+
+      <div class="rate-controls">
+        <label for="rate-select" class="visually-hidden">Playback speed</label>
+        <!-- No [value] on <select>: Angular applies parent bindings before the
+             @for options exist, so the value never matches and the browser
+             falls back to the first option. Per-option [selected] is evaluated
+             at option creation and re-evaluated when playbackRate() changes. -->
+        <select
+          id="rate-select"
+          class="rate-select"
+          (change)="setPlaybackRate($event)"
+          [attr.aria-label]="'Playback speed: ' + playbackRate() + 'x'"
+        >
+          @for (rate of playbackRates; track rate) {
+            <option [value]="rate" [selected]="rate === playbackRate()">{{ rate }}x</option>
+          }
+        </select>
+      </div>
+    </div>
+  </div>
+}

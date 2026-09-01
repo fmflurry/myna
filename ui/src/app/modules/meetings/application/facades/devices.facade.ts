@@ -3,7 +3,10 @@ import { Injectable, OnDestroy, inject } from '@angular/core';
 import { RecorderPort } from '../../core/ports/recorder.port';
 import { ListDevicesUseCase } from '../use-cases/list-devices.usecase';
 import { MeetingsStore } from '../stores/meetings.store';
-import { DEVICE_POLL_INTERVAL_MS, toErrorInfo } from './meetings-facade.support';
+import { DEVICE_POLL_INTERVAL_MS, clearErrorFromSource, toErrorInfo } from './meetings-facade.support';
+
+/** Error `source` tag for {@link DevicesFacade.loadDevices}; see `clearErrorFromSource`. */
+const LOAD_DEVICES_SOURCE = 'loadDevices';
 
 /**
  * Input/output audio-device listing and selection, split out of
@@ -53,9 +56,11 @@ export class DevicesFacade implements OnDestroy {
       this.store.setDefaultDevice(await this.listDevicesUseCase.default());
       this.store.setOutputDevices(await this.recorder.listOutputDevices());
       this.store.setDefaultOutputDevice(await this.recorder.defaultOutputDevice());
-      this.store.clearError();
+      // Source-scoped: this runs on a 5s poll, so an unconditional clear
+      // would erase any other operation's error seconds after it appeared.
+      clearErrorFromSource(this.store, LOAD_DEVICES_SOURCE);
     } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
+      this.store.setError({ ...toErrorInfo(caught), source: LOAD_DEVICES_SOURCE });
     }
   }
 

@@ -41,6 +41,30 @@ li.present {
   color: var(--color-success-text);
 }
 
+.model-download {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.download-progress {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.download-error {
+  margin: var(--space-2) 0 0;
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
+.hint {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
 .download {
   display: flex;
   align-items: center;
@@ -67,7 +91,9 @@ li.present {
  * installed, so it's the highest-severity instance of that bug.
  */
 .copy-download-command,
-.recheck {
+.recheck,
+.start-download,
+.cancel-download {
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -75,6 +101,13 @@ li.present {
   color: var(--color-text);
   font-size: 0.85rem;
   cursor: pointer;
+}
+
+.start-download {
+  border: none;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-contrast);
+  font-weight: 600;
 }
 
 .recheck {

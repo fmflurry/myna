@@ -78,6 +78,9 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
     requestSystemAudioPermission: vi.fn(noop),
     folders, expandedFolders, loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
     deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
+    speakerHistory: signal([]),
+transcriptUndo: signal(null),
+modelDownload: signal(undefined),
   } as unknown as MeetingsFacade;
 
   beforeEach(() => {

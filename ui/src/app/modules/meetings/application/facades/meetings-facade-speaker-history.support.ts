@@ -3,6 +3,8 @@ import type { MeetingsStore } from '../stores/meetings.store';
 import {
   pushSpeakerOp,
   type SpeakerOp,
+  type SpeakerReassignedSegment,
+  type SpeakerReassignGroupOp,
   type SpeakerReassignOp,
   type SpeakerRemoveOp,
   type SpeakerRenameOp,
@@ -48,6 +50,21 @@ function captureRemoveInverse(meeting: Meeting | undefined, id: MeetingId, label
 function captureReassignInverse(meeting: Meeting | undefined, id: MeetingId, index: number): SpeakerReassignOp | null {
   const previousLabel = meeting?.id === id ? meeting.transcript?.segments[index]?.speaker : undefined;
   return previousLabel === undefined ? null : { kind: 'reassign', meetingId: id, index, previousLabel };
+}
+
+/** Captures the grouped-reassign inverse for every index in `indices`, or `null` when none currently have a label to restore. */
+function captureReassignGroupInverse(
+  meeting: Meeting | undefined,
+  id: MeetingId,
+  indices: readonly number[],
+): SpeakerReassignGroupOp | null {
+  if (meeting?.id !== id) {
+    return null;
+  }
+  const segments = indices
+    .map((index) => ({ index, previousLabel: meeting.transcript?.segments[index]?.speaker }))
+    .filter((entry): entry is SpeakerReassignedSegment => entry.previousLabel !== undefined);
+  return segments.length === 0 ? null : { kind: 'reassign-group', meetingId: id, segments };
 }
 
 /** Runs a persisted speaker mutation, pushing its captured inverse only after the backend confirms. Never optimistic. */
@@ -99,6 +116,35 @@ export async function runSetSegmentSpeakerWithHistory(
 }
 
 /**
+ * Reassigns every segment in `indices` to `speaker` AND records ONE combined
+ * inverse once the backend confirms — e.g. a grouped transcript block
+ * reassigned via a single chip click undoes as a single step, not one step
+ * per underlying segment. Mutations run sequentially (never `Promise.all`):
+ * each call re-reads/persists the same meeting, so racing them could drop
+ * an earlier write. The op is pushed only after every segment is confirmed.
+ */
+export async function runSetSegmentSpeakerGroupWithHistory(
+  store: MeetingsStore,
+  setSegmentSpeakerUseCase: SetSegmentSpeakerUseCase,
+  id: MeetingId,
+  indices: readonly number[],
+  speaker: string,
+): Promise<void> {
+  const inverse = captureReassignGroupInverse(store.selectedMeeting(), id, indices);
+  try {
+    for (const index of indices) {
+      store.updateMeeting(await setSegmentSpeakerUseCase.set(id, index, speaker));
+    }
+    if (inverse !== null) {
+      store.setSpeakerHistory(pushSpeakerOp(store.speakerHistory(), inverse));
+    }
+    store.clearError();
+  } catch (caught) {
+    store.setError(toErrorInfo(caught));
+  }
+}
+
+/**
  * Pops and executes the last speaker op's inverse through the existing use
  * cases (persisted, never optimistic). The op is dropped BEFORE the inverse
  * runs: a failed undo surfaces through the ERROR slot and is never retried
@@ -132,6 +178,10 @@ export async function runUndoLastSpeakerOp(
       store.updateMeeting(await renameSpeakerUseCase.rename(id, op.label, op.previousName ?? ''));
     } else if (op.kind === 'reassign') {
       store.updateMeeting(await setSegmentSpeakerUseCase.set(id, op.index, op.previousLabel));
+    } else if (op.kind === 'reassign-group') {
+      for (const segment of op.segments) {
+        store.updateMeeting(await setSegmentSpeakerUseCase.set(id, segment.index, segment.previousLabel));
+      }
     } else {
       for (const segment of op.segments) {
         store.updateMeeting(await setSegmentSpeakerUseCase.set(id, segment.index, segment.previousLabel));

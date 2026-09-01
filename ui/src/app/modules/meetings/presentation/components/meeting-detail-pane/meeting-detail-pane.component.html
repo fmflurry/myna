@@ -2,7 +2,10 @@
   <app-onboarding-panel
     [status]="modelsStatus()"
     [error]="error()"
+    [modelDownload]="modelDownload()"
     (recheckRequested)="recheckModelsRequested.emit()"
+    (downloadRequested)="downloadRequested.emit()"
+    (downloadCancelRequested)="downloadCancelRequested.emit()"
   />
 } @else if (!meeting()) {
   <app-welcome-panel
@@ -12,7 +15,7 @@
     (importRequested)="importRequested.emit()"
   />
 } @else {
-  <header class="detail-heading">
+    <header class="detail-heading">
     <h1>
       <app-editable-title [title]="displayTitle()" (titleChanged)="renameRequested.emit($event)" />
       &mdash; {{ headingDate() }}
@@ -26,6 +29,9 @@
         <span class="import-progress-label">{{ label }}</span>
         <button type="button" class="cancel-import" (click)="cancelImportRequested.emit()">Cancel</button>
       </div>
+    }
+    @if (meeting()?.hasAudio && hasAudio()) {
+      <app-audio-player [meetingId]="meeting()?.id" [hasAudio]="hasAudio()" />
     }
   </header>
 
@@ -171,6 +177,31 @@
       } @else if (diarizeDisabledReason(); as reason) {
         <p class="hint diarize-hint">{{ reason }}</p>
       }
+      <!-- Escape hatch for the destructive "Delete section…" path: each label
+           (computed shell-side from the standing undo op) doubles as the
+           button's title, and a null label hides its button. -->
+      @if (transcriptUndoLabel(); as label) {
+        <button
+          type="button"
+          class="undo undo-transcript"
+          [title]="label"
+          [attr.aria-label]="label"
+          (click)="undoTranscriptRequested.emit()"
+        >
+          Undo
+        </button>
+      }
+      @if (speakerUndoLabel(); as label) {
+        <button
+          type="button"
+          class="undo undo-speaker"
+          [title]="label"
+          [attr.aria-label]="label"
+          (click)="undoSpeakerRequested.emit()"
+        >
+          Undo
+        </button>
+      }
     </div>
     @if (showLiveTranscript()) {
       <app-live-transcript
@@ -178,11 +209,22 @@
         [partialTextMe]="partialTextMe()"
         [partialTextOthers]="partialTextOthers()"
       />
+    } @else if (diarizing()) {
+      <div class="diarize-loading" role="status">
+        <span class="spinner" aria-hidden="true"></span> Detecting speakers&hellip;
+      </div>
     } @else {
       <app-transcript-view
         [transcript]="meeting()!.transcript"
         [editable]="!isLive()"
+        [speakerNames]="speakerNamesRegistry()"
         (segmentEdited)="segmentEdited.emit($event)"
+        (speakerRenamed)="speakerRenamed.emit($event)"
+        (speakerRemoved)="speakerRemoved.emit($event)"
+        (segmentSpeakerReassigned)="segmentSpeakerReassigned.emit($event)"
+        (segmentGroupSpeakerReassigned)="segmentGroupSpeakerReassigned.emit($event)"
+        (sectionDeleted)="sectionDeleted.emit($event)"
+        (selectionSpeakerAssigned)="selectionSpeakerAssigned.emit($event)"
       />
     }
   </ng-template>

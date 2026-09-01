@@ -200,6 +200,9 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     renameFolder,
     deleteFolder,
     toggleFolderExpanded,
+    speakerHistory: signal([]),
+transcriptUndo: signal(null),
+modelDownload: signal(undefined),
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

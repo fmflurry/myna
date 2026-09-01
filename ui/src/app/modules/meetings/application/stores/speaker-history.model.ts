@@ -52,7 +52,25 @@ export interface SpeakerReassignOp {
   readonly previousLabel: string;
 }
 
-export type SpeakerOp = SpeakerRenameOp | SpeakerRemoveOp | SpeakerReassignOp;
+/** One segment's speaker label as it was before a grouped reassign. */
+export interface SpeakerReassignedSegment {
+  readonly index: number;
+  readonly previousLabel: string;
+}
+
+/**
+ * Inverse of a GROUPED `set_segment_speaker` reassign — e.g. reassigning
+ * every segment of a grouped transcript block via one chip click. Every
+ * segment restores as ONE undo entry, mirroring `SpeakerRemoveOp`'s
+ * multi-segment shape rather than pushing one `SpeakerReassignOp` per index.
+ */
+export interface SpeakerReassignGroupOp {
+  readonly kind: 'reassign-group';
+  readonly meetingId: MeetingId;
+  readonly segments: readonly SpeakerReassignedSegment[];
+}
+
+export type SpeakerOp = SpeakerRenameOp | SpeakerRemoveOp | SpeakerReassignOp | SpeakerReassignGroupOp;
 
 /** Undo stack depth cap — the oldest ops fall off first. */
 export const SPEAKER_HISTORY_CAP = 50;
@@ -70,5 +88,7 @@ export function describeSpeakerOp(op: SpeakerOp): string {
       return `Undo remove ${op.previousName ?? op.label}`;
     case 'reassign':
       return `Undo speaker change (segment ${op.index + 1})`;
+    case 'reassign-group':
+      return `Undo speaker change (${op.segments.length} segments)`;
   }
 }

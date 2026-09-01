@@ -34,6 +34,50 @@ const AUDIO_IMPORT_FILTERS: readonly FileDialogFilter[] = [{ name: 'Audio', exte
  */
 export const DEVICE_POLL_INTERVAL_MS = 5000;
 
+/**
+ * `MeetingsFacade.guarded`'s body, extracted to keep the facade under the
+ * project's max-lines limit. On success it clears the shared ERROR slot only
+ * when the current error came from the same `source` — or carries no source
+ * at all (legacy/backend-pushed errors keep any-success-clears behavior).
+ * A rejected call's error must survive a later UNRELATED success: the boot
+ * race where `loadTemplates`' success erased `checkModels`' rejection left
+ * onboarding stuck on "Checking installed models…" forever with no visible
+ * error.
+ */
+export async function runGuarded(
+  store: MeetingsStore,
+  run: () => Promise<void>,
+  source?: string,
+): Promise<void> {
+  try {
+    await run();
+    clearErrorFromSource(store, source);
+  } catch (caught) {
+    store.setError({ ...toErrorInfo(caught), ...(source !== undefined ? { source } : {}) });
+  }
+}
+
+/**
+ * Clears the shared error slot ONLY when the standing error came from
+ * `source` (or carries no source at all). Every success path that is not a
+ * retry of the failed operation must go through this rather than calling
+ * `store.clearError()` outright.
+ *
+ * `DevicesFacade.loadDevices` is why this is exported rather than inlined in
+ * {@link runGuarded}: it runs on a `DEVICE_POLL_INTERVAL_MS` timer for the
+ * whole life of the window, so an unconditional clear there erased a failed
+ * boot call's error within five seconds — every time. The onboarding panel
+ * was then stuck on "Checking installed models…" with `modelsStatus`
+ * undefined, no "Download models" button, and NO error surface to diagnose
+ * from.
+ */
+export function clearErrorFromSource(store: MeetingsStore, source?: string): void {
+  const current = store.error();
+  if (!current || current.source === undefined || current.source === source) {
+    store.clearError();
+  }
+}
+
 export const toErrorInfo = (caught: unknown): MeetingsErrorInfo => {
   if (caught instanceof MeetingsError) {
     return { code: caught.code, message: caught.message };

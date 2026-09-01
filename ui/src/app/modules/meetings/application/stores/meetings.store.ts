@@ -64,6 +64,16 @@ export {
 export interface MeetingsErrorInfo {
   readonly code: MeetingsErrorCode;
   readonly message: string;
+  /**
+   * Which facade operation produced this error (e.g. `'checkModels'`).
+   * `guarded()` only clears an error on success when the sources match (or
+   * the error carries none), so a rejected boot call's error survives a
+   * later unrelated success instead of silently vanishing — the swallowed
+   * race that left onboarding stuck on "Checking installed models…".
+   * Errors set outside `guarded()` (recording, backend pushes) stay
+   * source-less and keep the legacy any-success-clears behavior.
+   */
+  readonly source?: string;
 }
 
 /** Underlying flurryx signal slots. The token itself is module-private; only the injected instance TYPE is shared, with `meetings-store-wiring.support.ts`. */

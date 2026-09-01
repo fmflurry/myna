@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { vi } from 'vitest';
 
 import type { Meeting } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
@@ -7,6 +8,12 @@ import type { SummaryTemplate } from '../../../core/models/summary-template.mode
 import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
 import { WelcomePanelComponent } from '../welcome-panel/welcome-panel.component';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
+import { AudioPlayerComponent } from '../audio-player/audio-player.component';
+import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+
+class MockMeetingsFacade {
+  getAudioUrl = vi.fn().mockResolvedValue(null);
+}
 
 /**
  * Phase 5 presentation coverage: the determinate import/re-transcribe
@@ -16,6 +23,15 @@ import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
  * project's 400-line cap (same pattern as `meeting-detail-pane.component.welcome.spec.ts`).
  */
 describe('MeetingDetailPaneComponent import/re-transcribe', () => {
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      imports: [MeetingDetailPaneComponent, AudioPlayerComponent],
+      providers: [
+        { provide: MeetingsFacade, useClass: MockMeetingsFacade },
+      ],
+    });
+  });
+
   const templates: SummaryTemplate[] = [{ name: 'key-points', description: 'Key points', prompt: 'p' }];
 
   const meetingWithAudio: Meeting = {

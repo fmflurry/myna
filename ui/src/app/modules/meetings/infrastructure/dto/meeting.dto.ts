@@ -27,4 +27,13 @@ export interface MeetingDto {
    * field (still exercised by existing specs) keep type-checking.
    */
   readonly folderId?: string | null;
+  /**
+   * Display names keyed by flat speaker label (e.g. `'others:1'` ->
+   * `'Jean'`). Mirrors the Rust `MeetingDto::speaker_names` (`BTreeMap`,
+   * so always serialized — `{}` when unnamed). Typed optional so DTO
+   * literals predating speaker naming keep type-checking; the mapper
+   * omits the domain key for empty maps, matching `Meeting.speakerNames`'
+   * "absent means no names registered" contract.
+   */
+  readonly speakerNames?: Readonly<Record<string, string>>;
 }

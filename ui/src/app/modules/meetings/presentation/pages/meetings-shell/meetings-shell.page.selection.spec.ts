@@ -140,6 +140,7 @@ describe('MeetingsShellPage route-selection reactivity', () => {
   const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
+    speakerHistory: signal([]), transcriptUndo: signal(null),
     meetings,
     selectedMeeting,
     modelsStatus,
@@ -202,6 +203,7 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     renameFolder,
     deleteFolder,
     toggleFolderExpanded,
+    modelDownload: signal(undefined),
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

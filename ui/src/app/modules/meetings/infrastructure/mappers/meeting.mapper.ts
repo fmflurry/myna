@@ -25,6 +25,9 @@ export function mapMeetingDtoToDomain(dto: MeetingDto): Meeting {
     hasSystemTrack: dto.hasSystemTrack,
     droppedAudioChunks: dto.droppedAudioChunks,
     ...(dto.folderId !== null && dto.folderId !== undefined ? { folderId: toFolderId(dto.folderId) } : {}),
+    ...(dto.speakerNames && Object.keys(dto.speakerNames).length > 0
+      ? { speakerNames: dto.speakerNames }
+      : {}),
   };
 }
 

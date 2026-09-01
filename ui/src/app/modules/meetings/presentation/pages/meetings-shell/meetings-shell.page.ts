@@ -24,9 +24,16 @@ import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
-import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
+import type {
+  SpeakerRename,
+  TranscriptSectionDelete,
+  TranscriptSelectionSpeakerAssignment,
+  TranscriptSegmentEdit,
+  TranscriptSegmentGroupSpeakerReassign,
+  TranscriptSegmentSpeakerReassign,
+} from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, runMeetingDeleted, runMeetingMoveRequested } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, describeLatestSpeakerUndo, describeLatestTranscriptUndo, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -77,6 +84,11 @@ export class MeetingsShellPage implements OnInit {
   protected readonly recordingMeetingId = computed<MeetingId | undefined>(() =>
     this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined,
   );
+
+  /** Transcript-undo toolbar button label; `null` hides the button. */
+  protected readonly transcriptUndoLabel = computed(() => describeLatestTranscriptUndo(this.facade.transcriptUndo()));
+  /** Speaker-undo toolbar button label; `null` hides the button. */
+  protected readonly speakerUndoLabel = computed(() => describeLatestSpeakerUndo(this.facade.speakerHistory()));
 
   private timerHandle: ReturnType<typeof setInterval> | undefined;
 
@@ -173,8 +185,9 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.startRecording('', this.facade.selectedDevice()?.name);
   }
 
+  /** Stop, then auto-diarize when the finished meeting can be diarized — see `runStopRecording`. */
   onStop(): void {
-    void this.facade.stopRecording();
+    void runStopRecording(this.facade, () => this.onDiarizeRequested());
   }
 
   onCancel(): void {
@@ -204,22 +217,58 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.editTranscriptSegment(meeting.id, edit.index, edit.text);
   }
 
+  /** Chip-menu rename; the backend rewrites EVERY occurrence of `label`, never just the clicked segment. */
+  onSpeakerRenamed(rename: SpeakerRename): void {
+    this.withSelectedMeetingId((id) => this.facade.renameSpeaker(id, rename.label, rename.name));
+  }
+
+  /** Chip-menu removal (already confirm-guarded in the transcript view); segments fall back to Others. */
+  onSpeakerRemoved(label: string): void {
+    this.withSelectedMeetingId((id) => this.facade.removeSpeaker(id, label));
+  }
+
+  onSegmentSpeakerReassigned(reassign: TranscriptSegmentSpeakerReassign): void {
+    this.withSelectedMeetingId((id) => this.facade.setSegmentSpeaker(id, reassign.index, reassign.speaker));
+  }
+
+  /** A whole grouped block reassigned via one chip click — ONE compound undo step; see `SpeakerFacade.setSegmentSpeakers`. */
+  onSegmentGroupSpeakerReassigned(reassign: TranscriptSegmentGroupSpeakerReassign): void {
+    this.withSelectedMeetingId((id) => this.facade.setSegmentSpeakers(id, reassign.indices, reassign.speaker));
+  }
+
+  /** Selection-toolbar assignment: ALL indices in ONE batched call — one compound undo entry. */
+  onSelectionSpeakerAssigned(assignment: TranscriptSelectionSpeakerAssignment): void {
+    this.withSelectedMeetingId((id) => this.facade.setSegmentSpeakers(id, [...assignment.indices], assignment.speaker));
+  }
+
+  /** Chip-menu section delete (already confirm-guarded in the transcript view) — ONE compound undo step; see `TranscriptEditingFacade.deleteTranscriptSection`. */
+  onSectionDeleted(event: TranscriptSectionDelete): void {
+    this.withSelectedMeetingId((id) => this.facade.deleteTranscriptSection(id, event.indices));
+  }
+
+  /** Toolbar "Undo" over the transcript-undo slot (delete/merge inverses). */
+  onUndoTranscriptRequested(): void {
+    void this.facade.undoLastTranscriptOp();
+  }
+
+  /** Toolbar "Undo" over the speaker-undo stack. */
+  onUndoSpeakerRequested(): void {
+    void this.facade.undoLastSpeakerOp();
+  }
+
+  /** Runs a speaker op against the selected meeting's id; a no-op when nothing is selected. */
+  private withSelectedMeetingId(run: (id: MeetingId) => Promise<void>): void {
+    const meeting = this.facade.selectedMeeting();
+    if (meeting) {
+      void run(meeting.id);
+    }
+  }
+
   onMeetingDeleted(id: MeetingId): void {
     runMeetingDeleted(this.facade, this.router, id);
   }
 
-  /**
-   * Drag-and-drop and the kebab menu's "move to folder" option are both
-   * first-class ways to move or archive a meeting; this is the drag-and-drop
-   * handler — it routes by the drop target's `kind`, always via
-   * `facade.placeMeeting` with `previousId`/`nextId` both `null` (the backend
-   * resolves that to `Placement::Keep` — container change only, matching
-   * today's behaviour but as one write instead of two). Archiving preserves
-   * the meeting's CURRENT folder — looked up from `facade.meetings()` — so a
-   * meeting dragged to the archive never loses its filing. See
-   * `onMeetingArchiveToggled`/`onMeetingFolderChanged` for the kebab-menu
-   * equivalents.
-   */
+  /** Drag-and-drop and the kebab's "move to folder" both route through `facade.placeMeeting`; see `runMeetingMoveRequested`. */
   onMeetingMoveRequested(request: MeetingDragMoveRequest): void {
     runMeetingMoveRequested(this.facade, this.facade.meetings(), request);
   }
@@ -234,33 +283,21 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.setMeetingFolder(event.id, event.folderId);
   }
 
-  reload(): void {
-    const current = this.facade.selectedMeeting();
-    if (current) {
-      void this.facade.openMeeting(current.id);
-    }
-  }
-
-  /**
-   * Wired to the detail pane's `retryRequested`, which is now emitted from
-   * the hoisted error banner regardless of which pane is showing — not just
-   * the meeting-selected detail branch. With a meeting selected, "retry"
-   * still means re-opening it (`reload()`, unchanged). With no meeting
-   * selected (e.g. an import rejected before any placeholder meeting was
-   * created — see meeting-detail-pane.component.html), `reload()` is a
-   * no-op, so retry instead just dismisses the error so the user can try
-   * again from a clean state.
-   */
+  /** Retry from the hoisted error banner: re-open the selected meeting, or dismiss when none — see `runErrorRetry`. */
   onErrorRetryClicked(): void {
-    if (this.facade.selectedMeeting()) {
-      this.reload();
-    } else {
-      this.facade.clearError();
-    }
+    runErrorRetry(this.facade);
   }
 
   recheckModels(): void {
     void this.facade.checkModels();
+  }
+
+  startModelDownload(): void {
+    void this.facade.initializeModels();
+  }
+
+  cancelModelDownload(): void {
+    void this.facade.cancelModelDownload();
   }
 
   summarize(templateName: string): void {
@@ -332,6 +369,11 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onDiarizeRequested(): void {
+    // Re-entry guard: the auto-run after stop and a manual button click can
+    // race; the pane's disabled state is not the only caller anymore.
+    if (this.diarizing()) {
+      return;
+    }
     const meeting = this.facade.selectedMeeting();
     if (!meeting) {
       return;

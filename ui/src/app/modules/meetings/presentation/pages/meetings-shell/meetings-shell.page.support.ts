@@ -1,9 +1,13 @@
 import type { Router } from '@angular/router';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+import type { MeetingsErrorInfo } from '../../../application/stores/meetings.store';
+import { describeSpeakerOp, type SpeakerOp } from '../../../application/stores/speaker-history.model';
+import { describeTranscriptOp, type TranscriptOp } from '../../../application/stores/transcript-history.model';
 import type { SystemAudioStatus } from '../../../core/models/capture-source.model';
 import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
+import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 
 /**
@@ -69,4 +73,68 @@ export function runMeetingDeleted(facade: MeetingsFacade, router: Router, id: Me
       void router.navigate(['/meetings']);
     }
   });
+}
+
+/**
+ * Wired to the detail pane's `retryRequested`, which is emitted from the
+ * hoisted error banner regardless of which pane is showing — not just the
+ * meeting-selected detail branch. With a meeting selected, "retry" means
+ * re-opening it. With no meeting selected (e.g. an import rejected before
+ * any placeholder meeting was created — see meeting-detail-pane.component.html),
+ * re-opening is impossible, so retry instead just dismisses the error so the
+ * user can try again from a clean state.
+ */
+export function runErrorRetry(facade: MeetingsFacade): void {
+  const current = facade.selectedMeeting();
+  if (current) {
+    void facade.openMeeting(current.id);
+  } else {
+    facade.clearError();
+  }
+}
+
+/**
+ * Label for the transcript toolbar's Undo button — the standing
+ * `TRANSCRIPT_UNDO` slot rendered via `describeTranscriptOp`, or `null` when
+ * nothing structural is undoable (button hidden).
+ */
+export const describeLatestTranscriptUndo = (op: TranscriptOp | null): string | null =>
+  op === null ? null : describeTranscriptOp(op);
+
+/**
+ * Label for the speaker toolbar's Undo button — the TOP of the
+ * `SPEAKER_HISTORY` stack rendered via `describeSpeakerOp` (undo pops the
+ * top), or `null` when the stack is empty (button hidden).
+ */
+export function describeLatestSpeakerUndo(history: readonly SpeakerOp[]): string | null {
+  const op = history.at(-1);
+  return op === undefined ? null : describeSpeakerOp(op);
+}
+
+/**
+ * Auto-diarize gate run once after `stopRecording` settles: only when the
+ * stop landed cleanly (`error` slot empty), the meeting actually has a
+ * `track-system.wav` (the backend answers NotFound without one — a mic-only
+ * recording must never trigger), and the diarization models are on disk.
+ * Manual corrections survive the relabel backend-side
+ * (crates/myna-stt/src/relabel.rs:64), so pinned segments need no UI guard.
+ */
+export const shouldAutoDiarizeAfterStop = (
+  error: MeetingsErrorInfo | undefined,
+  meeting: Meeting | undefined,
+  modelsStatus: ModelsStatus | undefined,
+): boolean =>
+  error === undefined && meeting?.hasSystemTrack === true && modelsStatus?.diarization?.present === true;
+
+/**
+ * Stops the recording, then auto-runs speaker detection when the finished
+ * meeting can actually be diarized. `onDiarize` is the shell's manual
+ * `onDiarizeRequested` handler, so the in-flight guard and error surfacing
+ * are identical to the "Detect speakers" button.
+ */
+export async function runStopRecording(facade: MeetingsFacade, onDiarize: () => void): Promise<void> {
+  await facade.stopRecording();
+  if (shouldAutoDiarizeAfterStop(facade.error(), facade.selectedMeeting(), facade.modelsStatus())) {
+    onDiarize();
+  }
 }

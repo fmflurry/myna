@@ -7,9 +7,9 @@ import { describeTranscriptOp, type TranscriptDeleteOp, type TranscriptMergeOp }
 /**
  * Pure unit specs for the transcript-undo op/inverse helpers. Mirrors the
  * style of `speaker-history.model.ts` (`describeSpeakerOp`), but for the
- * single-slot `TranscriptOp` variants: `delete` (one removed segment) and
- * `merge` (two original segments). No Angular wiring — these are plain
- * functions over plain data.
+ * single-slot `TranscriptOp` variants: `delete` (one or more removed
+ * segments — a whole visible section) and `merge` (two original segments).
+ * No Angular wiring — these are plain functions over plain data.
  */
 describe('describeTranscriptOp', () => {
   const meetingId = toMeetingId('m-1');
@@ -19,13 +19,24 @@ describe('describeTranscriptOp', () => {
       kind: 'delete',
       meetingId,
       index: 2,
-      segment: transcriptSegment({ text: 'third' }),
+      segments: [transcriptSegment({ text: 'third' })],
     };
 
     const label = describeTranscriptOp(op);
 
     expect(label.length).toBeGreaterThan(0);
     expect(label).toContain('3');
+  });
+
+  it('describes a MULTI-segment delete op by its segment count', () => {
+    const op: TranscriptDeleteOp = {
+      kind: 'delete',
+      meetingId,
+      index: 2,
+      segments: [transcriptSegment({ text: 'third' }), transcriptSegment({ text: 'fourth' })],
+    };
+
+    expect(describeTranscriptOp(op)).toBe('Undo delete of 2 segments');
   });
 
   it('describes a merge op with a non-empty, 1-based segment label', () => {
@@ -48,7 +59,7 @@ describe('describeTranscriptOp', () => {
       kind: 'delete',
       meetingId,
       index: 0,
-      segment: transcriptSegment({ text: 'only' }),
+      segments: [transcriptSegment({ text: 'only' })],
     };
     const mergeOp: TranscriptMergeOp = {
       kind: 'merge',
@@ -66,13 +77,13 @@ describe('describeTranscriptOp', () => {
       kind: 'delete',
       meetingId,
       index: 0,
-      segment: transcriptSegment({ text: 'a' }),
+      segments: [transcriptSegment({ text: 'a' })],
     };
     const second: TranscriptDeleteOp = {
       kind: 'delete',
       meetingId,
       index: 4,
-      segment: transcriptSegment({ text: 'e' }),
+      segments: [transcriptSegment({ text: 'e' })],
     };
 
     expect(describeTranscriptOp(first)).not.toBe(describeTranscriptOp(second));

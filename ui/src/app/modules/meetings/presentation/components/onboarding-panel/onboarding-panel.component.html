@@ -20,6 +20,21 @@
       </div>
     }
 
+    <div class="model-download">
+      @if (isDownloading()) {
+        <p class="download-progress" role="status" aria-live="polite">
+          Downloading {{ download().artifact }} ({{ download().index + 1 }} of {{ download().total }})&hellip;
+        </p>
+        <button type="button" class="cancel-download" (click)="cancelDownload()">Cancel</button>
+      } @else {
+        <button type="button" class="start-download" (click)="startDownload()">Download models</button>
+        @if (downloadFailed() && download().message) {
+          <p class="download-error" role="alert">{{ download().message }}</p>
+        }
+      }
+    </div>
+
+    <p class="hint">Or run the download script manually:</p>
     <div class="download">
       <code>{{ downloadCommand }}</code>
       <button type="button" class="copy-download-command" (click)="copyDownloadCommand()">

@@ -134,6 +134,11 @@ describe('MeetingsShellPage', () => {
     exportMeeting, selectDevice, selectCaptureSource, selectAudioSource, selectSummaryLanguage,
     requestSystemAudioPermission,
     folders, expandedFolders, loadFolders, createFolder, renameFolder, deleteFolder, toggleFolderExpanded,
+    speakerHistory: signal([]),
+transcriptUndo: signal(null),
+modelDownload: signal(undefined),
+    initializeModels: vi.fn(async () => undefined),
+    cancelModelDownload: vi.fn(async () => undefined),
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

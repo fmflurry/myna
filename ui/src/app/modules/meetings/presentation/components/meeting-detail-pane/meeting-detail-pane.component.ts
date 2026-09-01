@@ -1,7 +1,12 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, HostListener, computed, effect, input, output, signal } from '@angular/core';
 
-import type { MeetingsErrorInfo, SummaryCacheEntry, SummarizingKey } from '../../../application/stores/meetings.store';
+import type {
+  MeetingsErrorInfo,
+  ModelDownloadState,
+  SummaryCacheEntry,
+  SummarizingKey,
+} from '../../../application/stores/meetings.store';
 import type { AudioSource } from '../../../core/models/audio-source.model';
 import type { CaptureSource } from '../../../core/models/capture-source.model';
 import type { Meeting } from '../../../core/models/meeting.model';
@@ -20,6 +25,7 @@ import {
   formatMinutesLong,
   formatTemplateLabel,
 } from '../../utils/format-display.util';
+import { AudioPlayerComponent } from '../audio-player/audio-player.component';
 import { EditableTitleComponent } from '../editable-title/editable-title.component';
 import { ErrorStateComponent } from '../error-state/error-state.component';
 import { LiveTranscriptComponent } from '../live-transcript/live-transcript.component';
@@ -28,6 +34,13 @@ import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.comp
 import { SummaryLanguagePickerComponent } from '../summary-language-picker/summary-language-picker.component';
 import { SummaryPanelComponent } from '../summary-panel/summary-panel.component';
 import type { TranscriptSegmentEdit } from '../transcript-view/transcript-view.component';
+import type {
+  SpeakerRename,
+  TranscriptSectionDelete,
+  TranscriptSelectionSpeakerAssignment,
+  TranscriptSegmentGroupSpeakerReassign,
+  TranscriptSegmentSpeakerReassign,
+} from '../transcript-view/transcript-view.component';
 import { TranscriptViewComponent } from '../transcript-view/transcript-view.component';
 import { WelcomePanelComponent } from '../welcome-panel/welcome-panel.component';
 import {
@@ -55,6 +68,9 @@ const TRANSCRIPT_TAB = 'transcript';
 
 const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json'];
 
+/** Frozen fallback registry so `speakerNamesRegistry` never allocates a fresh object per CD pass. */
+const EMPTY_SPEAKER_NAMES: Readonly<Record<string, string>> = Object.freeze({});
+
 /**
  * Right-hand detail pane: heading, a horizontal tab strip (Transcript + one
  * tab per summary template), and the active tab's content. Renders the
@@ -66,6 +82,7 @@ const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json
 @Component({
   selector: 'app-meeting-detail-pane',
   imports: [
+    AudioPlayerComponent,
     EditableTitleComponent,
     ErrorStateComponent,
     LiveTranscriptComponent,
@@ -85,6 +102,7 @@ export class MeetingDetailPaneComponent {
   readonly meeting = input<Meeting | undefined>(undefined);
   readonly modelsReady = input.required<boolean>();
   readonly modelsStatus = input<ModelsStatus | undefined>(undefined);
+  readonly modelDownload = input<ModelDownloadState | undefined>(undefined);
   readonly recordingState = input.required<RecordingState>();
   readonly finalizedSegments = input<readonly TranscriptSegment[]>([]);
   readonly partialTextMe = input('');
@@ -126,14 +144,32 @@ export class MeetingDetailPaneComponent {
   readonly hasSystemTrack = input(false);
   /** True for the duration of an in-flight `diarizeMeeting` call; shows activity on the "Detect speakers" button specifically (never borrowed from an unrelated `importing`). */
   readonly diarizing = input(false);
+  /** Transcript-undo button label (from `describeTranscriptOp`); `null` hides the button. */
+  readonly transcriptUndoLabel = input<string | null>(null);
+  /** Speaker-undo button label (from `describeSpeakerOp` on the stack top); `null` hides the button. */
+  readonly speakerUndoLabel = input<string | null>(null);
 
   readonly renameRequested = output<string>();
   readonly segmentEdited = output<TranscriptSegmentEdit>();
+  /** Re-emitted from `app-transcript-view`'s chip-menu ops; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly speakerRenamed = output<SpeakerRename>();
+  readonly speakerRemoved = output<string>();
+  readonly segmentSpeakerReassigned = output<TranscriptSegmentSpeakerReassign>();
+  readonly segmentGroupSpeakerReassigned = output<TranscriptSegmentGroupSpeakerReassign>();
+  /** Re-emitted from `app-transcript-view`'s confirm-guarded "Delete section…"; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly sectionDeleted = output<TranscriptSectionDelete>();
+  /** Re-emitted from `app-transcript-view`'s floating selection toolbar; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly selectionSpeakerAssigned = output<TranscriptSelectionSpeakerAssignment>();
+  /** Emitted by the transcript toolbar's Undo buttons; the shell maps them onto the two undo slots. */
+  readonly undoTranscriptRequested = output<void>();
+  readonly undoSpeakerRequested = output<void>();
   readonly summarizeRequested = output<string>();
   readonly cancelSummaryRequested = output<void>();
   readonly exportRequested = output<MeetingExportFormat>();
   readonly retryRequested = output<void>();
   readonly recheckModelsRequested = output<void>();
+  readonly downloadRequested = output<void>();
+  readonly downloadCancelRequested = output<void>();
   readonly summaryLanguageSelected = output<string>();
   /** Emitted when the active tab has a persisted-but-unloaded summary ref that needs fetching. */
   readonly summaryLoadRequested = output<SummaryLoadRequest>();
@@ -168,8 +204,16 @@ export class MeetingDetailPaneComponent {
 
   protected readonly isLive = computed(() => this.recordingState() !== 'idle');
 
-  /** Drives the transcript column: a live import re-uses the same streaming view as a live recording. */
-  protected readonly showLiveTranscript = computed(() => this.isLive() || this.importing());
+  /**
+   * Drives the transcript column: a live import re-uses the same streaming
+   * view as a live recording. A diarize-only run over an already-saved
+   * meeting does NOT — it shares the `importing` slot but has nothing to
+   * stream, so it gets its own loading placeholder instead of this empty
+   * live view.
+   */
+  protected readonly showLiveTranscript = computed(
+    () => this.isLive() || (this.importing() && !this.diarizing()),
+  );
 
   protected readonly importProgressLabel = computed(() =>
     computeImportProgressLabel(this.importing(), this.importProgress()),
@@ -221,6 +265,11 @@ export class MeetingDetailPaneComponent {
   });
 
   protected readonly displayTitle = computed(() => formatMeetingTitle(this.meeting()?.title ?? ''));
+
+  /** The selected meeting's speaker-name registry, with a FROZEN stable fallback so the transcript view's input never flips identity per CD pass. */
+  protected readonly speakerNamesRegistry = computed<Readonly<Record<string, string>>>(
+    () => this.meeting()?.speakerNames ?? EMPTY_SPEAKER_NAMES,
+  );
 
   protected readonly metaLine = computed(() => {
     if (this.isLive()) {

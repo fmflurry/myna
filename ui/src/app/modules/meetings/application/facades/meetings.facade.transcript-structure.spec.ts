@@ -129,7 +129,7 @@ describe('MeetingsFacade transcript structural mutations + undo', () => {
       kind: 'delete',
       meetingId,
       index: 2,
-      segment: originalThirdSegment,
+      segments: [originalThirdSegment],
     });
   });
 
@@ -228,6 +228,16 @@ describe('MeetingsFacade transcript structural mutations + undo', () => {
     expect(facade.speakerHistory()).toEqual([]);
   });
 
+  it('undo of a structural op clears SPEAKER_HISTORY — the blind restore shifts indices too', async () => {
+    const setSpy = vi.spyOn(repository, 'setSegmentSpeaker');
+    await facade.deleteTranscriptSegment(meetingId, 0, 'first');
+    await facade.setSegmentSpeaker(meetingId, 1, 'me');
+    await facade.undoLastTranscriptOp();
+    expect(facade.speakerHistory()).toEqual([]);
+    await facade.undoLastSpeakerOp();
+    expect(setSpy).not.toHaveBeenCalledWith(meetingId, 1, 'others');
+  });
+
   it('sets the error slot and leaves TRANSCRIPT_UNDO empty when the repository rejects a delete', async () => {
     vi.spyOn(repository, 'deleteTranscriptSegment').mockRejectedValueOnce(
       new MeetingsError('BUSY', 'Meeting is recording.'),
@@ -258,5 +268,133 @@ describe('MeetingsFacade transcript structural mutations + undo', () => {
       'second',
       'third',
     ]);
+  });
+
+  describe('deleteTranscriptSection (compound undo)', () => {
+    it('deletes a group HIGHEST-index-first with store-resolved CAS texts, recording ONE compound undo op', async () => {
+      const deleteSpy = vi.spyOn(repository, 'deleteTranscriptSegment');
+
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+
+      // Descending order is what makes the batch index-shift-safe: deleting
+      // a higher index never moves a lower one, so every queued index stays
+      // valid without re-reading the mutated meeting between calls.
+      expect(deleteSpy.mock.calls.map(([, index, text]) => [index, text])).toEqual([
+        [1, 'second'],
+        [0, 'first'],
+      ]);
+      expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.text)).toEqual(['third']);
+      expect(facade.transcriptUndo()).toEqual({
+        kind: 'delete',
+        meetingId,
+        index: 0,
+        segments: [originalFirstSegment, originalSecondSegment],
+      });
+    });
+
+    it('normalizes shuffled indices — still deletes high→low and captures segments in ascending order', async () => {
+      const deleteSpy = vi.spyOn(repository, 'deleteTranscriptSegment');
+
+      await facade.deleteTranscriptSection(meetingId, [1, 0]);
+
+      expect(deleteSpy.mock.calls.map(([, index]) => index)).toEqual([1, 0]);
+      expect(facade.transcriptUndo()).toEqual({
+        kind: 'delete',
+        meetingId,
+        index: 0,
+        segments: [originalFirstSegment, originalSecondSegment],
+      });
+    });
+
+    it('undo restores the whole section in ONE splice, in original order, then clears the slot', async () => {
+      const restoreSpy = vi.spyOn(repository, 'restoreTranscriptSegments');
+
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+      await facade.undoLastTranscriptOp();
+
+      expect(restoreSpy).toHaveBeenCalledWith(meetingId, 0, 0, [originalFirstSegment, originalSecondSegment]);
+      expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.text)).toEqual([
+        'first',
+        'second',
+        'third',
+      ]);
+      expect(facade.transcriptUndo()).toBeNull();
+    });
+
+    it('clears SPEAKER_HISTORY after a successful section delete — shifted indices would replay the wrong line', async () => {
+      await facade.renameSpeaker(meetingId, 'others:1', 'Jeanne');
+      expect(facade.speakerHistory().length).toBe(1);
+
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+
+      expect(facade.speakerHistory()).toEqual([]);
+    });
+
+    it('a mid-batch failure stops the loop, keeps the applied prefix, sets the error, and writes NO undo op', async () => {
+      const real = repository.deleteTranscriptSegment.bind(repository);
+      vi.spyOn(repository, 'deleteTranscriptSegment').mockImplementation((id, index, text) =>
+        index === 0
+          ? Promise.reject(new MeetingsError('BUSY', 'Meeting is recording.'))
+          : real(id, index, text),
+      );
+      await facade.renameSpeaker(meetingId, 'others:1', 'Jeanne');
+
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+
+      // Index 1 ('second') was already persisted-deleted before index 0
+      // failed — the prefix stays applied, there is just nothing to undo it
+      // with (documented limitation of the single-slot transcript undo).
+      expect(facade.error()?.code).toBe('BUSY');
+      expect(facade.transcriptUndo()).toBeNull();
+      expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.text)).toEqual([
+        'first',
+        'third',
+      ]);
+      // The applied prefix shifted every later index, so the standing
+      // speaker-history inverses are stale — cleared rather than left armed.
+      expect(facade.speakerHistory()).toEqual([]);
+    });
+
+    it('a partial section-delete failure drops a stale TRANSCRIPT_UNDO — the applied prefix shifted indices', async () => {
+      await facade.deleteTranscriptSegment(meetingId, 2, 'third');
+      const real = repository.deleteTranscriptSegment.bind(repository);
+      vi.spyOn(repository, 'deleteTranscriptSegment').mockImplementation((id, index, text) =>
+        index === 0 ? Promise.reject(new MeetingsError('BUSY', 'Meeting is recording.')) : real(id, index, text));
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+      expect(facade.transcriptUndo()).toBeNull();
+    });
+
+    it('a first-call failure applies nothing, writes no undo op, and KEEPS SPEAKER_HISTORY', async () => {
+      vi.spyOn(repository, 'deleteTranscriptSegment').mockRejectedValueOnce(
+        new MeetingsError('BUSY', 'Meeting is recording.'),
+      );
+      await facade.renameSpeaker(meetingId, 'others:1', 'Jeanne');
+
+      await facade.deleteTranscriptSection(meetingId, [0, 1]);
+
+      expect(facade.error()?.code).toBe('BUSY');
+      expect(facade.transcriptUndo()).toBeNull();
+      expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.text)).toEqual([
+        'first',
+        'second',
+        'third',
+      ]);
+      expect(facade.speakerHistory().length).toBe(1);
+    });
+
+    it('a single-index section behaves like the single delete (one segment, same slot shape)', async () => {
+      await facade.deleteTranscriptSection(meetingId, [2]);
+
+      expect(facade.selectedMeeting()?.transcript?.segments.map((segment) => segment.text)).toEqual([
+        'first',
+        'second',
+      ]);
+      expect(facade.transcriptUndo()).toEqual({
+        kind: 'delete',
+        meetingId,
+        index: 2,
+        segments: [originalThirdSegment],
+      });
+    });
   });
 });

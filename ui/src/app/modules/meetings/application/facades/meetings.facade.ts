@@ -4,6 +4,7 @@ import type { CaptureSource } from '../../core/models/capture-source.model';
 import type { FolderId } from '../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
+import { AudioRepositoryPort } from '../../core/ports/audio-repository.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
 import { CancelImportUseCase } from '../use-cases/cancel-import.usecase';
@@ -16,7 +17,6 @@ import { DeleteFolderUseCase } from '../use-cases/delete-folder.usecase';
 import { DeleteMeetingUseCase } from '../use-cases/delete-meeting.usecase';
 import { DiarizeMeetingUseCase } from '../use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from '../use-cases/edit-summary.usecase';
-import { EditTranscriptSegmentUseCase } from '../use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from '../use-cases/get-app-version.usecase';
 import { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
@@ -43,6 +43,7 @@ import {
   runCancelImport,
   runDiarizeMeeting,
   runEditSummary,
+  runGuarded,
   runImportAudio,
   runPlaceMeeting,
   runRetranscribeMeeting,
@@ -52,7 +53,6 @@ import {
 import { ModelsFacade } from './models.facade';
 import { SpeakerFacade } from './speaker.facade';
 import { TranscriptEditingFacade } from './transcript-editing.facade';
-
 /**
  * The ONLY class components are allowed to inject for the meetings module.
  * Exposes readonly signals from MeetingsStore plus thin methods delegating
@@ -78,7 +78,6 @@ export class MeetingsFacade {
   private readonly deleteMeetingUseCase = inject(DeleteMeetingUseCase);
   private readonly renameMeetingUseCase = inject(RenameMeetingUseCase);
   private readonly setMeetingArchivedUseCase = inject(SetMeetingArchivedUseCase);
-  private readonly editTranscriptSegmentUseCase = inject(EditTranscriptSegmentUseCase);
   private readonly editSummaryUseCase = inject(EditSummaryUseCase);
   private readonly summarizeMeetingUseCase = inject(SummarizeMeetingUseCase);
   private readonly listTemplatesUseCase = inject(ListTemplatesUseCase);
@@ -101,7 +100,7 @@ export class MeetingsFacade {
   private readonly deleteFolderUseCase = inject(DeleteFolderUseCase);
   private readonly setMeetingFolderUseCase = inject(SetMeetingFolderUseCase);
   private readonly placeMeetingUseCase = inject(PlaceMeetingUseCase);
-
+  private readonly audioRepository = inject(AudioRepositoryPort);
   readonly meetings = this.store.meetings;
   readonly selectedMeeting = this.store.selectedMeeting;
   readonly recordingState = this.store.recordingState;
@@ -191,9 +190,10 @@ export class MeetingsFacade {
   /** Dismisses the current error without retrying anything. */
   clearError = (): void => this.store.clearError();
 
-  loadMeetings = (): Promise<void> => this.guarded(async () => this.store.setMeetings(await this.listMeetingsUseCase.list()));
+  loadMeetings = (): Promise<void> =>
+    this.guarded(async () => this.store.setMeetings(await this.listMeetingsUseCase.list()), 'loadMeetings');
   openMeeting = (id: MeetingId): Promise<void> =>
-    this.guarded(async () => this.store.setSelectedMeeting(await this.openMeetingUseCase.open(id)));
+    this.guarded(async () => this.store.setSelectedMeeting(await this.openMeetingUseCase.open(id)), 'openMeeting');
 
   async deleteMeeting(id: MeetingId): Promise<void> {
     await this.guarded(async () => {
@@ -202,38 +202,32 @@ export class MeetingsFacade {
       if (this.store.selectedMeeting()?.id === id) {
         this.store.clearSelectedMeeting();
       }
-    });
+    }, 'deleteMeeting');
   }
 
   /** Runs `run`, clearing the shared error slot on success and funneling any failure into it. Never optimistic. */
-  private async guarded(run: () => Promise<void>): Promise<void> {
-    try {
-      await run();
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    }
+  private guarded(run: () => Promise<void>, source?: string): Promise<void> {
+    return runGuarded(this.store, run, source);
   }
 
   /** Runs a mutation that returns the meeting the backend actually persisted and mirrors it into the store. */
-  private async applyMeetingMutation(mutate: () => Promise<Meeting>): Promise<void> {
-    await this.guarded(async () => this.store.updateMeeting(await mutate()));
+  private async applyMeetingMutation(mutate: () => Promise<Meeting>, source: string): Promise<void> {
+    await this.guarded(async () => this.store.updateMeeting(await mutate()), source);
   }
 
   /** Renames a meeting; never optimistic, so a failed rename never leaves a stale title on screen. */
   async renameMeeting(id: MeetingId, title: string): Promise<void> {
-    await this.applyMeetingMutation(() => this.renameMeetingUseCase.rename(id, title));
+    await this.applyMeetingMutation(() => this.renameMeetingUseCase.rename(id, title), 'renameMeeting');
   }
 
   /** Archives or unarchives a meeting; never optimistic, mirrors renameMeeting. */
   async setMeetingArchived(id: MeetingId, archived: boolean): Promise<void> {
-    await this.applyMeetingMutation(() => this.setMeetingArchivedUseCase.set(id, archived));
+    await this.applyMeetingMutation(() => this.setMeetingArchivedUseCase.set(id, archived), 'setMeetingArchived');
   }
 
-  /** Persists a manual correction to one transcript segment; never optimistic. Rejected with BUSY by the backend while that meeting is recording. */
-  async editTranscriptSegment(id: MeetingId, index: number, text: string): Promise<void> {
-    await this.applyMeetingMutation(() => this.editTranscriptSegmentUseCase.edit(id, index, text));
-  }
+  /** Persists a manual correction to one transcript segment; see `TranscriptEditingFacade.editTranscriptSegment`. */
+  editTranscriptSegment = (id: MeetingId, index: number, text: string): Promise<void> =>
+    this.transcriptEditingFacade.editTranscriptSegment(id, index, text);
 
   /** Persists an edited summary's markdown; never optimistic — see `runEditSummary`. */
   async editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<void> {
@@ -256,12 +250,13 @@ export class MeetingsFacade {
     }
   }
 
-  loadTemplates = (): Promise<void> => this.guarded(async () => this.store.setTemplates(await this.listTemplatesUseCase.list()));
-  checkModels = (): Promise<void> => this.guarded(async () => this.store.setModelsStatus(await this.checkModelsUseCase.check()));
+  loadTemplates = (): Promise<void> =>
+    this.guarded(async () => this.store.setTemplates(await this.listTemplatesUseCase.list()), 'loadTemplates');
+  checkModels = (): Promise<void> =>
+    this.guarded(async () => this.store.setModelsStatus(await this.checkModelsUseCase.check()), 'checkModels');
 
-  // Model download, device, speaker-undo, and transcript-undo mutators below
-  // are one-line delegations to ModelsFacade / DevicesFacade / SpeakerFacade
-  // / TranscriptEditingFacade — see those classes for the orchestration.
+  // Model download, device, speaker-undo, and transcript-undo mutators below are one-line
+  // delegations — see ModelsFacade / DevicesFacade / SpeakerFacade / TranscriptEditingFacade.
   initializeModels = (): Promise<void> => this.modelsFacade.initializeModels();
   initializeDiarizationModels = (): Promise<void> => this.modelsFacade.initializeDiarizationModels();
   cancelModelDownload = (): Promise<void> => this.modelsFacade.cancelModelDownload();
@@ -274,8 +269,13 @@ export class MeetingsFacade {
   removeSpeaker = (id: MeetingId, label: string): Promise<void> => this.speakerFacade.removeSpeaker(id, label);
   setSegmentSpeaker = (id: MeetingId, index: number, speaker: string): Promise<void> =>
     this.speakerFacade.setSegmentSpeaker(id, index, speaker);
+  setSegmentSpeakers = (id: MeetingId, indices: readonly number[], speaker: string): Promise<void> =>
+    this.speakerFacade.setSegmentSpeakers(id, indices, speaker);
   deleteTranscriptSegment = (id: MeetingId, index: number, expectedText: string): Promise<void> =>
     this.transcriptEditingFacade.deleteTranscriptSegment(id, index, expectedText);
+  /** Deletes a whole visible section (contiguous group indices) as ONE compound undo step. */
+  deleteTranscriptSection = (id: MeetingId, indices: readonly number[]): Promise<void> =>
+    this.transcriptEditingFacade.deleteTranscriptSection(id, indices);
   mergeTranscriptSegmentUp = (id: MeetingId, index: number, expectedText: string): Promise<void> =>
     this.transcriptEditingFacade.mergeTranscriptSegmentUp(id, index, expectedText);
 
@@ -314,16 +314,16 @@ export class MeetingsFacade {
   }
 
   checkSystemAudio = (): Promise<void> =>
-    this.guarded(async () => this.store.setSystemAudioStatus(await this.checkSystemAudioUseCase.status()));
+    this.guarded(async () => this.store.setSystemAudioStatus(await this.checkSystemAudioUseCase.status()), 'checkSystemAudio');
   requestSystemAudioPermission = (): Promise<void> =>
-    this.guarded(async () => this.store.setSystemAudioStatus(await this.checkSystemAudioUseCase.request()));
+    this.guarded(async () => this.store.setSystemAudioStatus(await this.checkSystemAudioUseCase.request()), 'requestSystemAudioPermission');
 
   selectCaptureSource(source: CaptureSource): void {
     this.store.setCaptureSource(source);
   }
 
   loadAudioSources = (): Promise<void> =>
-    this.guarded(async () => this.store.setAudioSources(await this.listAudioSourcesUseCase.list()));
+    this.guarded(async () => this.store.setAudioSources(await this.listAudioSourcesUseCase.list()), 'loadAudioSources');
 
   /** Selects the system-audio source the NEXT recording will use; persisted by the store. */
   selectAudioSource(id: string): void {
@@ -331,7 +331,7 @@ export class MeetingsFacade {
   }
 
   loadSummaryLanguages = (): Promise<void> =>
-    this.guarded(async () => this.store.setSummaryLanguages(await this.listSummaryLanguagesUseCase.list()));
+    this.guarded(async () => this.store.setSummaryLanguages(await this.listSummaryLanguagesUseCase.list()), 'loadSummaryLanguages');
 
   /** Selects the language the NEXT summary generation will use; persisted by the store. */
   selectSummaryLanguage(code: string): void {
@@ -356,7 +356,7 @@ export class MeetingsFacade {
   }
 
   loadAppVersion = (): Promise<void> =>
-    this.guarded(async () => this.store.setAppVersion(await this.getAppVersionUseCase.version()));
+    this.guarded(async () => this.store.setAppVersion(await this.getAppVersionUseCase.version()), 'loadAppVersion');
 
   /** Persists the transcript/summary split ratio for the NEXT session too, via the store. */
   setSplitRatio(ratio: number): void {
@@ -367,13 +367,14 @@ export class MeetingsFacade {
   setTranscriptCollapsed(collapsed: boolean): void {
     this.store.setTranscriptCollapsed(collapsed);
   }
+  getAudioUrl = (meetingId: MeetingId): Promise<string | null> => this.audioRepository.getAudioUrl(meetingId);
 
   loadFolders = (): Promise<void> =>
-    this.guarded(async () => this.store.setFolders(await this.listFoldersUseCase.execute()));
+    this.guarded(async () => this.store.setFolders(await this.listFoldersUseCase.execute()), 'loadFolders');
   createFolder = (name: string): Promise<void> =>
-    this.guarded(async () => this.store.addFolder(await this.createFolderUseCase.execute(name)));
+    this.guarded(async () => this.store.addFolder(await this.createFolderUseCase.execute(name)), 'createFolder');
   renameFolder = (id: FolderId, name: string): Promise<void> =>
-    this.guarded(async () => this.store.updateFolder(await this.renameFolderUseCase.execute(id, name)));
+    this.guarded(async () => this.store.updateFolder(await this.renameFolderUseCase.execute(id, name)), 'renameFolder');
 
   /** Deletes a folder, then re-runs `loadMeetings` so meetings reassigned back to unfiled refresh. */
   async deleteFolder(id: FolderId): Promise<void> {
@@ -381,12 +382,12 @@ export class MeetingsFacade {
       await this.deleteFolderUseCase.execute(id);
       this.store.removeFolder(id);
       await this.loadMeetings();
-    });
+    }, 'deleteFolder');
   }
 
   /** Assigns/clears a meeting's folder; never optimistic, mirrors setMeetingArchived. */
   async setMeetingFolder(id: MeetingId, folderId: FolderId | null): Promise<void> {
-    await this.applyMeetingMutation(() => this.setMeetingFolderUseCase.execute(id, folderId));
+    await this.applyMeetingMutation(() => this.setMeetingFolderUseCase.execute(id, folderId), 'setMeetingFolder');
   }
   /** Places a meeting's container + ordering in one write, then reloads; see `runPlaceMeeting`. */
   async placeMeeting(id: MeetingId, folderId: FolderId | null, archived: boolean, previousId: MeetingId | null, nextId: MeetingId | null): Promise<void> {

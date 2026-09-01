@@ -92,6 +92,7 @@ describe('MeetingsShellPage — summary editing', () => {
     loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
     deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
     modelDownload: signal(undefined),
+    transcriptUndo: signal(null),
     speakerHistory: signal([]),
     undoLastSpeakerOp: vi.fn(async () => undefined),
   } as unknown as MeetingsFacade;
