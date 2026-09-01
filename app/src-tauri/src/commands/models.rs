@@ -1,16 +1,18 @@
 //! Model-presence detection for onboarding: are Parakeet, Qwen, and Silero
-//! present under the models root?
-//!
-//! In-app downloading is out of scope — when a model is missing, the UI
-//! shows a blocking onboarding screen that tells the user to run
-//! [`DOWNLOAD_COMMAND`].
+//! present under the models root? Plus the in-app download commands that
+//! drive `scripts/download-models.sh` through [`crate::model_init`] —
+//! `start_model_download` / `start_diarization_download` spawn a sequential
+//! run over the missing artifacts, `cancel_model_download` kills it, and
+//! progress arrives on the `models://` event stream.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::error::AppError;
+use crate::model_init::{self, DownloadArtifact, ModelDownloadManager};
 use crate::paths;
 
 /// Shell command the onboarding screen tells the user to run when one or
@@ -190,6 +192,75 @@ pub fn download_command(app: AppHandle) -> String {
         "{DOWNLOAD_COMMAND} --dest {}",
         models_root.to_string_lossy()
     )
+}
+
+/// Blocking core shared by [`start_model_download`] and
+/// [`start_diarization_download`]: resolve the script and models root,
+/// derive the run's artifact queue via `select`, and hand it to the managed
+/// [`ModelDownloadManager`]. Resolves quickly — the download itself runs on
+/// the manager's worker thread and reports via `models://` events.
+fn start_download_blocking(
+    app: &AppHandle,
+    select: fn(&ModelsStatusDto) -> Vec<DownloadArtifact>,
+) -> Result<(), AppError> {
+    let manager = app.state::<Arc<ModelDownloadManager>>().inner().clone();
+    let script = model_init::resolve_init_script(app)?;
+    let models_root = paths::models_root(app);
+    let artifacts = select(&models_status_at(&models_root));
+    manager.start(app.clone(), script, models_root, artifacts)
+}
+
+/// Starts an in-app download of every missing model artifact (parakeet,
+/// qwen, vad, and — when absent — diarization), sequentially. Resolves as
+/// soon as the run is spawned; per-artifact progress and the terminal
+/// outcome arrive on `models://progress` / `models://done`. Rejects with
+/// [`AppError::Busy`] when a run is already in flight.
+#[tauri::command]
+pub async fn start_model_download(app: AppHandle) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        start_download_blocking(&app, model_init::missing_artifacts)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "start_model_download worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Starts a download of ONLY the diarization artifacts (pyannote +
+/// TitaNet) — the one-click path for existing installs where core models
+/// are present but diarization was never fetched. Same lifecycle and
+/// [`AppError::Busy`] semantics as [`start_model_download`]; no-ops with a
+/// successful terminal event when the artifacts are already present.
+#[tauri::command]
+pub async fn start_diarization_download(app: AppHandle) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        start_download_blocking(&app, model_init::missing_diarization_artifacts)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "start_diarization_download worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Kills the in-flight download child, if any. The worker notices, reaps,
+/// and emits a cancelled `models://done`. Idempotent: cancelling with no
+/// run in flight is a successful no-op.
+#[tauri::command]
+pub async fn cancel_model_download(app: AppHandle) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Arc<ModelDownloadManager>>().cancel();
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "cancel_model_download worker thread panicked".to_string(),
+        ))
+    })
 }
 
 #[cfg(test)]

@@ -21,10 +21,10 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; media-src 'self' asset: http://asset.localhost data:",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$RESOURCE/**/*", "$APPDATA/**/*"]
+        "scope": ["$RESOURCE/**/*", "$APPDATA/**/*", "$HOME/myna/**"]
       }
     }
   },

@@ -4,11 +4,12 @@
 //! UI never has to translate field names, and every timestamp is rendered
 //! as an RFC 3339 string rather than a native `OffsetDateTime`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 use myna_audio::{SystemAudioSource, SystemAudioStatus};
-use myna_stt::{Transcript, TranscriptSegment};
+use myna_stt::{Speaker, Transcript, TranscriptSegment};
 
 use crate::domain::{Folder, Meeting, Summary, SummaryRef};
 
@@ -104,6 +105,39 @@ impl From<Transcript> for TranscriptDto {
     fn from(transcript: Transcript) -> Self {
         Self {
             segments: transcript.segments.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// A transcript segment passed FROM the UI as an invoke argument — the
+/// inbound counterpart to [`TranscriptSegmentDto`], consumed by
+/// `restore_transcript_segments`. Unlike the outbound DTO, `speaker_pinned`
+/// is REQUIRED here: the backend must know the explicit pin state of every
+/// restored segment and cannot default a value the user never sent. A
+/// missing or malformed `speaker` degrades to [`Speaker::unknown`] via
+/// [`Speaker::parse`] — the codebase's documented data-loss gate.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptSegmentInput {
+    pub start_sec: f32,
+    pub end_sec: f32,
+    pub text: String,
+    #[serde(default)]
+    pub speaker: Option<String>,
+    pub speaker_pinned: bool,
+}
+
+impl From<TranscriptSegmentInput> for TranscriptSegment {
+    fn from(input: TranscriptSegmentInput) -> Self {
+        Self {
+            start_sec: input.start_sec,
+            end_sec: input.end_sec,
+            text: input.text,
+            speaker: input
+                .speaker
+                .map(|label| Speaker::parse(&label))
+                .unwrap_or_else(Speaker::unknown),
+            speaker_pinned: input.speaker_pinned,
         }
     }
 }
@@ -204,6 +238,11 @@ pub struct MeetingDto {
     /// Always serialized (key-or-null), never omitted, so the UI can rely
     /// on the key's presence.
     pub folder_id: Option<String>,
+    /// Display names keyed by flat speaker label (e.g. `"others:1"` ->
+    /// `"Jean"`) — see [`Meeting::speaker_names`]. Always serialized
+    /// (empty map when unnamed), so the speakers panel can render the
+    /// name registry without a second round-trip.
+    pub speaker_names: BTreeMap<String, String>,
 }
 
 impl MeetingDto {
@@ -235,6 +274,7 @@ impl From<Meeting> for MeetingDto {
             has_audio: false,
             has_system_track: false,
             folder_id: meeting.folder_id.map(|id| id.to_string()),
+            speaker_names: meeting.speaker_names,
         }
     }
 }

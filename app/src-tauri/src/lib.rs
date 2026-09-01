@@ -10,13 +10,17 @@ pub mod dto;
 pub mod error;
 pub mod events;
 pub mod ingest;
+pub mod model_init;
 pub mod paths;
 pub mod session;
 pub mod state;
 pub mod store;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 
+use crate::model_init::ModelDownloadManager;
 use crate::state::AppState;
 use crate::store::folder_store::FsFolderStore;
 use crate::store::fs_store::FsMeetingStore;
@@ -31,6 +35,7 @@ pub fn run() {
             let store = FsMeetingStore::new(root.clone());
             let folders = FsFolderStore::new(root);
             app.manage(AppState::new(store, folders));
+            app.manage(Arc::new(ModelDownloadManager::new()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,9 +59,16 @@ pub fn run() {
             commands::meetings::get_meeting,
             commands::meetings::delete_meeting,
             commands::meetings::get_transcript,
+            commands::meetings::get_meeting_audio_path,
             commands::meetings::rename_meeting,
             commands::meetings::set_meeting_archived,
             commands::meetings::edit_transcript_segment,
+            commands::meetings::delete_transcript_segment,
+            commands::meetings::merge_transcript_segment_up,
+            commands::meetings::restore_transcript_segments,
+            commands::meetings::rename_speaker,
+            commands::meetings::remove_speaker,
+            commands::meetings::set_segment_speaker,
             commands::folders::list_folders,
             commands::folders::create_folder,
             commands::folders::rename_folder,
@@ -71,6 +83,9 @@ pub fn run() {
             commands::summary::edit_summary,
             commands::models::models_status,
             commands::models::download_command,
+            commands::models::start_model_download,
+            commands::models::start_diarization_download,
+            commands::models::cancel_model_download,
             commands::export::export_meeting,
         ])
         .run(tauri::generate_context!())

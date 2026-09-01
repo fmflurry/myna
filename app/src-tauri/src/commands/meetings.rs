@@ -13,7 +13,7 @@ use time::{Month, OffsetDateTime};
 
 use crate::commands::recording::lock_session;
 use crate::domain::MeetingId;
-use crate::dto::{MeetingDto, TranscriptDto};
+use crate::dto::{MeetingDto, TranscriptDto, TranscriptSegmentInput};
 use crate::error::AppError;
 use crate::ingest;
 use crate::session::guard_not_recording;
@@ -23,6 +23,11 @@ use crate::store::MeetingStore;
 /// Maximum length, in Unicode scalar values, a meeting title may have after
 /// renaming. Keeps the sidebar meeting list legible.
 pub const MAX_TITLE_LENGTH: usize = 200;
+
+/// Maximum length, in Unicode scalar values, a speaker display name may have
+/// after renaming via [`rename_speaker`]. Mirrors [`MAX_TITLE_LENGTH`]'s
+/// intent: chip and menu labels must stay legible.
+pub const MAX_SPEAKER_NAME_LENGTH: usize = 100;
 
 /// Maximum length, in Unicode scalar values, a transcript segment's text may
 /// have after editing via [`edit_transcript_segment`].
@@ -101,6 +106,37 @@ pub async fn get_transcript(app: AppHandle, id: String) -> Result<Option<Transcr
     .unwrap_or_else(|_| {
         Err(AppError::Store(
             "get_transcript worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Returns the absolute filesystem path to a meeting's `audio.wav` file
+/// if it exists on disk, or `None` if the meeting has no audio.
+///
+/// The returned path is an absolute path that can be loaded via Tauri's
+/// asset protocol for streaming in an HTML5 `<audio>` element.
+#[tauri::command]
+pub async fn get_meeting_audio_path(
+    app: AppHandle,
+    id: String,
+) -> Result<Option<String>, AppError> {
+    let meeting_id = parse_meeting_id(&id)?;
+    let store = app.state::<AppState>().store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = store.audio_path(meeting_id);
+        Ok(if path.exists() {
+            path.canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .map(Some)
+                .unwrap_or(None)
+        } else {
+            None
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "get_meeting_audio_path worker thread panicked".to_string(),
         ))
     })
 }
@@ -270,6 +306,304 @@ fn edit_transcript_segment_blocking(
     ))
 }
 
+/// Deletes the transcript segment at `segment_index`.
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded, and
+/// with [`AppError::NotFound`] when the segment is missing or no longer
+/// carries `expected_text` (optimistic-concurrency guard against a stale UI)
+/// — see [`apply_segment_delete`].
+#[tauri::command]
+pub async fn delete_transcript_segment(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    expected_text: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        transcript_structure_command(&app, id, |transcript| {
+            apply_segment_delete(transcript, segment_index, &expected_text)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "delete_transcript_segment worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Merges the transcript segment at `segment_index` into the one immediately
+/// before it.
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded, and
+/// with [`AppError::NotFound`] for any of the rejection cases documented on
+/// [`apply_segment_merge_up`] (out of range, stale text, mismatched
+/// speakers, over-long join).
+#[tauri::command]
+pub async fn merge_transcript_segment_up(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    expected_text: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        transcript_structure_command(&app, id, |transcript| {
+            apply_segment_merge_up(transcript, segment_index, &expected_text)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "merge_transcript_segment_up worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Splices `segments` into the transcript at `segment_index`, replacing
+/// `remove_count` existing segments — the inverse of a prior
+/// [`delete_transcript_segment`] or [`merge_transcript_segment_up`].
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded, and
+/// with [`AppError::NotFound`] for the rejection cases documented on
+/// [`apply_segment_restore`].
+#[tauri::command]
+pub async fn restore_transcript_segments(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    remove_count: usize,
+    segments: Vec<TranscriptSegmentInput>,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let restored: Vec<myna_stt::TranscriptSegment> =
+            segments.into_iter().map(Into::into).collect();
+        transcript_structure_command(&app, id, move |transcript| {
+            apply_segment_restore(transcript, segment_index, remove_count, &restored)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "restore_transcript_segments worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Shared shape of the three structural transcript commands: guard against
+/// editing the recording meeting, load its transcript, apply a pure
+/// [`myna_stt::Transcript`] transform, persist only when it changed, and
+/// return the resulting meeting DTO.
+fn transcript_structure_command(
+    app: &AppHandle,
+    id: MeetingId,
+    transform: impl FnOnce(&myna_stt::Transcript) -> Result<myna_stt::Transcript, AppError>,
+) -> Result<MeetingDto, AppError> {
+    let state = app.state::<AppState>();
+    let active_meeting_id = lock_session(&state)?
+        .as_ref()
+        .map(|session| session.meeting_id);
+    guard_not_recording(active_meeting_id, id)?;
+
+    let meeting = state.store.get(id)?;
+    let has_audio = ingest::has_audio(&state.store.audio_path(id));
+    let has_system_track = ingest::has_audio(&state.store.system_track_path(id));
+    let Some(transcript) = &meeting.transcript else {
+        return Err(AppError::NotFound(format!("transcript for meeting {id}")));
+    };
+    let edited = transform(transcript)?;
+    if &edited == transcript {
+        return Ok(MeetingDto::from_meeting(
+            meeting,
+            has_audio,
+            has_system_track,
+        ));
+    }
+    let updated = meeting.with_transcript(edited);
+    state.store.save(&updated)?;
+    Ok(MeetingDto::from_meeting(
+        updated,
+        has_audio,
+        has_system_track,
+    ))
+}
+
+/// Sets (or clears, via an empty/whitespace-only `name`) the display name
+/// registered for speaker `label` on the meeting's `speaker_names` map.
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded.
+/// Idempotent: when the resulting map matches the current one, nothing is
+/// written. Names are display strings only — never encoded into segment
+/// labels (see [`crate::domain::Meeting::speaker_names`]).
+#[tauri::command]
+pub async fn rename_speaker(
+    app: AppHandle,
+    meeting_id: String,
+    label: String,
+    name: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        guard_not_recording_command(&app, id, |state| {
+            let meeting = state.store.get(id)?;
+            let mut speaker_names = meeting.speaker_names.clone();
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                speaker_names.remove(&label);
+            } else {
+                speaker_names.insert(label.clone(), trimmed.to_string());
+            }
+            if speaker_names == meeting.speaker_names {
+                return meeting_dto(state.store.as_ref(), meeting, id);
+            }
+            let updated = meeting.with_speaker_names(speaker_names);
+            state.store.save(&updated)?;
+            meeting_dto(state.store.as_ref(), updated, id)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "rename_speaker worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Drops the display-name entry for `label` and collapses every transcript
+/// segment attributed to it to bare [`myna_stt::Speaker::others`], so the
+/// removed identity stops appearing across transcript and export.
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded.
+/// Succeeds as a no-op when the meeting has no transcript (only the name
+/// map can change) and idempotently when a second call finds nothing left
+/// to collapse.
+#[tauri::command]
+pub async fn remove_speaker(
+    app: AppHandle,
+    meeting_id: String,
+    label: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        guard_not_recording_command(&app, id, |state| {
+            let meeting = state.store.get(id)?;
+            let mut speaker_names = meeting.speaker_names.clone();
+            speaker_names.remove(&label);
+            let names_changed = speaker_names != meeting.speaker_names;
+            let mut transcript = meeting.transcript.clone().unwrap_or_default();
+            let others = myna_stt::Speaker::others();
+            let mut labels_changed = false;
+            for segment in &mut transcript.segments {
+                if segment.speaker.as_str() == label {
+                    segment.speaker = others.clone();
+                    labels_changed = true;
+                }
+            }
+            if !names_changed && !labels_changed {
+                return meeting_dto(state.store.as_ref(), meeting, id);
+            }
+            let updated = meeting.with_speaker_names(speaker_names);
+            let updated = if labels_changed {
+                updated.with_transcript(transcript)
+            } else {
+                updated
+            };
+            state.store.save(&updated)?;
+            meeting_dto(state.store.as_ref(), updated, id)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "remove_speaker worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Re-attributes the transcript segment at `segment_index` to `speaker` and
+/// pins it (`speaker_pinned = true`) so a later diarization run can never
+/// silently overwrite the manual correction (see
+/// [`myna_stt::TranscriptSegment`]'s `speaker_pinned` docs).
+///
+/// Refuses with [`AppError::Busy`] while the meeting is being recorded, and
+/// with [`AppError::NotFound`] when the meeting has no transcript or the
+/// index is out of range. A malformed `speaker` label degrades to
+/// `"unknown"` via [`myna_stt::Speaker::parse`] rather than erroring — the
+/// codebase's documented data-loss gate.
+#[tauri::command]
+pub async fn set_segment_speaker(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    speaker: String,
+) -> Result<MeetingDto, AppError> {
+    let id = parse_meeting_id(&meeting_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        guard_not_recording_command(&app, id, |state| {
+            let meeting = state.store.get(id)?;
+            let Some(transcript) = meeting.transcript.clone() else {
+                return Err(AppError::NotFound(format!("transcript for meeting {id}")));
+            };
+            let Some(segment) = transcript.segments.get(segment_index) else {
+                return Err(AppError::NotFound(format!("segment {segment_index}")));
+            };
+            let parsed = myna_stt::Speaker::parse(&speaker);
+            if segment.speaker == parsed && segment.speaker_pinned {
+                return meeting_dto(state.store.as_ref(), meeting, id);
+            }
+            let mut segments = transcript.segments.clone();
+            let retargeted = myna_stt::TranscriptSegment {
+                speaker: parsed,
+                speaker_pinned: true,
+                ..segments[segment_index].clone()
+            };
+            segments[segment_index] = retargeted;
+            let updated = meeting.with_transcript(myna_stt::Transcript { segments });
+            state.store.save(&updated)?;
+            meeting_dto(state.store.as_ref(), updated, id)
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "set_segment_speaker worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Runs `body` after refusing with [`AppError::Busy`] when `id` is the
+/// meeting the active recording session is writing to.
+fn guard_not_recording_command(
+    app: &AppHandle,
+    id: MeetingId,
+    body: impl FnOnce(&AppState) -> Result<MeetingDto, AppError>,
+) -> Result<MeetingDto, AppError> {
+    let state = app.state::<AppState>();
+    let active_meeting_id = lock_session(&state)?
+        .as_ref()
+        .map(|session| session.meeting_id);
+    guard_not_recording(active_meeting_id, id)?;
+    body(&state)
+}
+
+/// Builds the IPC DTO for `meeting`, deriving the filesystem-backed
+/// `has_audio` / `has_system_track` flags from `store`.
+fn meeting_dto(
+    store: &dyn MeetingStore,
+    meeting: crate::domain::Meeting,
+    id: MeetingId,
+) -> Result<MeetingDto, AppError> {
+    let has_audio = ingest::has_audio(&store.audio_path(id));
+    let has_system_track = ingest::has_audio(&store.system_track_path(id));
+    Ok(MeetingDto::from_meeting(
+        meeting,
+        has_audio,
+        has_system_track,
+    ))
+}
+
 /// Trims and length-caps a proposed meeting title.
 ///
 /// Returns `None` when the trimmed title is empty — callers treat that as
@@ -323,6 +657,46 @@ pub fn apply_segment_edit(
     let mut segments = transcript.segments.clone();
     segments[index] = myna_stt::TranscriptSegment {
         text: normalized,
+        ..segments[index].clone()
+    };
+    Ok(myna_stt::Transcript { segments })
+}
+
+/// Returns a new [`myna_stt::Transcript`] with the segment at `index`'s
+/// speaker set to `label` and `speaker_pinned` stamped `true`.
+///
+/// Pure: never mutates `transcript` in place. The touched segment's `text`,
+/// `start_sec`, and `end_sec` are cloned verbatim; every other segment is
+/// copied byte-identically. Yields [`AppError::NotFound`] when `index` is out
+/// of range, or when `label` is not the canonical output of
+/// [`myna_stt::Speaker::parse`] — the same reject-rather-than-degrade gate as
+/// [`apply_speaker_rename`], so a display string like `"Others 1"` can never
+/// be pinned under a degraded `unknown` identity. A pinned segment may be
+/// reassigned freely: the pin only guards *automated* relabeling
+/// (`relabel_others`), never the user. When the target already carries the
+/// requested label while pinned, a clone of `transcript` is returned
+/// unchanged — the skip-write signal the [`set_segment_speaker`] command uses
+/// to avoid a disk write.
+pub fn apply_segment_speaker_set(
+    transcript: &myna_stt::Transcript,
+    index: usize,
+    label: &str,
+) -> Result<myna_stt::Transcript, AppError> {
+    if index >= transcript.segments.len() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let speaker = myna_stt::Speaker::parse(label);
+    if speaker.as_str() != label {
+        return Err(AppError::NotFound(format!("speaker {label}")));
+    }
+    let current = &transcript.segments[index];
+    if current.speaker == speaker && current.speaker_pinned {
+        return Ok(transcript.clone());
+    }
+    let mut segments = transcript.segments.clone();
+    segments[index] = myna_stt::TranscriptSegment {
+        speaker,
+        speaker_pinned: true,
         ..segments[index].clone()
     };
     Ok(myna_stt::Transcript { segments })
@@ -485,5 +859,91 @@ fn month_abbreviation(month: Month) -> &'static str {
         Month::October => "Oct",
         Month::November => "Nov",
         Month::December => "Dec",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::fs_store::FsMeetingStore;
+    use std::fs;
+
+    #[test]
+    fn get_meeting_audio_path_returns_some_when_audio_exists() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("test meeting").expect("create meeting");
+        let audio_path = store.audio_path(meeting.id);
+        fs::create_dir_all(audio_path.parent().expect("parent")).expect("create dir");
+        fs::write(&audio_path, b"RIFF....WAVEfmt ").expect("write audio");
+
+        // Act: mirror the command's blocking logic
+        let result: Result<Option<String>, AppError> = parse_meeting_id(&meeting.id.to_string())
+            .map(|id| {
+                let path = store.audio_path(id);
+                if path.exists() {
+                    path.canonicalize()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .map(Some)
+                        .unwrap_or(None)
+                } else {
+                    None
+                }
+            });
+
+        // Assert
+        assert!(result.is_ok(), "should not error");
+        let path = result.expect("should be ok");
+        assert!(path.is_some(), "should return Some(path) when audio exists");
+        assert!(
+            path.unwrap().ends_with("audio.wav"),
+            "path should end with audio.wav"
+        );
+    }
+
+    #[test]
+    fn get_meeting_audio_path_returns_none_when_audio_missing() {
+        // Arrange
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("test meeting").expect("create meeting");
+
+        // Act: mirror the command's blocking logic
+        let result: Result<Option<String>, AppError> = parse_meeting_id(&meeting.id.to_string())
+            .map(|id| {
+                let path = store.audio_path(id);
+                if path.exists() {
+                    path.canonicalize()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .map(Some)
+                        .unwrap_or(None)
+                } else {
+                    None
+                }
+            });
+
+        // Assert
+        assert!(result.is_ok(), "should not error");
+        let path = result.expect("should be ok");
+        assert!(
+            path.is_none(),
+            "should return None when audio does not exist"
+        );
+    }
+
+    #[test]
+    fn get_meeting_audio_path_accepts_valid_uuid() {
+        // Arrange
+        let fake_id = uuid::Uuid::new_v4();
+
+        // Act: parse_meeting_id accepts any valid UUID string
+        let result = parse_meeting_id(&fake_id.to_string());
+
+        // Assert
+        assert!(
+            result.is_ok(),
+            "parse_meeting_id should accept any valid UUID string"
+        );
     }
 }

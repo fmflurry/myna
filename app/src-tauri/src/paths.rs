@@ -173,7 +173,7 @@ fn resolve_resource_dir(app: &tauri::AppHandle, env_override: &str, dir_name: &s
 
 /// Repo root in dev builds, derived from the crate's compile-time manifest
 /// directory (`app/src-tauri` -> repo root is two levels up).
-fn repo_root() -> PathBuf {
+pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 

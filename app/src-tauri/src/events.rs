@@ -155,3 +155,33 @@ pub struct ImportProgressPayload {
     pub processed_sec: f32,
     pub total_sec: f32,
 }
+
+/// Emitted before each artifact's download starts during an in-app model
+/// download run (see `crate::model_init`).
+pub const MODELS_PROGRESS: &str = "models://progress";
+
+/// Emitted exactly once when a model-download run ends, whether it
+/// completed, failed, or was cancelled.
+pub const MODELS_DONE: &str = "models://done";
+
+/// Payload for [`MODELS_PROGRESS`]: which artifact is about to download
+/// and how far through the run's queue it sits.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDownloadProgressPayload {
+    pub artifact: String,
+    pub index: u32,
+    pub total: u32,
+}
+
+/// Payload for [`MODELS_DONE`]. `success` reports whether the models root
+/// now holds every required artifact; `cancelled` means the user stopped the
+/// run; `message` carries a human-readable failure description and is
+/// `null` on success and on cancellation.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDownloadDonePayload {
+    pub success: bool,
+    pub cancelled: bool,
+    pub message: Option<String>,
+}
