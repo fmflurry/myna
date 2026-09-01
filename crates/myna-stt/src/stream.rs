@@ -88,22 +88,28 @@ const PRE_ROLL_SEC: f32 = 0.3;
 /// Parakeet-TDT v3 has no language pin: it decodes greedily over one joint
 /// vocabulary shared by 25 languages, and its prediction network is
 /// autoregressive, so once a long enough decode window drifts into an
-/// English attractor it stays English for the rest of the segment. Measured
-/// directly on real French meeting audio (same contiguous span, only the
-/// window boundary moved): 5s decoded correctly, 7s decoded correctly, 8s
-/// failed, 12s failed, and 33s failed — the last of these is exactly the
-/// production bug this constant fixes (`VadConfig::max_speech_sec: 30.0`
-/// produced a measured 33.12s segment, because `VoiceActivityDetector::
-/// accept_waveform` only *tightens* the VAD past `max_speech_sec`, it never
-/// force-closes a segment — see [`crate::vad::VadConfig::max_speech_sec`]'s
-/// doc comment). `7.0` is pinned to the last confirmed-safe measurement,
-/// not merely "under 8", to keep margin below the observed failure.
+/// English attractor it stays English for the rest of the segment. An
+/// initial bench (same contiguous French span, only the window boundary
+/// moved) measured 5s and 7s decoding correctly and 8s, 12s, and 33s
+/// failing, and pinned this constant at `7.0` as the last confirmed-safe
+/// value.
+///
+/// Production then falsified that margin: on a real 56.72s French meeting
+/// recorded *after* the `7.0` fix shipped, three of six ~7s windows
+/// (7.00s, 7.00s, 6.65s) decoded as English, while every window at or
+/// under 5.46s (5.46s, 3.62s, 2.24s, 1.41s) decoded correctly — `7.0` sat
+/// directly on the drift cliff with no margin, not safely below it. `5.0`
+/// is pinned below every observed failure in both benches, independently
+/// confirmed safe by the first bench's own 5s measurement.
 ///
 /// [`SimulatedStreamer::drain_finals`] enforces this by splitting any VAD
 /// segment longer than this cap into consecutive chunks via
 /// [`split_into_chunks`] and decoding each one separately, rather than ever
-/// decoding a single window longer than this.
-const MAX_DECODE_CHUNK_SEC: f32 = 7.0;
+/// decoding a single window longer than this. Because a naive cut at the
+/// exact cap sample risks bisecting a word mid-utterance, `split_into_chunks`
+/// additionally searches backward from the cap (see
+/// [`SILENCE_SEARCH_WINDOW_SEC`]) for a quieter point to cut at instead.
+const MAX_DECODE_CHUNK_SEC: f32 = 5.0;
 
 /// Maximum trailing window, in seconds, decoded for a live partial
 /// hypothesis. [`SimulatedStreamer::maybe_partial`] re-decodes the growing
@@ -491,7 +497,7 @@ impl SimulatedStreamer {
         let cap_samples = (MAX_DECODE_CHUNK_SEC * TARGET_SAMPLE_RATE as f32) as usize;
         for (start_sample, samples) in self.vad.drain_segments() {
             let (decode_start_sample, decode_samples) = self.with_pre_roll(start_sample, samples);
-            let chunks = split_into_chunks(decode_start_sample, decode_samples.len(), cap_samples);
+            let chunks = split_into_chunks(decode_start_sample, &decode_samples, cap_samples);
             for (chunk_start_sample, chunk_end_sample) in chunks {
                 let local_start = chunk_start_sample - decode_start_sample;
                 let local_end = chunk_end_sample - decode_start_sample;
@@ -658,50 +664,91 @@ impl SimulatedStreamer {
     }
 }
 
+/// How far back, in seconds, [`split_into_chunks`] searches from the hard
+/// cap for a quieter point to cut at, instead of always cutting at the
+/// exact cap sample and risking bisecting a word mid-utterance. Wide
+/// enough to contain an ordinary inter-word pause (the VAD's own
+/// [`DEFAULT_MIN_SILENCE_SEC`](crate::vad::DEFAULT_MIN_SILENCE_SEC) is
+/// `0.5s`) well before the cut point, without eating into enough of the
+/// chunk to matter.
+const SILENCE_SEARCH_WINDOW_SEC: f32 = 1.5;
+
+/// Width, in seconds, of the local energy window used to score candidate
+/// cut points within [`SILENCE_SEARCH_WINDOW_SEC`]. Long enough to smooth
+/// out single-sample zero-crossings — which read as nearly zero amplitude
+/// even in the middle of loud speech — from being mistaken for silence;
+/// short enough to still resolve an ordinary inter-word gap.
+const SILENCE_ANALYSIS_FRAME_SEC: f32 = 0.02;
+
+/// A candidate cut point must have total frame energy below this fraction
+/// of the energy at the exact-cap fallback point to count as "clearly
+/// quieter" and be preferred over it. Below this threshold, the search
+/// window is treated as having no distinguishable quiet point and
+/// [`split_into_chunks`] falls back to the exact cap cut — its
+/// pre-silence-aware behaviour.
+const SILENCE_RELATIVE_ENERGY_THRESHOLD: f64 = 0.5;
+
 /// Splits the absolute sample range `[start_sample, start_sample +
-/// total_samples)` into contiguous `(chunk_start, chunk_end)` pairs, each
+/// samples.len())` into contiguous `(chunk_start, chunk_end)` pairs, each
 /// no longer than `cap_samples` — the hard decode-segment cap that fixes
 /// the Parakeet-TDT French->English language-drift bug (see
 /// [`MAX_DECODE_CHUNK_SEC`]).
 ///
-/// Pure sample-index arithmetic, no I/O — [`SttEngine`] wraps a concrete
-/// `sherpa_onnx::OfflineRecognizer` with no trait seam and no fake, so this
-/// pure function is the only unit-testable seam for the splitting logic,
-/// mirroring why [`PartialThrottle`] and [`PartialCommitState`] above are
-/// split out the same way.
+/// Each cut point is chosen by searching backward from the cap, over
+/// [`SILENCE_SEARCH_WINDOW_SEC`], for the quietest point to cut at, so a
+/// chunk boundary lands in an inter-word pause instead of bisecting a
+/// word. Falls back to cutting at the exact cap when nothing in that
+/// window is clearly quieter (see [`SILENCE_RELATIVE_ENERGY_THRESHOLD`]) —
+/// this never produces a chunk longer than `cap_samples`, nor an empty
+/// one.
+///
+/// Pure sample-value + sample-index arithmetic, no I/O — [`SttEngine`]
+/// wraps a concrete `sherpa_onnx::OfflineRecognizer` with no trait seam
+/// and no fake, so this pure function is the only unit-testable seam for
+/// the splitting logic, mirroring why [`PartialThrottle`] and
+/// [`PartialCommitState`] above are split out the same way.
 ///
 /// A trailing remainder shorter than `cap_samples *
 /// MERGE_REMAINDER_FRACTION` (10% of the cap) is folded into the previous
 /// chunk instead of becoming its own degenerate near-zero-length chunk.
 /// That threshold is chosen so a segment only marginally over the cap
-/// (e.g. `cap + 0.2s`, `0.2s` being ~2.9% of a `7.0s` cap) still yields
+/// (e.g. `cap + 0.2s`, `0.2s` being ~4% of a `5.0s` cap) still yields
 /// exactly one chunk, while a genuine multi-second remainder (e.g. the
-/// trailing 6s of a 20s segment split against a 7s cap) still stands on
-/// its own — 10% of the cap sits comfortably between the two. Merging
-/// avoids the extra split entirely: per CLAUDE.md, every additional split
-/// costs a word plus its leading capital/trailing punctuation, which is
-/// the same reason `min_silence_sec` of `0.25` was rejected in favor of
-/// `0.5`.
+/// trailing several seconds of a 20s segment split against a 5s cap)
+/// still stands on its own — 10% of the cap sits comfortably between the
+/// two. Merging avoids the extra split entirely: per CLAUDE.md, every
+/// additional split costs a word plus its leading capital/trailing
+/// punctuation, which is the same reason `min_silence_sec` of `0.25` was
+/// rejected in favor of `0.5`.
 fn split_into_chunks(
     start_sample: usize,
-    total_samples: usize,
+    samples: &[f32],
     cap_samples: usize,
 ) -> Vec<(usize, usize)> {
+    let total_samples = samples.len();
     if total_samples <= cap_samples {
         return vec![(start_sample, start_sample + total_samples)];
     }
 
     const MERGE_REMAINDER_FRACTION: f32 = 0.1;
     let merge_threshold = (cap_samples as f32 * MERGE_REMAINDER_FRACTION) as usize;
+    let search_window_samples = (SILENCE_SEARCH_WINDOW_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+    let frame_len = (SILENCE_ANALYSIS_FRAME_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+    let energy_prefix = squared_energy_prefix_sums(samples);
 
     let mut chunks = Vec::new();
     let mut chunk_start = 0usize;
     while total_samples - chunk_start > cap_samples {
-        let mut chunk_end = chunk_start + cap_samples;
-        let remainder = total_samples - chunk_end;
-        if remainder <= merge_threshold {
-            chunk_end = total_samples;
-        }
+        let cap_end = chunk_start + cap_samples;
+        let remainder = total_samples - cap_end;
+        let chunk_end = if remainder <= merge_threshold {
+            total_samples
+        } else {
+            let search_start = cap_end
+                .saturating_sub(search_window_samples)
+                .max(chunk_start);
+            quietest_cut_point(&energy_prefix, search_start, cap_end, frame_len).unwrap_or(cap_end)
+        };
         chunks.push((start_sample + chunk_start, start_sample + chunk_end));
         chunk_start = chunk_end;
     }
@@ -709,6 +756,63 @@ fn split_into_chunks(
         chunks.push((start_sample + chunk_start, start_sample + total_samples));
     }
     chunks
+}
+
+/// Cumulative sum of squared sample amplitude, one entry longer than
+/// `samples` (`prefix[0] == 0.0`), so the energy of any sub-range `[a, b)`
+/// is `prefix[b] - prefix[a]` computed in O(1) rather than re-summing the
+/// range on every candidate cut point [`quietest_cut_point`] scores.
+fn squared_energy_prefix_sums(samples: &[f32]) -> Vec<f64> {
+    let mut prefix = Vec::with_capacity(samples.len() + 1);
+    prefix.push(0.0f64);
+    let mut running = 0.0f64;
+    for &sample in samples {
+        running += f64::from(sample) * f64::from(sample);
+        prefix.push(running);
+    }
+    prefix
+}
+
+/// Finds the quietest point to cut at within `[search_start, search_end]`,
+/// scoring every `frame_len`-sample window in that range by its total
+/// energy (via `energy_prefix`, see [`squared_energy_prefix_sums`]) and
+/// returning the center of the quietest one — but only when it is at
+/// least [`SILENCE_RELATIVE_ENERGY_THRESHOLD`] quieter than the frame
+/// ending exactly at `search_end` (the pre-silence-aware fallback cut
+/// point). Returns `None` when the window is too small to hold a full
+/// frame, or when nothing in it is clearly quieter than the fallback —
+/// callers must fall back to cutting at `search_end` in that case.
+fn quietest_cut_point(
+    energy_prefix: &[f64],
+    search_start: usize,
+    search_end: usize,
+    frame_len: usize,
+) -> Option<usize> {
+    if frame_len == 0 || search_end < search_start || search_end - search_start < frame_len {
+        return None;
+    }
+
+    let frame_energy =
+        |frame_start: usize| energy_prefix[frame_start + frame_len] - energy_prefix[frame_start];
+
+    let last_frame_start = search_end - frame_len;
+    let baseline_energy = frame_energy(last_frame_start);
+
+    let mut best_start = last_frame_start;
+    let mut best_energy = baseline_energy;
+    for frame_start in search_start..last_frame_start {
+        let energy = frame_energy(frame_start);
+        if energy < best_energy {
+            best_energy = energy;
+            best_start = frame_start;
+        }
+    }
+
+    if best_energy < baseline_energy * SILENCE_RELATIVE_ENERGY_THRESHOLD {
+        Some(best_start + frame_len / 2)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1184,6 +1288,16 @@ mod tests {
         (sec * TARGET_SAMPLE_RATE as f32) as usize
     }
 
+    /// A uniform-amplitude buffer of `sec` seconds: every sample carries
+    /// identical energy, so it has no distinguishable quiet point and
+    /// `split_into_chunks`'s silence search must fall back to cutting at
+    /// the exact cap — i.e. this reproduces the pre-silence-aware
+    /// splitting behaviour exactly, which is what the guard tests below
+    /// (written before the silence-aware search existed) assert on.
+    fn flat_buffer(sec: f32) -> Vec<f32> {
+        vec![0.0_f32; samples(sec)]
+    }
+
     #[test]
     fn split_into_chunks_breaks_a_segment_longer_than_the_cap_into_multiple_finals() {
         // A ~20s segment against a ~7s cap must become 3 chunks (7s + 7s +
@@ -1191,7 +1305,7 @@ mod tests {
         // language-drift knee.
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(0, samples(20.0), cap);
+        let chunks = split_into_chunks(0, &flat_buffer(20.0), cap);
 
         assert_eq!(
             chunks.len(),
@@ -1207,7 +1321,7 @@ mod tests {
         // the decoder may exceed the cap.
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(0, samples(20.0), cap);
+        let chunks = split_into_chunks(0, &flat_buffer(20.0), cap);
 
         for (i, (start, end)) in chunks.iter().enumerate() {
             let len = end - start;
@@ -1230,7 +1344,7 @@ mod tests {
         // dropped and nothing double-decoded between them.
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(0, samples(20.0), cap);
+        let chunks = split_into_chunks(0, &flat_buffer(20.0), cap);
 
         for pair in chunks.windows(2) {
             let (_, prev_end) = pair[0];
@@ -1252,7 +1366,7 @@ mod tests {
         let total = samples(20.0);
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(start_sample, total, cap);
+        let chunks = split_into_chunks(start_sample, &flat_buffer(20.0), cap);
 
         assert_eq!(
             chunks.first().unwrap().0,
@@ -1275,7 +1389,7 @@ mod tests {
         let total = samples(6.5); // < 7.0s cap
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(start_sample, total, cap);
+        let chunks = split_into_chunks(start_sample, &flat_buffer(6.5), cap);
 
         assert_eq!(chunks, vec![(start_sample, start_sample + total)]);
     }
@@ -1284,7 +1398,7 @@ mod tests {
     fn a_segment_exactly_at_the_cap_is_not_split() {
         let cap = samples(7.0);
 
-        let chunks = split_into_chunks(0, cap, cap);
+        let chunks = split_into_chunks(0, &flat_buffer(7.0), cap);
 
         assert_eq!(chunks, vec![(0, cap)]);
     }
@@ -1300,7 +1414,7 @@ mod tests {
         let cap = samples(7.0);
         let total = samples(7.2);
 
-        let chunks = split_into_chunks(0, total, cap);
+        let chunks = split_into_chunks(0, &flat_buffer(7.2), cap);
 
         assert_eq!(
             chunks.len(),
@@ -1312,17 +1426,114 @@ mod tests {
     }
 
     #[test]
+    fn split_into_chunks_cuts_at_the_quietest_point_within_the_search_window_when_one_exists() {
+        // Production evidence (real 56.72s French meeting, post-`3b1d176`):
+        // 7.00s/7.00s/6.65s windows all decoded as English while every
+        // window at or under 5.46s decoded correctly — cutting exactly at
+        // the cap sample risks landing mid-word, which is a plausible
+        // contributor to why the cap alone wasn't a reliable enough fix.
+        // With a clear quiet trough inside the search window, the cut must
+        // land in the trough instead of at the raw cap.
+        let cap = samples(5.0);
+        let total = samples(6.0);
+        let mut buf = flat_buffer_of_amplitude(6.0, 1.0);
+        let trough_start = 70_000;
+        let trough_len = 500;
+        for sample in &mut buf[trough_start..trough_start + trough_len] {
+            *sample = 0.0;
+        }
+
+        let chunks = split_into_chunks(0, &buf, cap);
+
+        assert_eq!(
+            chunks.len(),
+            2,
+            "still splits into two chunks, just at a smarter boundary"
+        );
+        let (first_start, first_end) = chunks[0];
+        assert_eq!(first_start, 0);
+        assert!(
+            (trough_start..trough_start + trough_len).contains(&first_end),
+            "cut point {first_end} should land inside the quiet trough \
+             [{trough_start}, {}), not at the exact cap {cap}",
+            trough_start + trough_len
+        );
+        assert_ne!(
+            first_end, cap,
+            "must not cut at the exact cap when a clearly quieter point exists nearby"
+        );
+        assert_eq!(chunks[1], (first_end, total));
+    }
+
+    #[test]
+    fn split_into_chunks_falls_back_to_the_exact_cap_when_no_point_is_clearly_quieter() {
+        // Uniform energy throughout: no point is quieter than any other, so
+        // the silence search must not invent a boundary and must fall back
+        // to the pre-silence-aware exact-cap cut.
+        let cap = samples(5.0);
+        let buf = flat_buffer_of_amplitude(6.0, 1.0);
+
+        let chunks = split_into_chunks(0, &buf, cap);
+
+        assert_eq!(
+            chunks[0],
+            (0, cap),
+            "uniform energy has no clearly quieter point, so the split must fall back to \
+             the exact cap cut"
+        );
+    }
+
+    #[test]
+    fn no_chunk_from_a_silence_aware_split_exceeds_the_cap_or_is_empty() {
+        let cap = samples(5.0);
+        let total = samples(17.0); // several times the cap
+        let mut buf = flat_buffer_of_amplitude(17.0, 1.0);
+        for center in [40_000usize, 95_000, 150_000] {
+            for sample in &mut buf[center..center + 200] {
+                *sample = 0.0;
+            }
+        }
+
+        let chunks = split_into_chunks(0, &buf, cap);
+
+        for (start, end) in &chunks {
+            assert!(
+                end > start,
+                "chunk [{start}, {end}) must not be empty or negative-length"
+            );
+            assert!(
+                end - start <= cap,
+                "chunk [{start}, {end}) exceeds the {cap}-sample cap"
+            );
+        }
+        assert_eq!(chunks.first().unwrap().0, 0);
+        assert_eq!(chunks.last().unwrap().1, total);
+    }
+
+    /// Like [`flat_buffer`], but at a caller-chosen non-zero amplitude so a
+    /// silence "trough" can be carved into an otherwise uniformly loud
+    /// buffer without the whole buffer already reading as silent.
+    fn flat_buffer_of_amplitude(sec: f32, amplitude: f32) -> Vec<f32> {
+        vec![amplitude; samples(sec)]
+    }
+
+    #[test]
     fn max_decode_chunk_sec_is_pinned_to_the_confirmed_safe_side_of_the_language_drift_knee() {
         // Knee measured on real audio (same contiguous span, only the
         // window boundary differs): 5s ok, 7s ok, 8s fails, 12s fails, 33s
-        // fails (the production bug: a 33.12s segment). `MAX_DECODE_CHUNK_SEC`
-        // is the value `drain_finals` must pass to `split_into_chunks` as
-        // its cap — pinned at the last confirmed-good value, not merely
-        // "under 8", to keep margin.
+        // fails (the production bug: a 33.12s segment). That bench pinned
+        // `MAX_DECODE_CHUNK_SEC` at `7.0` — but production later falsified
+        // the margin: on a real 56.72s French meeting recorded *after* the
+        // `7.0` fix shipped, three of six ~7s windows (7.00s, 7.00s, 6.65s)
+        // decoded as English, while every window at or under 5.46s (5.46s,
+        // 3.62s, 2.24s, 1.41s) decoded correctly. `5.0` is pinned below
+        // every observed failure in both benches, not merely "under 7", to
+        // keep real margin below the cliff.
         assert_eq!(
-            MAX_DECODE_CHUNK_SEC, 7.0,
-            "the hard decode-chunk cap must be pinned to the last measured-safe value (7s), \
-             leaving margin below the measured 8s language-drift failure"
+            MAX_DECODE_CHUNK_SEC, 5.0,
+            "the hard decode-chunk cap must be pinned below every production-measured \
+             failure (7.00s, 7.00s, 6.65s all decoded as English), not merely under the \
+             original 8s bench knee"
         );
     }
 }

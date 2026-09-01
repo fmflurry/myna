@@ -57,14 +57,15 @@ pub struct VadConfig {
     /// segment in production, which in turn triggered Parakeet-TDT v3's
     /// French->English language-drift bug (see
     /// `crate::stream::MAX_DECODE_CHUNK_SEC`'s doc comment for the
-    /// measurements). The real hard cap is enforced in `crate::stream` by
-    /// `SimulatedStreamer::drain_finals`, which splits any VAD segment
-    /// longer than `MAX_DECODE_CHUNK_SEC` into consecutive decoded chunks.
-    /// This field is defence-in-depth, not the enforcement mechanism: it
-    /// is kept in step with `MAX_DECODE_CHUNK_SEC` so that, even if the
-    /// streamer's own splitter ever regressed, the VAD's tightening
-    /// behaviour would still kick in at the same ~7s threshold instead of
-    /// the old 30s ceiling.
+    /// measurements, including the later production recording that moved
+    /// the value from `7.0` to `5.0`). The real hard cap is enforced in
+    /// `crate::stream` by `SimulatedStreamer::drain_finals`, which splits
+    /// any VAD segment longer than `MAX_DECODE_CHUNK_SEC` into consecutive
+    /// decoded chunks. This field is defence-in-depth, not the enforcement
+    /// mechanism: it is kept in step with `MAX_DECODE_CHUNK_SEC` so that,
+    /// even if the streamer's own splitter ever regressed, the VAD's
+    /// tightening behaviour would still kick in at the same ~5s threshold
+    /// instead of the old 30s ceiling.
     pub max_speech_sec: f32,
 }
 
@@ -78,7 +79,7 @@ impl Default for VadConfig {
             threshold: 0.5,
             min_silence_sec: DEFAULT_MIN_SILENCE_SEC,
             min_speech_sec: 0.25,
-            max_speech_sec: 7.0,
+            max_speech_sec: 5.0,
         }
     }
 }
@@ -166,25 +167,33 @@ mod tests {
         // it, and never force-closes. That gap is exactly how a
         // `max_speech_sec: 30.0` setting produced a measured 33.12s speech
         // segment in production, which in turn triggered Parakeet-TDT's
-        // French->English language-drift bug (decodes beyond ~7-8s fall
-        // into an English attractor and never recover for the rest of the
-        // segment).
+        // French->English language-drift bug.
         //
-        // The real hard cap now lives in `crate::stream` as
+        // `max_speech_sec` moved a second time, from `7.0` to `5.0`,
+        // alongside `crate::stream::MAX_DECODE_CHUNK_SEC` after a
+        // production recording (real 56.72s French meeting, post the
+        // `7.0` fix) showed `7.0` sits directly on the drift cliff with no
+        // margin: 7.00s, 7.00s, and 6.65s windows all decoded as English,
+        // while every window at or under 5.46s (5.46s, 3.62s, 2.24s,
+        // 1.41s) decoded correctly. `5.0` sits below every observed
+        // failure. See `MAX_DECODE_CHUNK_SEC`'s doc comment for the full
+        // measurement.
+        //
+        // The real hard cap lives in `crate::stream` as
         // `MAX_DECODE_CHUNK_SEC` (`SimulatedStreamer::drain_finals` splits
         // any VAD segment longer than that into consecutive decoded
-        // chunks). This default is lowered from `30.0` to match that same
-        // value so the two layers agree on one "at most ~7s of speech"
-        // policy: if the streamer's own splitter ever has a bug, the VAD's
-        // own (non-authoritative) tightening kicks in at the same
-        // threshold instead of letting a segment run all the way to the
-        // old 30s ceiling. `max_speech_sec` is defence-in-depth now, not
-        // the enforcement mechanism.
+        // chunks). This default is kept equal to that same value so the
+        // two layers agree on one "at most ~5s of speech" policy: if the
+        // streamer's own splitter ever has a bug, the VAD's own
+        // (non-authoritative) tightening kicks in at the same threshold
+        // instead of letting a segment run all the way to the old 30s
+        // ceiling. `max_speech_sec` is defence-in-depth now, not the
+        // enforcement mechanism.
         let cfg = VadConfig::default();
 
         assert_eq!(
-            cfg.max_speech_sec, 7.0,
-            "max_speech_sec must be lowered to match the streamer's own hard decode-chunk \
+            cfg.max_speech_sec, 5.0,
+            "max_speech_sec must move in lockstep with the streamer's own hard decode-chunk \
              cap now that it is defence-in-depth rather than the primary enforcement \
              mechanism for the language-drift fix"
         );
