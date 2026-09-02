@@ -53,6 +53,7 @@ import {
 import { ModelsFacade } from './models.facade';
 import { SpeakerFacade } from './speaker.facade';
 import { TranscriptEditingFacade } from './transcript-editing.facade';
+import { UpdatesFacade } from './updates.facade';
 /**
  * The ONLY class components are allowed to inject for the meetings module.
  * Exposes readonly signals from MeetingsStore plus thin methods delegating
@@ -139,6 +140,7 @@ export class MeetingsFacade {
   readonly speakerHistory = this.speakerFacade.speakerHistory;
   readonly transcriptUndo = this.transcriptEditingFacade.transcriptUndo;
   readonly modelDownload = this.modelsFacade.modelDownload;
+  readonly updates = inject(UpdatesFacade); // Not flattened (max-lines cap) — components read meetingsFacade.updates.xxx, never inject UpdatesFacade directly.
 
   async startRecording(title: string, deviceName?: string): Promise<void> {
     this.store.setStartingRecording(true);
@@ -189,12 +191,10 @@ export class MeetingsFacade {
   clearSelection = (): void => this.store.clearSelectedMeeting();
   /** Dismisses the current error without retrying anything. */
   clearError = (): void => this.store.clearError();
-
   loadMeetings = (): Promise<void> =>
     this.guarded(async () => this.store.setMeetings(await this.listMeetingsUseCase.list()), 'loadMeetings');
   openMeeting = (id: MeetingId): Promise<void> =>
     this.guarded(async () => this.store.setSelectedMeeting(await this.openMeetingUseCase.open(id)), 'openMeeting');
-
   async deleteMeeting(id: MeetingId): Promise<void> {
     await this.guarded(async () => {
       await this.deleteMeetingUseCase.delete(id);

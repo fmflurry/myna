@@ -1,0 +1,20 @@
+@if (bannerInfo(); as info) {
+  <div class="update-banner" role="status" aria-live="polite">
+    <p class="message">Myna {{ info.version }} is available.</p>
+
+    <div class="actions">
+      <button type="button" class="copy" (click)="copyDownloadLink(info.downloadUrl)">
+        {{ copied() ? 'Copied!' : 'Copy download link' }}
+      </button>
+      <details class="whats-new">
+        <summary>What's new</summary>
+        <p>{{ info.notes }}</p>
+      </details>
+      <button type="button" class="dismiss" aria-label="Dismiss update notice" (click)="dismiss()">&times;</button>
+    </div>
+
+    @if (!signed()) {
+      <p class="caveat">Installing this will reset Myna's microphone permission &mdash; you'll re-grant it in System Settings.</p>
+    }
+  </div>
+}

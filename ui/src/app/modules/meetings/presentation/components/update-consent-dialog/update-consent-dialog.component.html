@@ -1,0 +1,49 @@
+<div class="update-consent-backdrop">
+  <div class="update-consent-dialog" role="dialog" aria-modal="true" aria-labelledby="update-consent-title">
+    <button type="button" class="close" aria-label="Close" (click)="dismiss()">&times;</button>
+
+    <h2 id="update-consent-title">Check for updates?</h2>
+
+    <p>
+      Myna does everything on this Mac. Recording, transcription and summaries never leave it, and nothing is sent
+      anywhere by default.
+    </p>
+
+    <p>Update checks are the one exception, and they are off until you turn them on.</p>
+
+    <p>
+      If you turn them on, once a day Myna asks GitHub whether a newer version of Myna exists. That request sends:
+    </p>
+
+    <ul>
+      <li>
+        <strong>your IP address</strong>, to <code>github.com</code> (and to
+        <code>objects.githubusercontent.com</code>, which it redirects to)
+      </li>
+      <li><strong>nothing else</strong> &mdash; no meeting audio, no transcripts, no summaries, no usage statistics, no identifier, no account</li>
+    </ul>
+
+    <p>
+      Your version number isn't sent either. Myna downloads the same public file every user downloads and compares
+      versions here on your Mac.
+    </p>
+
+    <p>Myna will only <em>tell you</em> an update exists. It will never download or install one on its own.</p>
+
+    @if (!signed()) {
+      <p class="caveat">
+        <strong>Note:</strong> this build isn't signed with an Apple Developer ID. Replacing Myna with a new version
+        changes its identity as far as macOS is concerned, so macOS will drop Myna's microphone permission and you'll
+        have to switch it back on in System Settings &rsaquo; Privacy &amp; Security &rsaquo; Microphone. That's why
+        Myna hands you a download link instead of installing updates for you.
+      </p>
+    }
+
+    <div class="actions">
+      <button type="button" class="grant" (click)="grant()">Turn on update checks</button>
+      <button type="button" class="decline" (click)="decline()">No thanks</button>
+    </div>
+
+    <p class="footer">You can change this any time in About &rsaquo; Updates.</p>
+  </div>
+</div>

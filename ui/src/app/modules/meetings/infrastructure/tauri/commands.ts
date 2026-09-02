@@ -63,6 +63,9 @@ export const COMMAND_NAMES = [
   'start_diarization_download',
   'cancel_model_download',
   'get_meeting_audio_path',
+  'update_consent',
+  'set_update_consent',
+  'check_for_update',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -72,6 +75,25 @@ export type NoArgs = Record<string, never>;
 
 /** Mirrors the Rust `ExportFormat` (`#[serde(rename_all = "lowercase")]`). */
 export type ExportFormatDto = 'markdown' | 'text' | 'json';
+
+/** Mirrors the Rust `UpdateConsent` (`#[serde(rename_all = "lowercase")]`). */
+export type UpdateConsentDto = 'unset' | 'granted' | 'declined';
+
+/** Mirrors the Rust `UpdateCheckStatus` (`#[serde(rename_all = "kebab-case")]`). */
+export type UpdateCheckStatusDto = 'available' | 'up-to-date' | 'skipped' | 'failed';
+
+/** Mirrors the Rust `UpdateSkipReason` (`#[serde(rename_all = "kebab-case")]`). */
+export type UpdateSkipReasonDto = 'no-consent' | 'throttled' | 'recording';
+
+/** Mirrors the Rust `UpdateCheckDto` (`#[serde(rename_all = "camelCase")]`). */
+export interface UpdateCheckDto {
+  readonly status: UpdateCheckStatusDto;
+  readonly version?: string;
+  readonly notes?: string;
+  readonly downloadUrl?: string;
+  readonly reason?: UpdateSkipReasonDto;
+  readonly message?: string;
+}
 
 /**
  * Ties each {@link CommandName} to its exact invoke argument shape and
@@ -217,6 +239,15 @@ export interface CommandSignatures {
   readonly start_diarization_download: { args: NoArgs; result: void };
   readonly cancel_model_download: { args: NoArgs; result: void };
   readonly get_meeting_audio_path: { args: { readonly id: string }; result: string | null };
+  readonly update_consent: { args: NoArgs; result: UpdateConsentDto };
+  readonly set_update_consent: {
+    args: { readonly consent: UpdateConsentDto };
+    result: void;
+  };
+  readonly check_for_update: {
+    args: { readonly manual: boolean };
+    result: UpdateCheckDto;
+  };
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];
