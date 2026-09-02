@@ -50,6 +50,10 @@ describe('meetings routing integration', () => {
           summaries: [],
         };
       }
+      if (cmd === 'update_consent') {
+        // ngOnInit's launch-time `loadConsent()` — 'unset' means no launch check ever fires here.
+        return 'unset';
+      }
       throw new Error(`Unexpected command in routing integration spec: ${cmd}`);
     });
 

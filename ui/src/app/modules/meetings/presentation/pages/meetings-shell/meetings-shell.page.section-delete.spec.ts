@@ -5,6 +5,7 @@ import { BehaviorSubject } from 'rxjs';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+import { NOOP_UPDATES_FACADE_STUB } from '../../../application/testing/noop-updates-facade.stub';
 import type { MeetingsErrorInfo } from '../../../application/stores/meetings.store';
 import type { TranscriptOp } from '../../../application/stores/transcript-history.model';
 import type { SpeakerOp } from '../../../application/stores/speaker-history.model';
@@ -133,6 +134,7 @@ describe('MeetingsShellPage — section delete + undo', () => {
     folders, expandedFolders, loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
     deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
     modelDownload: signal(undefined),
+    updates: NOOP_UPDATES_FACADE_STUB,
   } as unknown as MeetingsFacade;
 
   beforeEach(() => {

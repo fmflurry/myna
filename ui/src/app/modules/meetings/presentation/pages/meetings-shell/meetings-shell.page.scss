@@ -105,6 +105,10 @@
   color: var(--color-text);
 }
 
+app-update-banner {
+  flex-shrink: 0;
+}
+
 .workspace {
   flex: 1;
   min-height: 0;

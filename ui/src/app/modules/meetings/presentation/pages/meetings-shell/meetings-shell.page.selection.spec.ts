@@ -6,6 +6,7 @@ import { BehaviorSubject } from 'rxjs';
 import { vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+import { NOOP_UPDATES_FACADE_STUB } from '../../../application/testing/noop-updates-facade.stub';
 import type { MeetingsErrorInfo } from '../../../application/stores/meetings.store';
 import type { AudioDevice, AudioLevel } from '../../../core/models/audio-device.model';
 import type { AudioSource } from '../../../core/models/audio-source.model';
@@ -204,6 +205,7 @@ describe('MeetingsShellPage route-selection reactivity', () => {
     deleteFolder,
     toggleFolderExpanded,
     modelDownload: signal(undefined),
+    updates: NOOP_UPDATES_FACADE_STUB,
   } as unknown as MeetingsFacade;
 
   let routeParamMap: BehaviorSubject<ParamMap>;

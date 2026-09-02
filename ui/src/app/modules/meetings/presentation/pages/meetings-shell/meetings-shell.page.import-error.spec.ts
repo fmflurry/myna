@@ -13,6 +13,7 @@ import { InMemoryRecorderFake } from '../../../application/testing/in-memory-rec
 import { InMemorySummarizerFake } from '../../../application/testing/in-memory-summarizer.fake';
 import { InMemoryTemplateRepositoryFake } from '../../../application/testing/in-memory-template-repository.fake';
 import { InMemoryTranscriberFake } from '../../../application/testing/in-memory-transcriber.fake';
+import { InMemoryUpdatesFake } from '../../../application/testing/in-memory-updates.fake';
 import { AppInfoPort } from '../../../core/ports/app-info.port';
 import { AudioImportPort } from '../../../core/ports/audio-import.port';
 import { FileDialogPort } from '../../../core/ports/file-dialog.port';
@@ -24,6 +25,7 @@ import { RecorderPort } from '../../../core/ports/recorder.port';
 import { SummarizerPort } from '../../../core/ports/summarizer.port';
 import { TemplateRepositoryPort } from '../../../core/ports/template-repository.port';
 import { TranscriberPort } from '../../../core/ports/transcriber.port';
+import { UpdatesPort } from '../../../core/ports/updates.port';
 import { provideMeetings } from '../../../meetings.providers';
 import { MeetingsShellPage } from './meetings-shell.page';
 
@@ -65,6 +67,7 @@ describe('MeetingsShellPage import error visibility (regression)', () => {
         { provide: PreferencesPort, useClass: InMemoryPreferencesFake },
         { provide: AppInfoPort, useClass: InMemoryAppInfoFake },
         { provide: AudioImportPort, useClass: InMemoryAudioImportFake },
+        { provide: UpdatesPort, useClass: InMemoryUpdatesFake },
       ],
     });
 

@@ -1,3 +1,5 @@
+import type { Signal } from '@angular/core';
+import { computed } from '@angular/core';
 import type { Router } from '@angular/router';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -8,6 +10,7 @@ import type { SystemAudioStatus } from '../../../core/models/capture-source.mode
 import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
 import type { ModelsStatus } from '../../../core/models/models-status.model';
+import type { UpdateConsent } from '../../../core/models/update.model';
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 
 /**
@@ -137,6 +140,47 @@ export async function runStopRecording(facade: MeetingsFacade, onDiarize: () => 
   if (shouldAutoDiarizeAfterStop(facade.error(), facade.selectedMeeting(), facade.modelsStatus())) {
     onDiarize();
   }
+}
+
+/** Loads the persisted consent on every launch; a `'granted'` result immediately runs a throttled, non-blocking check. */
+export async function loadUpdatesOnLaunch(facade: MeetingsFacade): Promise<void> {
+  await facade.updates.loadConsent();
+  if (facade.updates.consent() === 'granted') {
+    void facade.updates.checkForUpdate(false);
+  }
+}
+
+/** Every update-check template binding the shell needs, grouped behind one field to keep `MeetingsShellPage` under the max-lines cap. */
+export interface UpdateHandlers {
+  /** First-run (and every-launch-until-decided) consent-modal visibility; suppressed while `busy()` too. */
+  readonly visible: Signal<boolean>;
+  readonly onGranted: () => void;
+  readonly onDeclined: () => void;
+  readonly onPostponed: () => void;
+  readonly onConsentChanged: (consent: UpdateConsent) => void;
+  readonly onCheckNow: () => void;
+  readonly onBannerDismissed: () => void;
+}
+
+/** Builds {@link UpdateHandlers} bound to `facade`. "Turn on update checks" persists consent THEN immediately runs the first check; the settings toggle and × / Esc never check. */
+export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
+  return {
+    visible: computed(() => facade.updates.consent() === 'unset' && !facade.busy()),
+    onGranted: () => {
+      void facade.updates.grantConsent().then(() => facade.updates.checkForUpdate(false));
+    },
+    onDeclined: () => void facade.updates.declineConsent(),
+    onPostponed: () => undefined,
+    onConsentChanged: (consent) => {
+      if (consent === 'granted') {
+        void facade.updates.grantConsent();
+      } else {
+        void facade.updates.declineConsent();
+      }
+    },
+    onCheckNow: () => void facade.updates.checkForUpdate(true),
+    onBannerDismissed: () => facade.updates.dismissBanner(),
+  };
 }
 
 /**

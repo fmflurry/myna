@@ -24,6 +24,8 @@ import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
+import { UpdateBannerComponent } from '../../components/update-banner/update-banner.component';
+import { UpdateConsentDialogComponent } from '../../components/update-consent-dialog/update-consent-dialog.component';
 import type {
   SpeakerRename,
   TranscriptSectionDelete,
@@ -33,7 +35,7 @@ import type {
   TranscriptSegmentSpeakerReassign,
 } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, describeLatestSpeakerUndo, describeLatestTranscriptUndo, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -42,7 +44,7 @@ import { buildExportFilename, CHECKING_SYSTEM_AUDIO, describeLatestSpeakerUndo, 
  */
 @Component({
   selector: 'app-meetings-shell-page',
-  imports: [MeetingSidebarComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent],
+  imports: [MeetingSidebarComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent, UpdateConsentDialogComponent, UpdateBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './meetings-shell.page.html',
   styleUrl: './meetings-shell.page.scss',
@@ -56,15 +58,7 @@ export class MeetingsShellPage implements OnInit {
   protected readonly showAbout = signal(false);
   /** Local, ephemeral UI-only flag — true only for the duration of the in-flight export call. */
   protected readonly exporting = signal(false);
-  /**
-   * Local, ephemeral UI-only flag — true only for the duration of the
-   * in-flight `diarizeMeeting` call, mirroring `exporting`. Distinct from
-   * `facade.importing()` (which `diarizeMeeting` ALSO sets, for mutual
-   * exclusion with import/re-transcribe): this one identifies THIS specific
-   * operation, so the "Detect speakers" button only shows its own running
-   * state — never borrows a spinner from an unrelated in-flight
-   * import/re-transcribe.
-   */
+  /** Ephemeral flag for the in-flight `diarizeMeeting` call only — distinct from `facade.importing()` (shared with import/re-transcribe) so "Detect speakers" shows its own spinner, never a borrowed one. */
   protected readonly diarizing = signal(false);
 
   protected readonly modelsReady = computed(() => this.facade.modelsStatus()?.allPresent === true);
@@ -72,6 +66,7 @@ export class MeetingsShellPage implements OnInit {
     () => this.facade.systemAudioStatus() ?? CHECKING_SYSTEM_AUDIO,
   );
 
+  protected readonly updateHandlers = createUpdateHandlers(this.facade);
   protected readonly elapsedSec = signal(0);
   protected readonly elapsedLabel = computed(() => formatMmSs(this.elapsedSec()));
 
@@ -125,6 +120,7 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.loadAppVersion();
     void this.facade.loadAudioSources();
     void this.facade.loadFolders();
+    void loadUpdatesOnLaunch(this.facade);
 
     // Reactive, not a one-time `snapshot` read: `''` and `meeting/:id` share
     // this same component, and Angular's default route-reuse strategy keeps

@@ -36,6 +36,12 @@
     </div>
   </header>
 
+  <app-update-banner
+    [check]="facade.updates.lastCheck()"
+    [dismissedVersion]="facade.updates.dismissedVersion()"
+    (dismissed)="updateHandlers.onBannerDismissed()"
+  />
+
   <div class="workspace">
     <app-meeting-sidebar
       [meetings]="facade.meetings()"
@@ -129,7 +135,24 @@
     (keydown)="onBackdropKeydown($event)"
   >
     <div class="modal">
-      <app-attribution [version]="facade.appVersion()" (closed)="toggleAbout()" />
+      <app-attribution
+        [version]="facade.appVersion()"
+        [updateConsent]="facade.updates.consent()"
+        [lastCheck]="facade.updates.lastCheck()"
+        [checking]="facade.updates.checking()"
+        [recording]="facade.busy()"
+        (closed)="toggleAbout()"
+        (updateConsentChanged)="updateHandlers.onConsentChanged($event)"
+        (checkNowRequested)="updateHandlers.onCheckNow()"
+      />
     </div>
   </div>
+}
+
+@if (updateHandlers.visible()) {
+  <app-update-consent-dialog
+    (granted)="updateHandlers.onGranted()"
+    (declined)="updateHandlers.onDeclined()"
+    (postponed)="updateHandlers.onPostponed()"
+  />
 }

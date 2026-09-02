@@ -1,10 +1,10 @@
-//! Integration tests for [`export_meeting_blocking`] proving Phase 3a's
-//! speaker attribution reaches export output without breaking legacy
-//! (pre-speaker) meetings.
+//! Integration tests for [`export_meeting_confined`] (the testable core of
+//! `export_meeting_blocking`) proving Phase 3a's speaker attribution reaches
+//! export output without breaking legacy (pre-speaker) meetings.
 
 use std::fs;
 
-use myna_app::commands::export::{export_meeting_blocking, ExportFormat};
+use myna_app::commands::export::{export_meeting_confined, ExportFormat};
 use myna_app::store::fs_store::FsMeetingStore;
 use myna_app::store::MeetingStore;
 use myna_stt::{Speaker, Transcript, TranscriptSegment};
@@ -42,11 +42,23 @@ fn a_transcript_whose_segments_are_all_unknown_exports_byte_identically_to_pre_s
 
     // Act
     let md_dest = dir.path().join("legacy.md");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Markdown, &md_dest)
-        .expect("export markdown");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Markdown,
+        &md_dest,
+        dir.path(),
+    )
+    .expect("export markdown");
     let txt_dest = dir.path().join("legacy.txt");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Text, &txt_dest)
-        .expect("export text");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Text,
+        &txt_dest,
+        dir.path(),
+    )
+    .expect("export text");
 
     // Assert: no speaker prefix or header of any kind leaks into a legacy
     // export — the exact pre-speaker-field bullet/plain-text shape.
@@ -89,11 +101,23 @@ fn a_mixed_speaker_transcript_exports_with_prefixes_and_merges_consecutive_same_
 
     // Act
     let md_dest = dir.path().join("mixed.md");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Markdown, &md_dest)
-        .expect("export markdown");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Markdown,
+        &md_dest,
+        dir.path(),
+    )
+    .expect("export markdown");
     let txt_dest = dir.path().join("mixed.txt");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Text, &txt_dest)
-        .expect("export text");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Text,
+        &txt_dest,
+        dir.path(),
+    )
+    .expect("export text");
 
     // Assert: one header per speaker run, not per segment.
     let markdown = fs::read_to_string(&md_dest).expect("read markdown");
@@ -152,11 +176,23 @@ fn a_named_speaker_renders_its_display_name_in_markdown_and_text_export() {
 
     // Act
     let md_dest = dir.path().join("named.md");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Markdown, &md_dest)
-        .expect("export markdown");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Markdown,
+        &md_dest,
+        dir.path(),
+    )
+    .expect("export markdown");
     let txt_dest = dir.path().join("named.txt");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Text, &txt_dest)
-        .expect("export text");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Text,
+        &txt_dest,
+        dir.path(),
+    )
+    .expect("export text");
 
     // Assert
     let markdown = fs::read_to_string(&md_dest).expect("read markdown");
@@ -195,8 +231,14 @@ fn two_distinct_labels_sharing_a_display_name_export_as_separate_blocks() {
 
     // Act
     let md_dest = dir.path().join("same-name.md");
-    export_meeting_blocking(&store, meeting.id, ExportFormat::Markdown, &md_dest)
-        .expect("export markdown");
+    export_meeting_confined(
+        &store,
+        meeting.id,
+        ExportFormat::Markdown,
+        &md_dest,
+        dir.path(),
+    )
+    .expect("export markdown");
 
     // Assert: two separate "Sam:" headers, not one merged block.
     let markdown = fs::read_to_string(&md_dest).expect("read markdown");

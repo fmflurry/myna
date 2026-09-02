@@ -1,4 +1,6 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+
+import type { UpdateCheck, UpdateConsent } from '../../../core/models/update.model';
 
 interface LicenceEntry {
   readonly name: string;
@@ -48,5 +50,29 @@ export class AttributionComponent {
 
   readonly closed = output<void>();
 
+  /** Sourced from `meetingsFacade.updates.consent()` — required: the shell always has a resolved consent value by the time About can render. */
+  readonly updateConsent = input.required<UpdateConsent>();
+  readonly lastCheck = input<UpdateCheck | undefined>(undefined);
+  readonly checking = input(false);
+  /** True while a recording is in progress; disables "Check now" so a manual check never competes with STT for resources. */
+  readonly recording = input(false);
+
+  readonly updateConsentChanged = output<UpdateConsent>();
+  readonly checkNowRequested = output<void>();
+
   readonly entries = LICENCE_ENTRIES;
+
+  protected readonly autoCheckEnabled = computed(() => this.updateConsent() === 'granted');
+  protected readonly checkNowDisabled = computed(() => this.checking() || this.recording());
+  /** Session-only: no timestamp exists in `UpdateCheck`, so this never claims a precise elapsed time — just whether a check has run since launch. */
+  protected readonly lastCheckedLabel = computed(() => (this.lastCheck() === undefined ? 'Never' : 'Just now'));
+
+  onAutoCheckToggled(event: Event): void {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.updateConsentChanged.emit(checked ? 'granted' : 'declined');
+  }
+
+  checkNow(): void {
+    this.checkNowRequested.emit();
+  }
 }

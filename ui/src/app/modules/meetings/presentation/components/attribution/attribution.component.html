@@ -8,6 +8,24 @@
     </div>
     <button type="button" class="close" (click)="closed.emit()">Close</button>
   </header>
+
+  <section class="update-settings" aria-label="Updates">
+    <h3>Updates</h3>
+    <label class="auto-check">
+      <input
+        type="checkbox"
+        [checked]="autoCheckEnabled()"
+        (change)="onAutoCheckToggled($event)"
+      />
+      Check for updates automatically (once a day)
+    </label>
+    <p class="privacy-note">once a day, sends only your IP address to GitHub. Never any meeting data.</p>
+    <div class="check-now-row">
+      <button type="button" class="check-now" [disabled]="checkNowDisabled()" (click)="checkNow()">Check now</button>
+      <span class="last-checked">Last checked: {{ lastCheckedLabel() }}</span>
+    </div>
+  </section>
+
   <dl>
     @for (entry of entries; track entry.name) {
       <div class="entry">
