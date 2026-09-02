@@ -73,7 +73,7 @@ pub fn validate_source_path(path: &Path, dest: &Path) -> Result<PathBuf, AppErro
     if !path.exists() || !path.is_file() {
         return Err(AppError::Path(format!(
             "source path does not exist or is not a file: {}",
-            path.display()
+            display_file_name(path)
         )));
     }
 
@@ -92,7 +92,7 @@ pub fn validate_source_path(path: &Path, dest: &Path) -> Result<PathBuf, AppErro
         None => {
             return Err(AppError::Path(format!(
                 "source path has no extension: {}",
-                path.display()
+                display_file_name(path)
             )));
         }
     }
@@ -105,7 +105,7 @@ pub fn validate_source_path(path: &Path, dest: &Path) -> Result<PathBuf, AppErro
         return Err(AppError::Path(format!(
             "source path {} is this meeting's own audio; use \"Re-transcribe from audio\" \
              instead of selecting a replacement file",
-            canonical_path.display()
+            display_file_name(&canonical_path)
         )));
     }
 
@@ -131,7 +131,7 @@ fn canonicalize_destination(dest: &Path) -> Result<PathBuf, AppError> {
     let parent = dest.parent().ok_or_else(|| {
         AppError::Path(format!(
             "destination path has no parent directory: {}",
-            dest.display()
+            display_file_name(dest)
         ))
     })?;
     let canonical_parent = parent.canonicalize().map_err(|err| {
@@ -142,10 +142,22 @@ fn canonicalize_destination(dest: &Path) -> Result<PathBuf, AppError> {
     let file_name = dest.file_name().ok_or_else(|| {
         AppError::Path(format!(
             "destination path has no file name: {}",
-            dest.display()
+            display_file_name(dest)
         ))
     })?;
     Ok(canonical_parent.join(file_name))
+}
+
+/// Renders a path's file name only -- never its full path -- for
+/// user-facing error messages. `ingest.rs`'s errors surface directly to the
+/// Angular UI (and may end up in logs), so they must not leak the on-disk
+/// layout: parent directories, the OS username embedded in `$HOME`, or the
+/// `~/myna` data-root location. Falls back to a fixed placeholder for a path
+/// with no file name component (e.g. `/`).
+fn display_file_name(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or(std::borrow::Cow::Borrowed("<unknown>"))
 }
 
 /// Converts any WAV (any sample rate, any channel count, int or float PCM)

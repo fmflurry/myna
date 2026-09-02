@@ -494,7 +494,6 @@ fn resolve_scope(system_source: Option<&str>) -> (Option<Vec<AudioObjectID>>, Sy
 
     if let Some(pid_str) = id.strip_prefix(APP_PID_PREFIX) {
         let object_id = pid_str.parse::<i32>().ok().and_then(translate_pid);
-        eprintln!("pid {pid_str} -> AudioObjectID {object_id:?}");
         return match object_id {
             Some(object_id) => (
                 Some(vec![object_id]),
@@ -661,6 +660,9 @@ impl SystemAudioCapture {
         record_status(SystemAudioStatus::Available);
 
         let actual_rate = format.sample_rate_hz.round().clamp(1.0, u32::MAX as f64) as u32;
+        // Debug-only: `effective_source` names the tapped app/process, which
+        // must never be disclosed in a release build's stderr/log capture.
+        #[cfg(debug_assertions)]
         eprintln!(
             "myna-audio: system-audio tap started (source: {effective_source:?}, native \
              sample rate: {actual_rate} Hz, channels: {})",

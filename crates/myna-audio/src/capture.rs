@@ -671,10 +671,16 @@ where
             // in production, the same derivation `CaptureSource::Microphone`
             // uses, so a downstream WAV writer can't distinguish this
             // degraded path from that one by an empty-forever `playback`.
+            // Debug-only: `err` can echo back the device/process identity
+            // Core Audio failed to tap, which must never reach a release
+            // build's stderr/log capture.
+            #[cfg(debug_assertions)]
             eprintln!(
                 "myna-audio: system-audio attach failed ({err}); continuing \
                  microphone-only for this recording"
             );
+            #[cfg(not(debug_assertions))]
+            let _ = &err;
             return mic_only(
                 device,
                 config,
@@ -1506,7 +1512,12 @@ where
         }
     };
     let error_callback = |err: cpal::StreamError| {
+        // Debug-only: `err` can echo the input device's name, which must
+        // never reach a release build's stderr/log capture.
+        #[cfg(debug_assertions)]
         eprintln!("myna-audio: input stream error: {err}");
+        #[cfg(not(debug_assertions))]
+        let _ = err;
     };
 
     device

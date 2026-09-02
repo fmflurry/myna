@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use myna_stt::{Speaker, SpeakerRole, TranscriptSegment};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::domain::{Meeting, MeetingId, Summary};
 use crate::error::AppError;
+use crate::paths;
 use crate::state::AppState;
 use crate::store::MeetingStore;
 
@@ -59,6 +60,26 @@ pub fn export_meeting_blocking(
     format: ExportFormat,
     dest: &PathBuf,
 ) -> Result<(), AppError> {
+    let home = paths::home_dir_for_export().map_err(|err| AppError::Path(err.to_string()))?;
+    export_meeting_confined(store, id, format, dest, &home)
+}
+
+/// Core of [`export_meeting_blocking`], parameterized on the confinement
+/// root (`$HOME` in production, via [`export_meeting_blocking`]) rather than
+/// resolving it internally, so integration tests can exercise real
+/// rendering against an isolated `tempfile::tempdir()` destination without
+/// writing into the real user home directory -- the same
+/// resolve-the-real-thing-at-the-edge, parameterize-the-core pattern
+/// `paths::resolve_models_root` uses.
+pub fn export_meeting_confined(
+    store: &dyn MeetingStore,
+    id: MeetingId,
+    format: ExportFormat,
+    dest: &PathBuf,
+    allowed_root: &Path,
+) -> Result<(), AppError> {
+    validate_export_destination(dest, allowed_root)?;
+
     let meeting = store.get(id)?;
     let summaries = load_summaries(store, id, &meeting)?;
 
@@ -69,6 +90,62 @@ pub fn export_meeting_blocking(
     }?;
 
     fs::write(dest, contents)?;
+    Ok(())
+}
+
+/// Confines an export destination to somewhere under `home` (the user's
+/// home directory), rejecting anything under `home/Library` (macOS's
+/// app-support/cache tree, which a native save dialog rooted at the user's
+/// home should never resolve into, but which is worth an explicit
+/// belt-and-braces reject). This is defence-in-depth, not a live-exploit
+/// mitigation: the CSP is `default-src 'self'` and there is no
+/// HTML-injection sink in the UI that could smuggle an attacker-controlled
+/// `dest` past the native save dialog the caller always uses.
+///
+/// `dest` frequently does not exist yet -- the user is about to create the
+/// file -- so this canonicalizes `dest`'s *parent* directory rather than
+/// `dest` itself. Both `home` and the resolved parent are canonicalized
+/// before comparison so a symlinked home directory (or a symlinked
+/// destination directory) can't be used to escape the confinement check;
+/// a canonicalization failure on either side is a typed [`AppError::Path`],
+/// never a panic.
+///
+/// Takes `home` as a parameter (rather than resolving it internally) so
+/// every branch is unit-testable against a `tempfile::tempdir()` standing
+/// in for `$HOME`, without mutating the real process environment (which
+/// `std::env::set_var` requires `unsafe` for, and this workspace forbids
+/// `unsafe_code` outright).
+fn validate_export_destination(dest: &Path, home: &Path) -> Result<(), AppError> {
+    let parent = dest.parent().ok_or_else(|| {
+        AppError::Path(format!(
+            "export destination has no parent directory: {}",
+            dest.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<unknown>".to_string())
+        ))
+    })?;
+    let canonical_parent = parent.canonicalize().map_err(|err| {
+        AppError::Path(format!(
+            "failed to resolve the export destination's directory: {err}"
+        ))
+    })?;
+    let canonical_home = home
+        .canonicalize()
+        .map_err(|err| AppError::Path(format!("failed to resolve the home directory: {err}")))?;
+
+    if !canonical_parent.starts_with(&canonical_home) {
+        return Err(AppError::Path(
+            "export destination must be inside your home directory".to_string(),
+        ));
+    }
+
+    let library = canonical_home.join("Library");
+    if canonical_parent.starts_with(&library) {
+        return Err(AppError::Path(
+            "export destination cannot be inside your Library directory".to_string(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -199,4 +276,71 @@ fn render_json(meeting: &Meeting, summaries: &[Summary]) -> Result<String, AppEr
 /// [`AppError::NotFound`] rather than a parse error.
 fn parse_meeting_id(id: &str) -> Result<MeetingId, AppError> {
     id.parse().map_err(|_| AppError::NotFound(id.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- validate_export_destination: at-rest confinement (security
+    // hardening) --------------------------------------------------------
+
+    #[test]
+    fn validate_export_destination_rejects_a_dest_outside_the_home_directory() {
+        // Arrange: `home` and `dest` are two unrelated tempdirs, so `dest`'s
+        // parent can never resolve under `home`. Confirmed this fails
+        // against the pre-fix code, which had no confinement check at all
+        // and would have happily written to any destination the caller
+        // supplied.
+        let home = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("tempdir");
+        let dest = outside.path().join("meeting-export.md");
+        std::fs::write(&dest, b"placeholder").expect("seed dest so its parent exists");
+
+        // Act
+        let result = validate_export_destination(&dest, home.path());
+
+        // Assert
+        assert!(
+            matches!(result, Err(AppError::Path(_))),
+            "expected AppError::Path for a destination outside the home directory, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_export_destination_rejects_a_dest_inside_library() {
+        // Arrange: `dest`'s parent is `home/Library/Caches`, which must be
+        // refused even though it is technically "inside home".
+        let home = tempfile::tempdir().expect("tempdir");
+        let library_caches = home.path().join("Library").join("Caches");
+        std::fs::create_dir_all(&library_caches).expect("create Library/Caches fixture");
+        let dest = library_caches.join("meeting-export.md");
+
+        // Act
+        let result = validate_export_destination(&dest, home.path());
+
+        // Assert
+        assert!(
+            matches!(result, Err(AppError::Path(_))),
+            "expected AppError::Path for a destination under ~/Library, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_export_destination_accepts_a_dest_directly_under_home() {
+        // Arrange: an ordinary save-dialog destination, e.g. ~/Downloads.
+        let home = tempfile::tempdir().expect("tempdir");
+        let downloads = home.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).expect("create Downloads fixture");
+        let dest = downloads.join("meeting-export.md");
+
+        // Act
+        let result = validate_export_destination(&dest, home.path());
+
+        // Assert
+        assert!(
+            result.is_ok(),
+            "an ordinary destination under home must be accepted, got: {result:?}"
+        );
+    }
 }
