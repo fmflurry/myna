@@ -36,7 +36,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+
+      - name: Install root dependencies (Tauri CLI)
+        run: npm ci
 
       - name: Install UI dependencies
         working-directory: ui
