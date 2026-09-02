@@ -484,6 +484,17 @@ fn stamp_speaker_event(event: SttEvent, speaker: &Speaker) -> SttEvent {
 /// duration in seconds -- not the sum -- since tracks were captured in
 /// parallel (the same wall-clock recording), not concatenated.
 ///
+/// `on_progress` reports *meeting-relative* numbers, matching the returned
+/// duration: `total_sec` is the meeting's wall-clock duration (the max of
+/// the track durations) and `processed_sec` is the mean of the per-track
+/// positions -- a finished track contributes its full duration, the
+/// in-flight track its current position, an unstarted track 0 (see
+/// [`combine_track_progress`]). Summing audio-seconds across parallel tracks
+/// would report a 65-minute dual-track meeting as 130 minutes long. For a
+/// single track the combination is the identity `(position, duration)`, so
+/// import, mic-only, and legacy `audio.wav` fallback progress is
+/// mathematically unchanged.
+///
 /// Checks `cancel` between blocks on every track (via
 /// [`transcribe_wav_streaming`]'s own cancellation check) and stops as soon
 /// as it observes it set, returning `Err` without merging any partial
@@ -497,18 +508,16 @@ pub fn transcribe_tracks_streaming(
     on_progress: &mut dyn FnMut(f32, f32),
 ) -> Result<(Transcript, f32), AppError> {
     let mut durations = Vec::with_capacity(tracks.len());
-    let mut progress_total_sec = 0.0f32;
     for track in tracks {
         let reader = WavBlockReader::open(&track.path)?;
         let duration = reader.total_frames() as f32 / reader.sample_rate() as f32;
         durations.push(duration);
-        progress_total_sec += duration;
     }
     let duration_sec = durations.iter().copied().fold(0.0f32, f32::max);
+    let mut progress = TrackProgressAggregator::new(&durations);
 
     let mut per_track_transcripts: Vec<(Speaker, Transcript)> = Vec::with_capacity(tracks.len());
-    let mut processed_before = 0.0f32;
-    for (track, track_total) in tracks.iter().zip(durations.iter().copied()) {
+    for (index, track) in tracks.iter().enumerate() {
         let mut streamer = SimulatedStreamer::with_options(
             Arc::clone(engine),
             vad_cfg,
@@ -520,7 +529,8 @@ pub fn transcribe_tracks_streaming(
         let speaker = track.speaker.clone();
         let mut stamped_on_event = |event: SttEvent| on_event(stamp_speaker_event(event, &speaker));
         let mut combined_on_progress = |processed_sec: f32, _track_total_sec: f32| {
-            on_progress(processed_before + processed_sec, progress_total_sec);
+            let (processed, total) = progress.position(index, processed_sec);
+            on_progress(processed, total);
         };
 
         let track_transcript = transcribe_wav_streaming(
@@ -532,10 +542,72 @@ pub fn transcribe_tracks_streaming(
         )?;
 
         per_track_transcripts.push((track.speaker.clone(), track_transcript));
-        processed_before += track_total;
+        // A track with zero decoded blocks emits no progress callbacks, so
+        // pin its finished position explicitly rather than trusting the
+        // last in-flight value.
+        let _ = progress.finished(index);
     }
 
     Ok((merge_track_transcripts(per_track_transcripts), duration_sec))
+}
+
+/// Combines per-track transcribe positions into meeting-relative
+/// `(processed_sec, total_sec)` progress numbers.
+///
+/// `positions[i]` is how far track `i` has been transcribed (a finished
+/// track carries its full duration, an in-flight track its current position,
+/// an unstarted track 0) and `durations[i]` is track `i`'s audio length.
+/// Parallel tracks describe the *same* wall-clock recording, so `total_sec`
+/// is the max -- not the sum -- of the durations, and `processed_sec` is the
+/// mean position across tracks. A single track reduces to the identity
+/// `(position, duration)`; empty input yields `(0.0, 0.0)`.
+pub fn combine_track_progress(positions: &[f32], durations: &[f32]) -> (f32, f32) {
+    let total_sec = durations.iter().copied().fold(0.0f32, f32::max);
+    let processed_sec = if positions.is_empty() {
+        0.0
+    } else {
+        positions.iter().sum::<f32>() / positions.len() as f32
+    };
+    (processed_sec, total_sec)
+}
+
+/// Cross-track state for [`transcribe_tracks_streaming`]'s progress
+/// callbacks: remembers every track's duration and current position so each
+/// emission reports meeting-relative numbers via
+/// [`combine_track_progress`]. Owns what used to be the `processed_before` /
+/// `progress_total_sec` running sums (which added parallel tracks'
+/// audio-seconds together and inflated the reported meeting length).
+#[derive(Debug)]
+struct TrackProgressAggregator {
+    durations: Vec<f32>,
+    positions: Vec<f32>,
+}
+
+impl TrackProgressAggregator {
+    fn new(durations: &[f32]) -> Self {
+        Self {
+            durations: durations.to_vec(),
+            positions: vec![0.0f32; durations.len()],
+        }
+    }
+
+    /// Records track `index`'s in-flight position and returns the combined
+    /// `(processed_sec, total_sec)` pair to emit.
+    fn position(&mut self, index: usize, processed_sec: f32) -> (f32, f32) {
+        if let Some(slot) = self.positions.get_mut(index) {
+            *slot = processed_sec;
+        }
+        combine_track_progress(&self.positions, &self.durations)
+    }
+
+    /// Marks track `index` finished at its full duration and returns the
+    /// combined pair.
+    fn finished(&mut self, index: usize) -> (f32, f32) {
+        if let Some(slot) = self.positions.get_mut(index) {
+            *slot = self.durations[index];
+        }
+        combine_track_progress(&self.positions, &self.durations)
+    }
 }
 
 /// Stamps every segment of each `(speaker, transcript)` pair with its paired
@@ -564,6 +636,109 @@ pub fn merge_track_transcripts(per_track: Vec<(Speaker, Transcript)>) -> Transcr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- combine_track_progress / TrackProgressAggregator ----------------
+    // Meeting-relative progress semantics for dual-track re-transcribe. The
+    // pre-fix code summed parallel tracks' audio-seconds, so a 65-minute
+    // two-track meeting reported a 130-minute total (and `processedSec`
+    // counted 2x wall-clock at the end of track one). These assertions pin
+    // the *new* semantics and fail against the pre-fix running sums.
+
+    #[test]
+    fn combine_track_progress_reports_wall_clock_total_not_summed_audio_seconds() {
+        // Arrange: two 3900 s (65 min) tracks captured in parallel; the
+        // first is half-transcribed, the second not started. Pre-fix the
+        // total was `3900 + 3900 = 7800` ("130 min") and processed was the
+        // summed 1950.
+        // Act
+        let (processed, total) = combine_track_progress(&[1950.0, 0.0], &[3900.0, 3900.0]);
+
+        // Assert
+        assert_eq!(total, 3900.0, "total must be the meeting duration, not 2D");
+        assert_eq!(
+            processed, 975.0,
+            "mean of [half, unstarted] of a 65-min meeting"
+        );
+    }
+
+    #[test]
+    fn combine_track_progress_counts_finished_track_at_full_duration() {
+        // End of track 1 (first of two equal tracks): its full duration
+        // counts toward the mean while the second is still unstarted.
+        let (processed, total) = combine_track_progress(&[3900.0, 0.0], &[3900.0, 3900.0]);
+        assert_eq!(processed, 1950.0);
+        assert_eq!(total, 3900.0);
+    }
+
+    #[test]
+    fn combine_track_progress_is_the_identity_for_a_single_track() {
+        // Import / mic-only / legacy `audio.wav` fallback paths run through
+        // a one-element track list; meeting-relative numbers must equal the
+        // raw per-track position/duration exactly.
+        for position in [0.0_f32, 12.5, 61.75, 3900.0] {
+            let (processed, total) = combine_track_progress(&[position], &[3900.0]);
+            assert_eq!(processed, position, "processed must equal the position");
+            assert_eq!(total, 3900.0, "total must equal the track duration");
+        }
+    }
+
+    #[test]
+    fn combine_track_progress_is_empty_safe() {
+        let (processed, total) = combine_track_progress(&[], &[]);
+        assert_eq!((processed, total), (0.0, 0.0));
+    }
+
+    #[test]
+    fn combine_track_progress_unequal_tracks_is_monotonic_and_never_exceeds_total() {
+        // Unequal tracks (e.g. mic started late): walk track 0 0->600 s,
+        // then track 1 0->3900 s, mirroring the sequential per-track decode.
+        let durations = [600.0_f32, 3900.0_f32];
+        let mut positions = [0.0_f32, 0.0_f32];
+        let mut previous = 0.0_f32;
+        for step in 0..=60 {
+            positions[0] = step as f32 * (durations[0] / 60.0);
+            let (processed, total) = combine_track_progress(&positions, &durations);
+            assert_eq!(total, 3900.0);
+            assert!(
+                processed >= previous,
+                "processed must be non-decreasing: {processed} < {previous}"
+            );
+            assert!(
+                processed <= total,
+                "processed must never exceed total: {processed} > {total}"
+            );
+            previous = processed;
+        }
+        for step in 0..=60 {
+            positions[1] = step as f32 * (durations[1] / 60.0);
+            let (processed, total) = combine_track_progress(&positions, &durations);
+            assert_eq!(total, 3900.0);
+            assert!(
+                processed >= previous,
+                "processed must be non-decreasing: {processed} < {previous}"
+            );
+            assert!(
+                processed <= total,
+                "processed must never exceed total: {processed} > {total}"
+            );
+            previous = processed;
+        }
+        // Both finished: mean of durations, still within the wall-clock max.
+        assert_eq!(previous, (600.0 + 3900.0) / 2.0);
+        assert!(previous <= 3900.0);
+    }
+
+    #[test]
+    fn track_progress_aggregator_finishes_each_track_at_full_duration() {
+        // Exercises the stateful path `transcribe_tracks_streaming` uses:
+        // in-flight position on track 0, then explicit finish, then track 1
+        // running to its end.
+        let mut aggregator = TrackProgressAggregator::new(&[3900.0, 3900.0]);
+        assert_eq!(aggregator.position(0, 1950.0), (975.0, 3900.0));
+        assert_eq!(aggregator.finished(0), (1950.0, 3900.0));
+        assert_eq!(aggregator.position(1, 1950.0), (2925.0, 3900.0));
+        assert_eq!(aggregator.finished(1), (3900.0, 3900.0));
+    }
 
     // --- guard_import ---------------------------------------------------
 

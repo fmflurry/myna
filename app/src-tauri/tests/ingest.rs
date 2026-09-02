@@ -563,15 +563,46 @@ fn transcribe_tracks_streaming_dual_track_end_to_end_stamps_both_speakers_sorted
     ];
 
     // Act
-    let (transcript, _duration_sec) = myna_app::ingest::transcribe_tracks_streaming(
+    let mut progress_pairs: Vec<(f32, f32)> = Vec::new();
+    let (transcript, duration_sec) = myna_app::ingest::transcribe_tracks_streaming(
         &tracks,
         &engine,
         &vad_cfg,
         &cancel,
         &mut |_event| {},
-        &mut |_processed, _total| {},
+        &mut |processed, total| progress_pairs.push((processed, total)),
     )
     .expect("dual-track transcribe succeeds");
+
+    // Assert: progress is meeting-relative. Both tracks are the same
+    // fixture, so the wall-clock duration D is the returned max duration;
+    // every emitted total must equal D (pre-fix this was 2D — the "130 min
+    // for a 65 min meeting" bug), processed must be non-decreasing, and the
+    // final position must reach the full meeting duration.
+    let meeting_duration_sec = duration_sec;
+    assert!(
+        !progress_pairs.is_empty(),
+        "dual-track transcribe must emit per-block progress"
+    );
+    let mut previous_processed = 0.0f32;
+    for (index, &(processed, total)) in progress_pairs.iter().enumerate() {
+        assert!(
+            (total - meeting_duration_sec).abs() <= 0.1,
+            "progress #{index} total {total} must be the meeting duration \
+             {meeting_duration_sec}, not summed track seconds"
+        );
+        assert!(
+            processed >= previous_processed,
+            "processed must be non-decreasing: progress #{index} reported \
+             {processed} < {previous_processed}"
+        );
+        previous_processed = processed;
+    }
+    assert!(
+        previous_processed >= meeting_duration_sec - 1.0,
+        "final processed {previous_processed} must reach the meeting \
+         duration {meeting_duration_sec}"
+    );
 
     // Assert: both speakers present, and ascending by start_sec.
     assert!(
