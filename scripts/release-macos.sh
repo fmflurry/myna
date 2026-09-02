@@ -29,6 +29,8 @@ TAURI_DIR="$REPO_ROOT/app/src-tauri"
 BUNDLE_DIR="$REPO_ROOT/target/release/bundle"
 APP_PATH="$BUNDLE_DIR/macos/Myna.app"
 DMG_DIR="$BUNDLE_DIR/dmg"
+APP_TAR_GZ="$BUNDLE_DIR/macos/Myna.app.tar.gz"
+APP_TAR_GZ_SIG="$APP_TAR_GZ.sig"
 REQUIREMENTS_TEMPLATE="$TAURI_DIR/Myna.requirements"
 BUNDLE_ID="app.myna.desktop"
 
@@ -101,16 +103,35 @@ if [ "$IDENTITY" != "-" ]; then
   log "Pinned DR for Team ID $APPLE_TEAM_ID: $(cat "$REQUIREMENTS_FILE")"
 fi
 
-# --- 4. Build ------------------------------------------------------------
+# --- 4. Verify updater signing key is configured ------------------------
+# app/src-tauri/tauri.conf.json pins bundle.createUpdaterArtifacts: true, so
+# `tauri build` needs TAURI_SIGNING_PRIVATE_KEY (and, if the key was created
+# with one, TAURI_SIGNING_PRIVATE_KEY_PASSWORD) or it silently ships an
+# unsigned/missing updater artifact — which the updater plugin then rejects
+# on every user's machine. Fail loudly here instead of discovering it later.
+if grep -qE '"createUpdaterArtifacts"[[:space:]]*:[[:space:]]*true' "$TAURI_DIR/tauri.conf.json"; then
+  if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+    fail "createUpdaterArtifacts is true in tauri.conf.json but TAURI_SIGNING_PRIVATE_KEY is not set — the updater artifact would ship unsigned. Set TAURI_SIGNING_PRIVATE_KEY (path or content) and, if applicable, TAURI_SIGNING_PRIVATE_KEY_PASSWORD. See docs/releasing-macos.md."
+  fi
+  log "Updater signing key present (TAURI_SIGNING_PRIVATE_KEY is set)."
+fi
+
+# --- 5. Build ------------------------------------------------------------
 # Build app + dmg once via tauri (this also produces the dmg bundler's
 # support scripts under target/release/bundle/dmg/, which we reuse below).
 # tauri build does NOT accept a custom --requirements, so when signing for
 # real we re-sign the .app afterward with the pinned DR and rebuild the dmg
-# from that re-signed app — never the other way around.
+# from that re-signed app — never the other way around. It also does NOT
+# accept a custom requirements file for the updater artifact, so when
+# signing for real we regenerate + re-sign Myna.app.tar.gz below too — see
+# the comment at the top of the `if [ "$IDENTITY" != "-" ]` block.
 log "Building (tauri build --bundles app,dmg)"
 (
   cd "$REPO_ROOT"
-  APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app,dmg --ci
+  APPLE_SIGNING_IDENTITY="$IDENTITY" \
+  TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY:-}" \
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+  npx tauri build --bundles app,dmg --ci
 )
 
 [ -d "$APP_PATH" ] || fail "Expected app bundle not found at $APP_PATH"
@@ -147,12 +168,39 @@ if [ "$IDENTITY" != "-" ]; then
     "$STAGE_DIR"
 
   DMG_PATH="$DMG_DIR/$DMG_NAME"
+
+  # tauri build already emitted Myna.app.tar.gz + .sig, but from the
+  # PRE-re-sign .app — the re-sign above (with the pinned DR) happened
+  # afterward. Shipping that stale tarball would carry a minisign signature
+  # over an app that is not the one in the dmg. Regenerate the tarball from
+  # the now-re-signed $APP_PATH and re-sign that.
+  log "Regenerating updater artifact from the re-signed app (real signing identity)"
+  UPDATER_BRANCH="real-identity-regenerated"
+
+  rm -f "$APP_TAR_GZ" "$APP_TAR_GZ_SIG"
+  tar czf "$APP_TAR_GZ" -C "$(dirname "$APP_PATH")" "$(basename "$APP_PATH")"
+  [ -s "$APP_TAR_GZ" ] || fail "Failed to regenerate $APP_TAR_GZ from the re-signed app"
+
+  SIGNER_ARGS=(--password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}")
+  if [ -f "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+    SIGNER_ARGS+=(--private-key-path "$TAURI_SIGNING_PRIVATE_KEY")
+  else
+    SIGNER_ARGS+=(--private-key "$TAURI_SIGNING_PRIVATE_KEY")
+  fi
+  (cd "$REPO_ROOT" && npx tauri signer sign "${SIGNER_ARGS[@]}" "$APP_TAR_GZ")
+  [ -s "$APP_TAR_GZ_SIG" ] || fail "npx tauri signer sign did not produce a non-empty $APP_TAR_GZ_SIG"
+  log "Updater artifact regenerated and re-signed: $APP_TAR_GZ"
 else
   DMG_PATH="$(find "$DMG_DIR" -maxdepth 1 -name '*.dmg' | head -1)"
   [ -n "$DMG_PATH" ] || fail "No dmg produced by tauri build in $DMG_DIR"
+
+  # No re-sign happened, so tauri build's own updater artifact already
+  # matches the shipped .app — nothing to regenerate.
+  UPDATER_BRANCH="ad-hoc-tauri-build-artifact"
+  log "Ad-hoc signing: no re-sign step ran, reusing the updater artifact tauri build already produced."
 fi
 
-# --- 5. Verify the .app ---------------------------------------------------
+# --- 6. Verify the .app ---------------------------------------------------
 log "Verifying app bundle: $APP_PATH"
 
 [ -d "$APP_PATH/Contents/_CodeSignature" ] || fail "_CodeSignature directory missing from $APP_PATH"
@@ -184,7 +232,7 @@ if printf '%s\n' "$SPCTL_OUTPUT" | grep -qi "resource"; then
 fi
 log "spctl: rejected-but-assessable (unnotarized) is expected and acceptable, or accepted if already notarized/trusted"
 
-# --- 6. Verify the app inside the mounted dmg -----------------------------
+# --- 7. Verify the app inside the mounted dmg -----------------------------
 log "Mounting dmg to verify the shipped app: $DMG_PATH"
 MOUNT_DIR="$(mktemp -d -t myna-dmg-mount)"
 CLEANUP_PATHS+=("$MOUNT_DIR")
@@ -198,7 +246,27 @@ log "App inside mounted dmg: codesign --verify --deep --strict OK"
 hdiutil detach "$MOUNT_DIR" -quiet
 MOUNT_DIR=""
 
-# --- 7. Notarize, only if fully configured --------------------------------
+# --- 8. Verify the updater artifact ---------------------------------------
+# Confirms the tarball shipped to the updater channel actually contains the
+# same (re-)signed app users receive in the dmg, not a stale pre-re-sign
+# copy — see the regeneration step above.
+log "Verifying updater artifact: $APP_TAR_GZ (branch: $UPDATER_BRANCH)"
+
+[ -f "$APP_TAR_GZ" ] || fail "Updater artifact not found at $APP_TAR_GZ — was createUpdaterArtifacts true and did tauri build succeed?"
+[ -f "$APP_TAR_GZ_SIG" ] || fail "Updater signature not found at $APP_TAR_GZ_SIG"
+[ -s "$APP_TAR_GZ_SIG" ] || fail "$APP_TAR_GZ_SIG exists but is empty"
+
+UPDATER_VERIFY_DIR="$(mktemp -d -t myna-updater-verify)"
+CLEANUP_PATHS+=("$UPDATER_VERIFY_DIR")
+tar xzf "$APP_TAR_GZ" -C "$UPDATER_VERIFY_DIR"
+UPDATER_APP="$UPDATER_VERIFY_DIR/Myna.app"
+[ -d "$UPDATER_APP" ] || fail "Myna.app not found inside extracted updater artifact $APP_TAR_GZ"
+codesign --verify --deep --strict "$UPDATER_APP" || fail "codesign --verify --deep --strict failed on the app extracted from $APP_TAR_GZ"
+log "Updater artifact app (extracted): codesign --verify --deep --strict OK"
+
+UPDATER_SIGNED=1
+
+# --- 9. Notarize, only if fully configured --------------------------------
 NOTARIZED=0
 if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
   log "Notarizing $DMG_PATH"
@@ -214,7 +282,7 @@ else
   log "Skipping notarization — APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID are not all set."
 fi
 
-# --- 8. Summary ------------------------------------------------------------
+# --- 10. Summary -----------------------------------------------------------
 log "Release summary"
 echo "  Bundle ID:        $BUNDLE_ID"
 echo "  Signing identity: $IDENTITY ($IDENTITY_SOURCE)"
@@ -226,5 +294,7 @@ fi
 echo "  Notarized:         $([ "$NOTARIZED" -eq 1 ] && echo yes || echo no)"
 echo "  App:               $APP_PATH ($(du -sh "$APP_PATH" | cut -f1))"
 echo "  Dmg:                $DMG_PATH ($(du -sh "$DMG_PATH" | cut -f1))"
+echo "  Updater artifact:  $APP_TAR_GZ ($(du -sh "$APP_TAR_GZ" | cut -f1), branch: $UPDATER_BRANCH)"
+echo "  Minisign signed:   $([ "$UPDATER_SIGNED" -eq 1 ] && echo yes || echo no)"
 
 log "Done."
