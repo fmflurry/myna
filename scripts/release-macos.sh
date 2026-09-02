@@ -24,6 +24,23 @@ set -euo pipefail
 # --- Environment -------------------------------------------------------
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# GitHub Actions `env:` always creates the variable even when the backing
+# secret is unset, so an unconfigured secret arrives as e.g. APPLE_ID=""
+# rather than unset. Tauri's bundler tests these for *presence*, not
+# non-emptiness, so a set-but-empty APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID (or
+# signing identity/certificate vars) is enough to make it attempt
+# notarization or signing with a blank value and fail — e.g. "Team ID must
+# be at least 3 characters". Locally these vars are simply absent, which is
+# why this only reproduces in CI. Normalize set-but-empty to unset so the
+# rest of this script (and `tauri build`) see exactly what they'd see with
+# no credentials configured at all.
+for _apple_var in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD; do
+  if [ -n "${!_apple_var+x}" ] && [ -z "${!_apple_var}" ]; then
+    unset "$_apple_var"
+  fi
+done
+unset _apple_var
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI_DIR="$REPO_ROOT/app/src-tauri"
 BUNDLE_DIR="$REPO_ROOT/target/release/bundle"
