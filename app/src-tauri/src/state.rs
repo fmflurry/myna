@@ -3,12 +3,13 @@
 //! summarization engines.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use myna_llm::Summarizer;
 use myna_stt::{DiarizeConfig, Diarizer, SttConfig, SttEngine};
 use tauri::AppHandle;
 
+use crate::domain::MeetingId;
 use crate::error::AppError;
 use crate::paths;
 use crate::session::RecordingSession;
@@ -93,11 +94,30 @@ const LLM_MODEL_DIR_NAME: &str = "qwen2.5-3b-instruct";
 /// File name of the Qwen GGUF model, within [`LLM_MODEL_DIR_NAME`].
 const LLM_MODEL_FILE_NAME: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 
+/// What `recording_state` reports while a stop/cancel is finalizing: the
+/// meeting whose session has already left [`AppState::session`] but whose
+/// save / delete / artifact-cleanup has not completed yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StoppingSession {
+    pub meeting_id: MeetingId,
+    /// Wall-clock seconds frozen at the moment the session was taken —
+    /// lets a reloaded webview render the final timer value instead of 0.
+    pub elapsed_sec: f32,
+}
+
 /// Application state managed by Tauri and injected into every command.
 pub struct AppState {
     pub store: Arc<FsMeetingStore>,
     pub folders: Arc<FsFolderStore>,
     pub session: Mutex<Option<RecordingSession>>,
+    /// `Some` between the moment `stop_recording`/`cancel_recording` take
+    /// the session out of [`AppState::session`] and the moment the final
+    /// save / delete / artifact cleanup completes. The session slot is
+    /// empty for that whole window (the worker join + final decode is
+    /// seconds-scale), so without this marker a webview reloading mid-
+    /// stop would poll `recording_state` and see a false `idle` — the
+    /// marker is what makes the `stopping` contract reachable.
+    stopping: Mutex<Option<StoppingSession>>,
     stt_engine: OnceLock<Arc<SttEngine>>,
     summarizer: OnceLock<Arc<Summarizer>>,
     /// Cached speaker diarizer, loaded on first use by
@@ -132,6 +152,7 @@ impl AppState {
             store: Arc::new(store),
             folders: Arc::new(folders),
             session: Mutex::new(None),
+            stopping: Mutex::new(None),
             stt_engine: OnceLock::new(),
             summarizer: OnceLock::new(),
             diarizer: OnceLock::new(),
@@ -280,6 +301,57 @@ impl AppState {
     pub fn summarization_guard(&self) -> Result<SummarizationGuard<'_>, AppError> {
         self.begin_summarization()?;
         Ok(SummarizationGuard { state: self })
+    }
+
+    /// Marks a stop/cancel as finalizing `meeting_id` (with `elapsed_sec`
+    /// frozen at take time) and returns an RAII [`StoppingGuard`] that
+    /// clears the marker when dropped — so every exit path of the command,
+    /// including early `?` returns and panics, releases it once the save /
+    /// delete / artifact-cleanup has completed. Call while holding the
+    /// session `Mutex`, *before* taking the session out of the slot, so
+    /// there is no window where the slot is empty and the marker unset
+    /// (the MINOR-1 contract: a reload during the final-decode join must
+    /// see `stopping`, never a false `idle`).
+    pub fn begin_stopping(&self, meeting_id: MeetingId, elapsed_sec: f32) -> StoppingGuard<'_> {
+        *self.lock_stopping() = Some(StoppingSession {
+            meeting_id,
+            elapsed_sec,
+        });
+        StoppingGuard { state: self }
+    }
+
+    /// Clears the stopping marker. Called by [`StoppingGuard::drop`].
+    pub fn end_stopping(&self) {
+        *self.lock_stopping() = None;
+    }
+
+    /// The in-flight stop/cancel finalization, if any — read by
+    /// `commands::recording::recording_state`.
+    pub fn stopping(&self) -> Option<StoppingSession> {
+        *self.lock_stopping()
+    }
+
+    /// Locks the stopping marker, recovering from poisoning: the guarded
+    /// value is a single `Option` assignment never read by another thread
+    /// mid-write, so a panic while held cannot have left it inconsistent.
+    fn lock_stopping(&self) -> MutexGuard<'_, Option<StoppingSession>> {
+        self.stopping
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// RAII guard returned by [`AppState::begin_stopping`]. Clears the stopping
+/// marker via [`AppState::end_stopping`] when dropped — including during a
+/// panic unwind — so the stop/cancel command holds it for the whole
+/// finalization body. Mirrors [`ImportGuard`].
+pub struct StoppingGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for StoppingGuard<'_> {
+    fn drop(&mut self) {
+        self.state.end_stopping();
     }
 }
 

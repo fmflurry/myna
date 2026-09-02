@@ -2,7 +2,7 @@ import type { AudioDevice, AudioLevel } from '../../core/models/audio-device.mod
 import type { AudioSource } from '../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { Folder, FolderId } from '../../core/models/folder.model';
-import type { Meeting } from '../../core/models/meeting.model';
+import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { ModelsStatus } from '../../core/models/models-status.model';
 import type { MeetingsErrorCode, RecordingState } from '../../core/models/recording-state.model';
 import type { SummaryLanguage } from '../../core/models/summary-language.model';
@@ -17,6 +17,17 @@ import type { TranscriptOp } from './transcript-history.model';
 export interface MeetingsErrorInfo {
   readonly code: MeetingsErrorCode;
   readonly message: string;
+}
+
+/**
+ * A live recording session re-discovered at boot (or observed via
+ * `recording://state`). `elapsedSec` is the running clock the backend reported
+ * when the session was queried, so the UI can seed its timer from the true
+ * offset rather than `0`.
+ */
+export interface ActiveRecording {
+  readonly meetingId: MeetingId;
+  readonly elapsedSec: number;
 }
 
 /** Lifecycle of the in-app model download driven by `start_model_download`. */
@@ -57,6 +68,13 @@ export interface MeetingsStoreConfig {
   MEETINGS: readonly Meeting[];
   SELECTED_MEETING: Meeting;
   RECORDING_STATE: RecordingState;
+  /**
+   * The live recording session re-discovered at boot via the `recording_state`
+   * command (ADR 0011). `null` whenever no session is being restored. Carries
+   * the elapsed-seconds baseline so a reloaded webview's timer resumes from the
+   * true offset instead of restarting at `00:00`.
+   */
+  ACTIVE_RECORDING: ActiveRecording | null;
   FINALIZED_SEGMENTS: readonly TranscriptSegment[];
   PARTIAL_TEXT_ME: string;
   PARTIAL_TEXT_OTHERS: string;

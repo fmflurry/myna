@@ -26,15 +26,4 @@ describe('TauriModelsStatusAdapter', () => {
     expect(status.allPresent).toBe(true);
     expect(status.parakeet).toEqual({ present: true, path: '/models/parakeet', expectedFiles: ['a'] });
   });
-
-  it('downloadCommand() returns the shell command string verbatim', async () => {
-    let receivedCmd: string | undefined;
-    installTauriInternalsStub((cmd) => {
-      receivedCmd = cmd;
-      return './scripts/download-models.sh';
-    });
-
-    expect(await adapter.downloadCommand()).toBe('./scripts/download-models.sh');
-    expect(receivedCmd).toBe('download_command');
-  });
 });

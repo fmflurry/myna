@@ -9,8 +9,8 @@ export class StopRecordingUseCase {
   private readonly recorder = inject(RecorderPort);
 
   async stop(): Promise<Meeting> {
-    const state = await this.recorder.state();
-    if (state !== 'recording') {
+    const snapshot = await this.recorder.state();
+    if (snapshot.state !== 'recording') {
       throw new MeetingsError('NOT_RECORDING', 'No recording is in progress to stop.');
     }
     return this.recorder.stop();

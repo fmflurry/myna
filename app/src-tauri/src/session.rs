@@ -60,6 +60,7 @@ use crate::events::{
     emit_recording_state, FinalPayload, LevelPayload, PartialPayload, RECORDING_LEVEL,
     TRANSCRIPT_FINAL, TRANSCRIPT_PARTIAL,
 };
+use crate::session_manifest::JournalWriter;
 
 /// Minimum spacing between [`RECORDING_LEVEL`] emissions, in milliseconds.
 pub const LEVEL_EMIT_INTERVAL_MS: u64 = 100;
@@ -300,10 +301,11 @@ pub struct CaptureSelection {
     pub system_source_id: Option<String>,
 }
 
-/// The three WAV file paths a recording writes to — grouped, like
-/// [`CaptureSelection`], to keep [`RecordingSession::start`]'s argument list
-/// within clippy's `too_many_arguments` limit. See the module docs for what
-/// each file is for.
+/// The file paths a recording writes to — the three WAVs plus the
+/// transcript journal — grouped, like [`CaptureSelection`], to keep
+/// [`RecordingSession::start`]'s argument list within clippy's
+/// `too_many_arguments` limit. See the module docs for what each file is
+/// for.
 pub struct AudioPaths {
     /// Device-native-rate stereo playback/export copy. Its [`WavRecorder`]
     /// is created lazily on the worker thread, once
@@ -317,6 +319,12 @@ pub struct AudioPaths {
     /// 16 kHz mono STT-grade system-audio track. Created only when `source`
     /// can ever populate [`TrackBlock::system`] (see [`source_has_system`]).
     pub system: PathBuf,
+    /// Append-only transcript journal (`transcript-journal.jsonl`): one
+    /// finalized [`TranscriptSegment`] per line, written by the decode
+    /// worker so live finals survive a crash between capture-stop and
+    /// meeting-save (see [`crate::session_manifest`]). Deleted by
+    /// `stop_recording` once the finished meeting has been persisted.
+    pub journal_path: PathBuf,
 }
 
 /// Whether `source` can ever populate [`TrackBlock::mic`] — mirrors
@@ -420,6 +428,23 @@ impl RecordingSession {
 
         let (mic_wav, system_wav) = open_track_wavs(source, &audio_paths, track_spec)?;
 
+        // Open the transcript journal eagerly so an unwritable path is at
+        // least visible in logs from the moment of the failed start — but
+        // never fatal: a journal failure degrades crash resilience, it
+        // must not cost the user the recording itself (the WAVs and the
+        // in-memory transcript are unaffected).
+        let journal = match JournalWriter::create(&audio_paths.journal_path) {
+            Ok(writer) => Some(writer),
+            Err(err) => {
+                eprintln!(
+                    "myna-app: failed to open transcript journal {:?} for meeting {meeting_id}: \
+                     {err} — finalized segments will not survive a crash mid-recording",
+                    audio_paths.journal_path
+                );
+                None
+            }
+        };
+
         let mic_streamer = source_has_mic(source)
             .then(|| SimulatedStreamer::new(Arc::clone(&engine), vad_cfg))
             .transpose()?;
@@ -454,6 +479,7 @@ impl RecordingSession {
                 meeting_id,
                 capture_params,
                 audio_paths.playback,
+                journal,
                 mic_streamer,
                 system_streamer,
                 worker_state,
@@ -555,6 +581,7 @@ fn run_worker(
     meeting_id: MeetingId,
     capture_params: CaptureParams,
     playback_path: PathBuf,
+    journal: Option<JournalWriter>,
     mic_streamer: Option<SimulatedStreamer>,
     system_streamer: Option<SimulatedStreamer>,
     worker_state: Arc<Mutex<WorkerState>>,
@@ -567,6 +594,7 @@ fn run_worker(
     let decode_worker = spawn_decode_worker(
         app.clone(),
         meeting_id,
+        journal,
         mic_streamer,
         system_streamer,
         decode_rx,
@@ -714,9 +742,17 @@ fn create_playback_wav(
 /// the final segment on both tracks is never lost. On a decode error on
 /// either track, requests an early stop (via `stop`) rather than continuing
 /// to decode audio no one can use.
+///
+/// `journal` (when present) receives every [`SttEvent::Final`] segment the
+/// worker folds into `transcript`, appended right after the in-memory fold
+/// and before the event is emitted. This runs on the decode worker thread,
+/// never the realtime audio callback. A journal write failure is logged to
+/// stderr and ignored — it must never abort capture or drop the transcript
+/// the user is watching live.
 fn spawn_decode_worker(
     app: AppHandle,
     meeting_id: MeetingId,
+    journal: Option<JournalWriter>,
     mut mic_streamer: Option<SimulatedStreamer>,
     mut system_streamer: Option<SimulatedStreamer>,
     rx: Receiver<(Track, Vec<f32>)>,
@@ -724,6 +760,7 @@ fn spawn_decode_worker(
 ) -> JoinHandle<Result<Transcript, AppError>> {
     thread::spawn(move || {
         let mut transcript = Transcript::default();
+        let mut journal = journal;
 
         for (track, samples) in rx {
             let streamer = match track {
@@ -736,7 +773,14 @@ fn spawn_decode_worker(
             match streamer.push(&samples) {
                 Ok(events) => {
                     for event in events {
-                        apply_event(&app, meeting_id, &mut transcript, track, event);
+                        apply_event(
+                            &app,
+                            meeting_id,
+                            &mut transcript,
+                            &mut journal,
+                            track,
+                            event,
+                        );
                     }
                 }
                 Err(err) => {
@@ -748,12 +792,26 @@ fn spawn_decode_worker(
 
         if let Some(streamer) = mic_streamer.as_mut() {
             for event in streamer.finish()? {
-                apply_event(&app, meeting_id, &mut transcript, Track::Mic, event);
+                apply_event(
+                    &app,
+                    meeting_id,
+                    &mut transcript,
+                    &mut journal,
+                    Track::Mic,
+                    event,
+                );
             }
         }
         if let Some(streamer) = system_streamer.as_mut() {
             for event in streamer.finish()? {
-                apply_event(&app, meeting_id, &mut transcript, Track::System, event);
+                apply_event(
+                    &app,
+                    meeting_id,
+                    &mut transcript,
+                    &mut journal,
+                    Track::System,
+                    event,
+                );
             }
         }
 
@@ -966,19 +1024,36 @@ pub fn fold_track_event(
 }
 
 /// Applies one [`SttEvent`] decoded from `track`, folding final segments
-/// into `transcript` (see [`fold_track_event`]) and emitting the matching
-/// transcript event either way.
+/// into `transcript` (see [`fold_track_event`]), journaling every final
+/// segment right after the in-memory fold (see [`JournalWriter`]), and
+/// emitting the matching transcript event either way.
+///
+/// The journal write happens on the decode worker thread — never the
+/// realtime callback — and its failure is logged and swallowed: losing the
+/// crash-recovery copy of one segment must never abort the recording the
+/// user is live-watching.
 fn apply_event(
     app: &AppHandle,
     meeting_id: MeetingId,
     transcript: &mut Transcript,
+    journal: &mut Option<JournalWriter>,
     track: Track,
     event: SttEvent,
 ) {
     let (speaker, event) = fold_track_event(transcript, track, event);
     match event {
         SttEvent::Partial { text } => emit_partial(app, meeting_id, text, speaker),
-        SttEvent::Final { segment } => emit_final(app, meeting_id, segment),
+        SttEvent::Final { segment } => {
+            if let Some(writer) = journal {
+                if let Err(err) = writer.append(&segment) {
+                    eprintln!(
+                        "myna-app: transcript journal append failed for meeting {meeting_id}: \
+                         {err} — continuing to record regardless"
+                    );
+                }
+            }
+            emit_final(app, meeting_id, segment);
+        }
     }
 }
 

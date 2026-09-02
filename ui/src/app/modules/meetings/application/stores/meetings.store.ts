@@ -29,7 +29,7 @@ import {
 } from './expanded-folders-preferences.util';
 import { storeSplitRatio, storeTranscriptCollapsed } from './split-layout-preferences.util';
 import { applySummaryContentUpdate, subscribeToAudioImportEvents } from './meetings.store.support';
-import { IDLE_MODEL_DOWNLOAD, type MeetingsStoreConfig, type ModelDownloadState } from './meetings-store-config.model';
+import { IDLE_MODEL_DOWNLOAD, type ActiveRecording, type MeetingsStoreConfig, type ModelDownloadState } from './meetings-store-config.model';
 import {
   AUDIO_SOURCE_PREFERENCE_KEY,
   CAPTURE_SOURCE_PREFERENCE_KEY,
@@ -40,7 +40,7 @@ import {
   SUMMARY_LANGUAGE_PREFERENCE_KEY,
 } from './meetings-store-preferences.util';
 import { applySummaryCacheLoading, applySummaryCacheResult, readSummaryCacheEntry, removeSummaryCacheEntry } from './meetings-store-summary-cache.support';
-import { seedPersistedPreferences, wireRecorderAndTranscriberEvents } from './meetings-store-wiring.support';
+import { mergeFinalizedSegments, seedPersistedPreferences, wireRecorderAndTranscriberEvents } from './meetings-store-wiring.support';
 import { summaryCacheKey } from './summary-cache.model';
 import type { SummaryCacheEntry, SummaryCacheStatus } from './summary-cache.model';
 import type { SummarizingKey } from './summarizing-key.model';
@@ -53,13 +53,8 @@ export { summaryCacheKey };
 export { SPLIT_RATIO_PREFERENCE_KEY, TRANSCRIPT_COLLAPSED_PREFERENCE_KEY } from './split-layout-preferences.util';
 export { EXPANDED_FOLDERS_PREFERENCE_KEY };
 export { PARTIAL_UI_AUDIT_MS } from './meetings-store-wiring.support';
-export { IDLE_MODEL_DOWNLOAD, type ModelDownloadState } from './meetings-store-config.model';
-export {
-  AUDIO_SOURCE_PREFERENCE_KEY,
-  CAPTURE_SOURCE_PREFERENCE_KEY,
-  MIC_DEVICE_PREFERENCE_KEY,
-  SUMMARY_LANGUAGE_PREFERENCE_KEY,
-} from './meetings-store-preferences.util';
+export { IDLE_MODEL_DOWNLOAD, type ActiveRecording, type ModelDownloadState } from './meetings-store-config.model';
+export { AUDIO_SOURCE_PREFERENCE_KEY, CAPTURE_SOURCE_PREFERENCE_KEY, MIC_DEVICE_PREFERENCE_KEY, SUMMARY_LANGUAGE_PREFERENCE_KEY } from './meetings-store-preferences.util';
 
 export interface MeetingsErrorInfo {
   readonly code: MeetingsErrorCode;
@@ -99,6 +94,8 @@ export class MeetingsStore {
   readonly meetings: Signal<readonly Meeting[]> = computed(() => this.slots.get('MEETINGS')().data ?? []);
   readonly selectedMeeting: Signal<Meeting | undefined> = computed(() => this.slots.get('SELECTED_MEETING')().data);
   readonly recordingState: Signal<RecordingState> = computed(() => this.slots.get('RECORDING_STATE')().data ?? 'idle');
+  /** Live session re-discovered at boot via `recording_state` (ADR 0011); `null` once the session goes idle. Carries the elapsed baseline the shell's timer seeds from. */
+  readonly activeRecording: Signal<ActiveRecording | null> = computed(() => this.slots.get('ACTIVE_RECORDING')().data ?? null);
   /** Finalized segments only ever append; the partial is transient and clears once a final arrives (see `finals()` below). */
   readonly finalizedSegments: Signal<readonly TranscriptSegment[]> = computed(() => this.slots.get('FINALIZED_SEGMENTS')().data ?? []);
   /** Live partial text spoken by the local participant ("me"). Last-value-wins, bounded to one slot. */
@@ -226,6 +223,16 @@ export class MeetingsStore {
     this.slots.update('PARTIAL_TEXT_ME', { data: '', status: 'Success', isLoading: false });
     this.slots.update('PARTIAL_TEXT_OTHERS', { data: '', status: 'Success', isLoading: false });
   }
+
+  // Command-fed write path for the ADR 0011 boot resume: mirror the
+  // `recording_state` snapshot without waiting for a `recording://state` event,
+  // replay the durability journal (deduped against live-stream arrivals), and
+  // retire the slot on idle — a restored baseline must never leak into the
+  // NEXT recording's timer.
+  setRecordingState(state: RecordingState): void { this.slots.update('RECORDING_STATE', { data: state, status: 'Success', isLoading: false }); }
+  setActiveRecording(active: ActiveRecording | null): void { this.slots.update('ACTIVE_RECORDING', { data: active, status: 'Success', isLoading: false }); }
+  clearActiveRecording(): void { this.slots.update('ACTIVE_RECORDING', { data: null, status: 'Success', isLoading: false }); }
+  seedFinalizedSegments(segments: readonly TranscriptSegment[]): void { this.slots.update('FINALIZED_SEGMENTS', { data: mergeFinalizedSegments(this.finalizedSegments(), segments), status: 'Success', isLoading: false }); }
 
   resetSummaryStream(): void {
     this.slots.update('SUMMARY_STREAM', { data: '', status: 'Success', isLoading: false });

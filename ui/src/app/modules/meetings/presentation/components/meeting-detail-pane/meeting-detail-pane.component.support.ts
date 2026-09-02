@@ -119,9 +119,6 @@ export const isDiarizeDisabled = (
   recording: boolean,
 ): boolean => !modelsPresent || !hasSystemTrack || busy || importing || diarizing || recording;
 
-/** Shell command for manual diarization fetch — keep as collapsed fallback for Windows/no-bash cases. */
-export const DIARIZATION_DOWNLOAD_COMMAND = './scripts/download-models.sh --only diarization';
-
 /**
  * Explains why "Detect speakers" is disabled, but only for the durable
  * reasons worth surfacing inline (recording in progress, models missing, no

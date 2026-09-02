@@ -19,6 +19,13 @@ export interface RecordingStatePayloadDto {
    * or `null` when the current/last recording captures no system audio.
    */
   readonly effectiveSystemSource: AudioSourceDto | null;
+  /**
+   * Seconds elapsed since the recording started. Always `null` on
+   * `recording://state` events; populated (`Some` in Rust) only on the
+   * `recording_state` command response, so a reloaded webview can restore
+   * the running timer without replaying events.
+   */
+  readonly elapsedSec: number | null;
 }
 
 /** Payload for the `recording://level` event. */

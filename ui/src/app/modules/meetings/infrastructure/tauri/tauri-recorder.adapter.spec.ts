@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 
+import { toMeetingId } from '../../core/models/meeting.model';
 import {
   flushMicrotasks,
   installTauriInternalsStub,
@@ -110,10 +111,30 @@ describe('TauriRecorderAdapter', () => {
     });
   });
 
-  it('state() extracts the state field from the recording state payload', async () => {
-    installTauriInternalsStub(() => ({ meetingId: 'm-1', state: 'recording' }));
+  it('state() maps the recording state payload into a snapshot', async () => {
+    installTauriInternalsStub(() => ({
+      meetingId: 'm-1',
+      state: 'recording',
+      effectiveSystemSource: null,
+      elapsedSec: 42.5,
+    }));
 
-    expect(await adapter.state()).toBe('recording');
+    expect(await adapter.state()).toEqual({
+      state: 'recording',
+      meetingId: toMeetingId('m-1'),
+      elapsedSec: 42.5,
+    });
+  });
+
+  it('state() reports a null meetingId/elapsedSec when idle', async () => {
+    installTauriInternalsStub(() => ({
+      meetingId: null,
+      state: 'idle',
+      effectiveSystemSource: null,
+      elapsedSec: null,
+    }));
+
+    expect(await adapter.state()).toEqual({ state: 'idle', meetingId: null, elapsedSec: null });
   });
 
   it('levels() maps the recording://level event stream', async () => {

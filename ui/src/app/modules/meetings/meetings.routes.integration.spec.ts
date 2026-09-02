@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { routes } from '../../app.routes';
 import { MeetingsFacade } from './application/facades/meetings.facade';
+import { toMeetingId } from './core/models/meeting.model';
+import type { TauriInternalsStub } from './infrastructure/tauri/testing/tauri-internals.stub';
 import {
   flushMicrotasks,
   installTauriInternalsStub,
@@ -15,9 +17,24 @@ interface GetMeetingArgs {
   readonly id: string;
 }
 
+interface GetLiveTranscriptArgs {
+  readonly meetingId: string;
+}
+
 const meetingTitles: Readonly<Record<string, string>> = {
   m1: 'Meeting One',
   m2: 'Meeting Two',
+};
+
+/** A recording is live at boot: `elapsedSec: 125` renders as `02:05`. */
+const LIVE_STATE = { state: 'recording', meetingId: 'm1', effectiveSystemSource: null, elapsedSec: 125 };
+
+/** Wire shape of `TranscriptDto` (`#[serde(rename_all = "camelCase")]`). */
+const LIVE_JOURNAL = {
+  segments: [
+    { startSec: 0, endSec: 4, text: 'Welcome everyone.', speaker: 'me' },
+    { startSec: 5, endSec: 9, text: 'Thanks for joining.', speaker: 'others' },
+  ],
 };
 
 /**
@@ -32,9 +49,19 @@ const meetingTitles: Readonly<Record<string, string>> = {
  * real router/injector chain, never through a spec that wires providers
  * itself).
  */
+/** Wire shape of `ModelsStatusDto` — all present so the detail pane renders content, not onboarding. */
+const MODELS_READY = {
+  parakeet: { present: true, path: '/models/parakeet', expectedFiles: [] },
+  qwen: { present: true, path: '/models/qwen', expectedFiles: [] },
+  silero: { present: true, path: '/models/silero', expectedFiles: [] },
+  allPresent: true,
+};
+
 describe('meetings routing integration', () => {
+  let tauri: TauriInternalsStub;
+
   beforeEach(() => {
-    installTauriInternalsStub((cmd, args) => {
+    tauri = installTauriInternalsStub((cmd, args) => {
       if (cmd === 'list_meetings') {
         return [];
       }
@@ -53,6 +80,17 @@ describe('meetings routing integration', () => {
       if (cmd === 'update_consent') {
         // ngOnInit's launch-time `loadConsent()` — 'unset' means no launch check ever fires here.
         return 'unset';
+      }
+      if (cmd === 'models_status') {
+        return MODELS_READY;
+      }
+      // ADR 0011: a recording is live at boot. `elapsedSec: 125` → 02:05.
+      if (cmd === 'recording_state') {
+        return LIVE_STATE;
+      }
+      if (cmd === 'get_live_transcript') {
+        const { meetingId } = args as GetLiveTranscriptArgs;
+        return meetingId === 'm1' ? LIVE_JOURNAL : null;
       }
       throw new Error(`Unexpected command in routing integration spec: ${cmd}`);
     });
@@ -107,4 +145,85 @@ describe('meetings routing integration', () => {
     },
     15000,
   );
+
+  // The ADR 0011 Phase-2 incident: a webview reload mid-meeting left the UI
+  // with no Stop button, a 0-min timer, and an empty transcript, because the
+  // session state lived only in events that had already fired. Boot must
+  // re-derive it from the two query commands instead. Removing the
+  // `resumeActiveRecording()` call from `ngOnInit` fails every assertion
+  // below — that is the regression this block exists to catch.
+  it(
+    're-attaches a live recording on boot: Stop branch, seeded timer, journaled finals',
+    async () => {
+      // `/meetings` (no :id) is the worst case: the route subscription clears
+      // the selection synchronously, so only a resume landing afterwards can
+      // restore the live meeting.
+      const harness = await RouterTestingHarness.create('/meetings');
+      await flushMicrotasks();
+      harness.fixture.detectChanges();
+      await flushMicrotasks();
+      harness.fixture.detectChanges();
+
+      const facade = harness.routeDebugElement!.injector.get(MeetingsFacade);
+      expect(facade.recordingState()).toBe('recording');
+      expect(facade.activeRecording()).toEqual({ meetingId: toMeetingId('m1'), elapsedSec: 125 });
+      expect(facade.selectedMeeting()?.id).toBe('m1');
+      expect(facade.finalizedSegments().map((segment) => segment.text)).toEqual([
+        'Welcome everyone.',
+        'Thanks for joining.',
+      ]);
+
+      const root = harness.routeNativeElement!;
+      // The missing Stop button was the headline symptom: WAVs kept writing
+      // with no way to end the session.
+      expect(root.querySelector('button.stop')).toBeTruthy();
+      expect(root.querySelector('button.record')).toBeNull();
+      // Timer seeded from the backend's clock, not 00:00.
+      expect(root.querySelector('.timer')?.textContent?.trim()).toBe('02:05');
+      // Journaled finals replayed into the live transcript.
+      expect(transcriptTexts(root)).toEqual(['Welcome everyone.', 'Thanks for joining.']);
+    },
+    15000,
+  );
+
+  it('keeps appending post-boot finals to the replayed journal', async () => {
+    const harness = await RouterTestingHarness.create('/meetings');
+    await flushMicrotasks();
+    harness.fixture.detectChanges();
+    await flushMicrotasks();
+    harness.fixture.detectChanges();
+
+    // A final the backend decodes AFTER boot appends through the live event
+    // stream — resume restores the past, events own the future.
+    tauri.emit('transcript://final', {
+      meetingId: 'm1',
+      segment: { start_sec: 10, end_sec: 13, text: 'Decoded after reload.', speaker: 'me' },
+    });
+    harness.fixture.detectChanges();
+
+    expect(transcriptTexts(harness.routeNativeElement!)).toEqual([
+      'Welcome everyone.',
+      'Thanks for joining.',
+      'Decoded after reload.',
+    ]);
+  });
+
+  it('never offers playback of the un-finalized recording', async () => {
+    const harness = await RouterTestingHarness.create('/meetings');
+    await flushMicrotasks();
+    harness.fixture.detectChanges();
+    await flushMicrotasks();
+    harness.fixture.detectChanges();
+
+    // Mid-recording `audio.wav` carries a 0-byte data chunk; rendering the
+    // player over it produced the "Playback error" banner.
+    const facade = harness.routeDebugElement!.injector.get(MeetingsFacade);
+    expect(facade.recordingState()).toBe('recording');
+    expect(harness.routeNativeElement?.querySelector('app-audio-player')).toBeNull();
+  });
 });
+
+const transcriptTexts = (root: Element): readonly string[] =>
+  Array.from(root.querySelectorAll('app-live-transcript .final .text') as NodeListOf<Element>).map(
+    (node) => node.textContent?.trim() ?? '',
+  );

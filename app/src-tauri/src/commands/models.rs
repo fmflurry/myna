@@ -15,12 +15,6 @@ use crate::error::AppError;
 use crate::model_init::{self, DownloadArtifact, ModelDownloadManager};
 use crate::paths;
 
-/// Shell command the onboarding screen tells the user to run when one or
-/// more models are missing. `--dest <resolved models root>` is appended so
-/// the command is actionable even when `MYNA_MODELS_DIR` overrides the
-/// default location.
-const DOWNLOAD_COMMAND: &str = "./scripts/download-models.sh";
-
 /// Directory name (under the resolved models root) containing the
 /// Parakeet-TDT STT model artifacts.
 const PARAKEET_DIR_NAME: &str = "parakeet-tdt-0.6b-v3-int8";
@@ -174,24 +168,6 @@ pub async fn models_status(app: AppHandle) -> Result<ModelsStatusDto, AppError> 
                 "models_status worker thread panicked".to_string(),
             ))
         })
-}
-
-/// Shell command the onboarding screen shows the user for downloading
-/// models, pointed at the actual resolved models root so the command works
-/// even when `MYNA_MODELS_DIR` overrides the default location.
-///
-/// Stays synchronous: it resolves the same root as [`models_status`], but
-/// does none of that command's additional per-file existence checks (3
-/// models times up to 4 files each) on top — just a handful of bounded
-/// `exists()`/`create_dir_all` calls and a string format, genuinely
-/// microseconds-scale, so it is not worth an async hop.
-#[tauri::command]
-pub fn download_command(app: AppHandle) -> String {
-    let models_root = paths::models_root(&app);
-    format!(
-        "{DOWNLOAD_COMMAND} --dest {}",
-        models_root.to_string_lossy()
-    )
 }
 
 /// Blocking core shared by [`start_model_download`] and

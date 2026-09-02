@@ -3,8 +3,22 @@ import type { Observable } from 'rxjs';
 import type { AudioDevice, AudioLevel } from '../models/audio-device.model';
 import type { AudioSource } from '../models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../models/capture-source.model';
-import type { Meeting } from '../models/meeting.model';
+import type { Meeting, MeetingId } from '../models/meeting.model';
 import type { RecordingState } from '../models/recording-state.model';
+
+/**
+ * A point-in-time snapshot of the recorder, read from the `recording_state`
+ * command. Carries more than the bare state machine: the active meeting id
+ * and the elapsed-seconds clock, so a reloaded webview can re-derive "am I
+ * mid-recording, of which meeting, for how long" from a single query — the
+ * query half of the session-resilience contract (ADR 0011), never reliant
+ * on having caught the events.
+ */
+export interface RecordingSnapshot {
+  readonly state: RecordingState;
+  readonly meetingId: MeetingId | null;
+  readonly elapsedSec: number | null;
+}
 
 /**
  * Maps onto the frozen Rust command surface: list_input_devices,
@@ -22,7 +36,7 @@ export abstract class RecorderPort {
   ): Promise<Meeting>;
   abstract stop(): Promise<Meeting>;
   abstract cancel(): Promise<void>;
-  abstract state(): Promise<RecordingState>;
+  abstract state(): Promise<RecordingSnapshot>;
   abstract levels(): Observable<AudioLevel>;
   abstract stateChanges(): Observable<RecordingState>;
   /**

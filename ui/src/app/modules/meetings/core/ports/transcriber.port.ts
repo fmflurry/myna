@@ -22,4 +22,13 @@ export abstract class TranscriberPort {
   abstract partials(): Observable<TranscriptPartial>;
   abstract finals(): Observable<TranscriptFinal>;
   abstract transcriptFor(id: MeetingId): Promise<Transcript>;
+  /**
+   * The transcript finalized SO FAR for a recording still in progress,
+   * read from the backend's durability journal — the query half of the
+   * session-resilience contract (ADR 0011). A webview reload mid-meeting
+   * rebuilds the visible transcript with this instead of relying on having
+   * been subscribed to every `transcript://final` event. Resolves to an
+   * empty transcript when `id` is not the active recording.
+   */
+  abstract liveTranscriptFor(id: MeetingId): Promise<Transcript>;
 }

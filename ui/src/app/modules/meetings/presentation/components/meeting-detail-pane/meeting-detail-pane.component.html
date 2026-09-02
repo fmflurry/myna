@@ -30,7 +30,9 @@
         <button type="button" class="cancel-import" (click)="cancelImportRequested.emit()">Cancel</button>
       </div>
     }
-    @if (meeting()?.hasAudio && hasAudio()) {
+    @if (meeting()?.hasAudio && hasAudio() && !isLive()) {
+      <!-- Mid-recording `audio.wav` has a 0-byte data chunk (RIFF header only) until the
+           session finalizes; offering playback then produced a spurious "Playback error". -->
       <app-audio-player [meetingId]="meeting()?.id" [hasAudio]="hasAudio()" />
     }
   </header>

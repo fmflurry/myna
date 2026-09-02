@@ -29,6 +29,15 @@ export class InMemoryTranscriberFake extends TranscriberPort {
     return this.transcript;
   }
 
+  override async liveTranscriptFor(id: MeetingId): Promise<Transcript> {
+    // The fake has no persisted-vs-live distinction: `emitFinal` already
+    // folds each final into the same running transcript, mirroring how the
+    // real backend's journal replays the same segments a live session has
+    // finalized so far.
+    void id;
+    return this.transcript;
+  }
+
   /** Test helper: push a synthetic in-flight partial transcript. */
   emitPartial(partial: TranscriptPartial): void {
     this.partialSubject.next(partial);

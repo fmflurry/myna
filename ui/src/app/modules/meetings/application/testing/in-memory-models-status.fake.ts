@@ -20,10 +20,6 @@ export class InMemoryModelsStatusFake extends ModelsStatusPort {
     return this.modelsStatus;
   }
 
-  override async downloadCommand(): Promise<string> {
-    return 'hf download csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8';
-  }
-
   /** Test helper: replace the in-memory models status. */
   seed(status: ModelsStatus): void {
     this.modelsStatus = status;

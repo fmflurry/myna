@@ -7,6 +7,8 @@ import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import { AudioRepositoryPort } from '../../core/ports/audio-repository.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
+import { RecorderPort } from '../../core/ports/recorder.port';
+import { TranscriberPort } from '../../core/ports/transcriber.port';
 import { CancelImportUseCase } from '../use-cases/cancel-import.usecase';
 import { CancelRecordingUseCase } from '../use-cases/cancel-recording.usecase';
 import { CancelSummarizationUseCase } from '../use-cases/cancel-summarization.usecase';
@@ -50,6 +52,12 @@ import {
   runSummarizeMeeting,
   toErrorInfo,
 } from './meetings-facade.support';
+import {
+  runCancelRecording,
+  runResumeActiveRecording,
+  runStartRecording,
+  runStopRecording,
+} from './meetings-facade-recording.support';
 import { ModelsFacade } from './models.facade';
 import { SpeakerFacade } from './speaker.facade';
 import { TranscriptEditingFacade } from './transcript-editing.facade';
@@ -102,9 +110,13 @@ export class MeetingsFacade {
   private readonly setMeetingFolderUseCase = inject(SetMeetingFolderUseCase);
   private readonly placeMeetingUseCase = inject(PlaceMeetingUseCase);
   private readonly audioRepository = inject(AudioRepositoryPort);
+  /** Read directly (not via a use case) for the ADR 0011 boot resume: `recording_state` + the live-journal query. */
+  private readonly recorder = inject(RecorderPort);
+  private readonly transcriber = inject(TranscriberPort);
   readonly meetings = this.store.meetings;
   readonly selectedMeeting = this.store.selectedMeeting;
   readonly recordingState = this.store.recordingState;
+  readonly activeRecording = this.store.activeRecording;
   readonly finalizedSegments = this.store.finalizedSegments;
   readonly partialTextMe = this.store.partialTextMe;
   readonly partialTextOthers = this.store.partialTextOthers;
@@ -142,49 +154,30 @@ export class MeetingsFacade {
   readonly modelDownload = this.modelsFacade.modelDownload;
   readonly updates = inject(UpdatesFacade); // Not flattened (max-lines cap) — components read meetingsFacade.updates.xxx, never inject UpdatesFacade directly.
 
+  // Recording lifecycle bodies live in `meetings-facade-recording.support.ts`
+  // (max-lines cap); these are one-line delegations, behavior-identical to the
+  // inline versions they replaced — the support `setSpeakerHistory([])` calls
+  // are redundant with `setSelectedMeeting`'s own history clear, not new.
   async startRecording(title: string, deviceName?: string): Promise<void> {
-    this.store.setStartingRecording(true);
-    try {
-      this.store.resetLiveTranscript();
-      const meeting = await this.startRecordingUseCase.with(
-        title,
-        deviceName,
-        this.store.captureSource(),
-        this.store.selectedAudioSource(),
-      );
-      this.store.setSelectedMeeting(meeting);
-      this.store.addMeeting(meeting);
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    } finally {
-      this.store.setStartingRecording(false);
-    }
+    await runStartRecording(this.store, this.startRecordingUseCase, title, deviceName);
   }
 
   async stopRecording(): Promise<void> {
-    try {
-      const meeting = await this.stopRecordingUseCase.stop();
-      this.store.setSelectedMeeting(meeting);
-      this.store.addMeeting(meeting);
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    }
+    await runStopRecording(this.store, this.stopRecordingUseCase);
   }
 
   async cancelRecording(): Promise<void> {
-    const cancelled = this.store.selectedMeeting();
-    try {
-      await this.cancelRecordingUseCase.cancel();
-      if (cancelled) {
-        this.store.setMeetings(this.store.meetings().filter((meeting) => meeting.id !== cancelled.id));
-      }
-      this.store.clearSelectedMeeting();
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    }
+    await runCancelRecording(this.store, this.cancelRecordingUseCase);
+  }
+
+  /**
+   * Re-attaches the UI to a recording that survived a webview reload
+   * (ADR 0011): restores the Stop branch, the elapsed baseline, and the
+   * journaled finals. See `runResumeActiveRecording` for the full contract;
+   * never rejects.
+   */
+  async resumeActiveRecording(): Promise<void> {
+    await runResumeActiveRecording(this.store, this.recorder, this.transcriber, (id) => this.openMeeting(id));
   }
 
   /** Clears the selected meeting without modifying the meetings list. */

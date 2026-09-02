@@ -1,49 +1,56 @@
 <section class="onboarding">
-  <h1>Set up local models</h1>
+  <h1>Let&rsquo;s get your AI models</h1>
 
   @if (!status()) {
     <p role="status" aria-live="polite" aria-busy="true">Checking installed models&hellip;</p>
   } @else {
-    <p>Myna needs these local models before it can record and summarize meetings.</p>
-
-    @for (group of groups(); track group.label) {
-      <div class="group">
-        <h2>{{ group.label }}</h2>
-        <ul>
-          @for (file of group.slot.expectedFiles; track file) {
-            <li [class.present]="group.slot.present">
-              <span class="status">{{ group.slot.present ? '✓' : '✗' }}</span>
-              <code>{{ file }}</code>
-            </li>
-          }
-        </ul>
-      </div>
-    }
+    <p>
+      Myna downloads a few AI models so transcription and summaries work
+      entirely on your Mac &mdash; nothing is ever sent to the cloud. This only
+      needs to happen once.
+    </p>
 
     <div class="model-download">
       @if (isDownloading()) {
-        <p class="download-progress" role="status" aria-live="polite">
-          Downloading {{ download().artifact }} ({{ download().index + 1 }} of {{ download().total }})&hellip;
-        </p>
+        <div class="download-status">
+          <p class="download-progress" role="status" aria-live="polite">
+            Downloading {{ download().artifact }} ({{ download().index + 1 }} of {{ download().total }})&hellip;
+          </p>
+          <p class="download-hint">Please keep Myna open until it finishes.</p>
+        </div>
         <button type="button" class="cancel-download" (click)="cancelDownload()">Cancel</button>
       } @else {
         <button type="button" class="start-download" (click)="startDownload()">Download models</button>
-        @if (downloadFailed() && download().message) {
-          <p class="download-error" role="alert">{{ download().message }}</p>
+        @if (downloadFailed()) {
+          <p class="download-error" role="alert">
+            Download failed. Check your internet connection and try again.
+            @if (download().message; as message) {
+              <span class="download-error-detail">{{ message }}</span>
+            }
+          </p>
         }
       }
     </div>
 
-    <p class="hint">Or run the download script manually:</p>
-    <div class="download">
-      <code>{{ downloadCommand }}</code>
-      <button type="button" class="copy-download-command" (click)="copyDownloadCommand()">
-        {{ copied() ? 'Copied!' : 'Copy' }}
-      </button>
+    <div class="details">
+      <h2>What gets installed</h2>
+      @for (group of groups(); track group.label) {
+        <div class="group">
+          <h3>{{ group.label }}</h3>
+          <ul>
+            @for (file of group.slot.expectedFiles; track file) {
+              <li [class.present]="group.slot.present">
+                <span class="status">{{ group.slot.present ? '✓' : '✗' }}</span>
+                <code>{{ file }}</code>
+              </li>
+            }
+          </ul>
+        </div>
+      }
     </div>
   }
 
-  <button type="button" class="recheck" (click)="recheck()">Re-check</button>
+  <button type="button" class="recheck" (click)="recheck()">Check again</button>
 
   @if (error(); as err) {
     <app-error-state [code]="err.code" (retryClicked)="recheck()" />

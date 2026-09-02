@@ -147,6 +147,7 @@ npx tauri info && npx tauri dev && npx tauri build --no-bundle
 - **Beware stale build artefacts.** A `tauri build` "succeeded" once only because `target/release/myna` was cached; the broken link step never ran. Delete the binary (or force a relink) before trusting a release build.
 - **Prove fixes at the layer they broke.** Prefer a test that fails before the fix. Regression tests that pass both before and after are worthless—verify the pre-fix failure and say so.
 - **Green unit tests can hide DI wiring bugs.** 130 specs passed while the app rendered a blank screen, because every spec hand-wired its providers via `TestBed` and nothing exercised the real injector graph. Keep the routed integration spec that boots the real `app.routes` + `provideMeetings()`.
+- **"Recording works live" ≠ "session survives reload."** Session state lived only in a `Mutex<Option<RecordingSession>>` (app/src-tauri/src/state.rs:100) and the UI derived it solely from fire-and-forget events, so a webview reload or kill mid-meeting left WAVs writing with no Stop button, 0-min duration, and "No transcript available" — a happy-path test never caught it. In-memory-only state + event-only UI state is unrecoverable by construction; the fix ([ADR 0011](docs/adr/0011-session-resilience.md)) is the invariant *manifest existence == recording in progress* (`session.json`, atomic 0600), finals journaled to `transcript-journal.jsonl` by the decode worker, and state re-derived at boot (query + startup recovery, not event replay).
 
 ### Angular / UI specifics for this repo
 
