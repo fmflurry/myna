@@ -146,6 +146,32 @@ export const diarizeDisabledReason = (
 };
 
 /**
+ * The four built-in summary templates in the order their tabs must appear.
+ * The backend lists templates alphabetically by name (`action-items`,
+ * `decisions`, `key-points`, `meeting-notes`), which reads backwards on
+ * screen; the product order is broadest-summary first: Notes, Key Points,
+ * Decisions, Action Items.
+ */
+export const BUILT_IN_TEMPLATE_TAB_ORDER = ['meeting-notes', 'key-points', 'decisions', 'action-items'] as const;
+
+/**
+ * Stable priority sort for the tab strip: built-ins render in
+ * {@link BUILT_IN_TEMPLATE_TAB_ORDER}; every other template (user-added
+ * ones) keeps its incoming relative order and renders after the built-ins.
+ * `Array.prototype.sort` is stable since ES2019, so equal-rank templates are
+ * never reshuffled. Returns a copy — the caller's array is never mutated.
+ */
+export const sortTemplatesForDisplay = (
+  templates: readonly SummaryTemplate[],
+): readonly SummaryTemplate[] => {
+  const rankOf = (name: string): number => {
+    const index = BUILT_IN_TEMPLATE_TAB_ORDER.findIndex((entry) => entry === name);
+    return index === -1 ? BUILT_IN_TEMPLATE_TAB_ORDER.length : index;
+  };
+  return [...templates].sort((a, b) => rankOf(a.name) - rankOf(b.name));
+};
+
+/**
  * The template tab governing the right (summary) column in the WIDE layout,
  * where the tab strip no longer includes a Transcript tab. Falls back to the
  * first available template so the right column shows something meaningful

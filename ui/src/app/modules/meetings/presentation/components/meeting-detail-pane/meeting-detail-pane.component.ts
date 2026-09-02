@@ -60,6 +60,7 @@ import {
   computeImportProgressPercent,
   isReplaceAudioDisabled,
   isRetranscribeDisabled,
+  sortTemplatesForDisplay,
 } from './meeting-detail-pane.component.support';
 import type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
 export type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
@@ -249,9 +250,18 @@ export class MeetingDetailPaneComponent {
   /** Drives the "some audio wasn't transcribed" recovery warning near the transcript. */
   protected readonly hasDroppedAudio = computed(() => (this.meeting()?.droppedAudioChunks ?? 0) > 0);
 
-  /** See {@link computeWideActiveTemplate}. */
+  /**
+   * Tab-strip order for {@link templates}: the four built-ins pinned to
+   * Notes → Key Points → Decisions → Action Items, custom templates after
+   * them in incoming order — see {@link sortTemplatesForDisplay}. The
+   * backend lists templates alphabetically, so the strip is reordered here
+   * rather than at the data layer.
+   */
+  protected readonly displayTemplates = computed(() => sortTemplatesForDisplay(this.templates()));
+
+  /** See {@link computeWideActiveTemplate}. Uses {@link displayTemplates} so the wide default matches the first visible tab. */
   protected readonly wideActiveTemplate = computed(() =>
-    computeWideActiveTemplate(this.activeTab(), this.transcriptTab, this.templates()),
+    computeWideActiveTemplate(this.activeTab(), this.transcriptTab, this.displayTemplates()),
   );
 
   /** See {@link computeSummarySelectionTab}. */

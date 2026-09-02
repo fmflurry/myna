@@ -49,7 +49,7 @@
         {{ transcriptTabLabel() }}
       </button>
     }
-    @for (template of templates(); track template.name) {
+    @for (template of displayTemplates(); track template.name) {
       <button
         type="button"
         role="tab"
