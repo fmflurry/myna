@@ -36,10 +36,16 @@ const SCRIPT_DIR_NAME: &str = "scripts";
 /// File name of the idempotent download script driven by this module.
 const SCRIPT_FILE_NAME: &str = "download-models.sh";
 
-/// Directories prepended to the child process' `PATH`. GUI apps on macOS do
+/// Directories appended to the child process' `PATH`. GUI apps on macOS do
 /// not inherit the login shell's PATH, so `hf` (installed by pip into
 /// `~/.local/bin`) would otherwise be invisible to the spawned script.
-const CHILD_PATH_PREPEND: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+///
+/// Appended *after* whatever `PATH` the process inherited, never prepended:
+/// `/usr/local/bin` is group-writable on a stock macOS install, so
+/// prepending it would let anything placed there shadow a same-named binary
+/// the inherited `PATH` would otherwise have resolved from `/usr/bin` or
+/// `/bin`.
+const CHILD_PATH_APPEND: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// How often the runner re-checks whether the current download child has
 /// exited. Cancellation is delivered by killing the child, so this only
@@ -148,25 +154,30 @@ fn ensure_script_exists(candidate: &Path) -> Result<PathBuf, AppError> {
     }
 }
 
-/// Builds the `PATH` value handed to the download child: the GUI-unfriendly
-/// prepend directories first (so `hf` and friends resolve even though GUI
-/// apps don't inherit the login shell's PATH), then the app's own `PATH`.
+/// Builds the `PATH` value handed to the download child: the app's own
+/// (inherited) `PATH` first, then the GUI-unfriendly append directories (so
+/// `hf` and friends still resolve even though GUI apps don't inherit the
+/// login shell's PATH) -- never the reverse, so a group-writable directory
+/// like `/usr/local/bin` can never shadow a same-named binary the inherited
+/// `PATH` would otherwise have resolved first.
 ///
 /// Pure over its inputs so the construction is unit-testable without
 /// touching the real process environment.
 fn build_child_path(home_dir: Option<&Path>, current: Option<&OsStr>) -> OsString {
-    let mut parts: Vec<PathBuf> = Vec::new();
+    let mut own_parts: Vec<PathBuf> = Vec::new();
     if let Some(home) = home_dir {
-        parts.push(home.join(".local").join("bin"));
+        own_parts.push(home.join(".local").join("bin"));
     }
-    parts.extend(CHILD_PATH_PREPEND.iter().copied().map(PathBuf::from));
-    let static_parts = parts.len();
+    own_parts.extend(CHILD_PATH_APPEND.iter().copied().map(PathBuf::from));
+
+    let mut parts: Vec<PathBuf> = Vec::new();
     if let Some(current) = current {
         parts.extend(env::split_paths(current));
     }
-    env::join_paths(&parts).unwrap_or_else(|_| {
-        env::join_paths(&parts[..static_parts]).expect("static PATH dirs always join")
-    })
+    parts.extend(own_parts.iter().cloned());
+
+    env::join_paths(&parts)
+        .unwrap_or_else(|_| env::join_paths(&own_parts).expect("own PATH dirs always join"))
 }
 
 /// [`build_child_path`] against the real process environment.
@@ -182,7 +193,7 @@ fn spawn_artifact_download(
     models_root: &Path,
     artifact: DownloadArtifact,
 ) -> Result<Child, AppError> {
-    Command::new("bash")
+    Command::new("/bin/bash")
         .arg(script)
         .arg("--dest")
         .arg(models_root)
@@ -672,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn build_child_path_prepends_gui_unfriendly_dirs_and_keeps_existing() {
+    fn build_child_path_appends_gui_unfriendly_dirs_after_the_inherited_path() {
         // Arrange
         let home = Path::new("/Users/tester");
         let current = OsStr::new("/usr/bin:/bin");
@@ -680,13 +691,16 @@ mod tests {
         // Act
         let joined = build_child_path(Some(home), Some(current));
 
-        // Assert
+        // Assert: the inherited PATH comes first, so a same-named binary
+        // already resolvable through it always wins over the group-writable
+        // /usr/local/bin. Confirmed this fails against the pre-fix code,
+        // which prepended these dirs ahead of the inherited PATH.
         let parts: Vec<PathBuf> = env::split_paths(&joined).collect();
-        assert_eq!(parts[0], Path::new("/Users/tester/.local/bin"));
-        assert_eq!(parts[1], Path::new("/opt/homebrew/bin"));
-        assert_eq!(parts[2], Path::new("/usr/local/bin"));
-        assert!(parts.contains(&PathBuf::from("/usr/bin")));
-        assert!(parts.contains(&PathBuf::from("/bin")));
+        assert_eq!(parts[0], Path::new("/usr/bin"));
+        assert_eq!(parts[1], Path::new("/bin"));
+        assert_eq!(parts[2], Path::new("/Users/tester/.local/bin"));
+        assert_eq!(parts[3], Path::new("/opt/homebrew/bin"));
+        assert_eq!(parts[4], Path::new("/usr/local/bin"));
     }
 
     #[test]
