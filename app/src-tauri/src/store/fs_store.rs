@@ -10,6 +10,7 @@ use crate::domain::meeting::{Meeting, MeetingId};
 use crate::domain::placement::effective_position;
 use crate::domain::summary::Summary;
 use crate::error::AppError;
+use crate::paths;
 use crate::store::MeetingStore;
 
 const MEETINGS_DIR: &str = "meetings";
@@ -136,13 +137,16 @@ impl MeetingStore for FsMeetingStore {
 
     fn save(&self, meeting: &Meeting) -> Result<(), AppError> {
         let dir = self.meeting_dir(meeting.id);
-        fs::create_dir_all(&dir)?;
+        paths::create_dir_all_0700(&dir)?;
 
         let json = serde_json::to_string_pretty(meeting)
             .map_err(|err| AppError::Store(err.to_string()))?;
         let tmp_path = self.meeting_tmp_path(meeting.id);
-        fs::write(&tmp_path, json)?;
-        fs::rename(&tmp_path, self.meeting_json_path(meeting.id))?;
+        paths::write_0600(&tmp_path, json.as_bytes())?;
+        if let Err(err) = fs::rename(&tmp_path, self.meeting_json_path(meeting.id)) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(AppError::from(err));
+        }
         Ok(())
     }
 
@@ -174,9 +178,9 @@ impl MeetingStore for FsMeetingStore {
         language: &str,
         markdown: &str,
     ) -> Result<PathBuf, AppError> {
-        fs::create_dir_all(self.summaries_dir(id))?;
+        paths::create_dir_all_0700(&self.summaries_dir(id))?;
         let path = self.summary_path(id, template, language);
-        fs::write(&path, markdown)?;
+        paths::write_0600(&path, markdown.as_bytes())?;
         Ok(path)
     }
 

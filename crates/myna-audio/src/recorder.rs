@@ -1,5 +1,6 @@
 //! WAV recording of normalized f32 audio to 16-bit PCM files.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -23,6 +24,31 @@ pub struct RecordingStats {
     pub path: PathBuf,
 }
 
+/// Opens `path` for writing (creating or truncating it), restricting the
+/// file to owner-only access (`0600`) on Unix from the moment it is
+/// created. Non-Unix targets fall back to the platform default permissions
+/// -- Myna is macOS-first and Windows/Linux ACL handling is deferred (see
+/// `docs/stack-proposal.md`).
+#[cfg(unix)]
+fn open_0600(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_0600(path: &Path) -> std::io::Result<File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+}
+
 /// Streams normalized f32 samples to a 16-bit PCM WAV file.
 pub struct WavRecorder {
     writer: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
@@ -34,6 +60,15 @@ pub struct WavRecorder {
 impl WavRecorder {
     /// Creates a new WAV file at `path`, writing 16-bit PCM audio matching
     /// `spec`.
+    ///
+    /// Opens the file itself (via [`open_0600`], restricting it to
+    /// owner-only access on Unix from the moment it is created) rather than
+    /// using `hound::WavWriter::create`, which would create the file at the
+    /// platform-default (world/group-readable) permissions before any
+    /// audio is ever written to it -- `~/myna` is not a TCC-protected
+    /// location, so that window is the difference between a meeting
+    /// recording being readable only by its owner and readable by any
+    /// unsandboxed process on the same machine.
     pub fn create(path: &Path, spec: RecordingSpec) -> Result<Self, AudioError> {
         let wav_spec = hound::WavSpec {
             channels: spec.channels,
@@ -42,7 +77,9 @@ impl WavRecorder {
             sample_format: hound::SampleFormat::Int,
         };
 
-        let writer = hound::WavWriter::create(path, wav_spec)
+        let file = open_0600(path).map_err(|err| AudioError::Wav(err.to_string()))?;
+        let buffered = std::io::BufWriter::new(file);
+        let writer = hound::WavWriter::new(buffered, wav_spec)
             .map_err(|err| AudioError::Wav(err.to_string()))?;
 
         Ok(Self {

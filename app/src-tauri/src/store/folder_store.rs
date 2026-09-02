@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::folder::{Folder, FolderId};
 use crate::error::AppError;
+use crate::paths;
 use crate::store::FolderStore;
 
 const FOLDERS_FILE: &str = "folders.json";
@@ -103,7 +104,7 @@ impl FsFolderStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        fs::create_dir_all(&self.root)?;
+        paths::create_dir_all_0700(&self.root)?;
         let file = FoldersFile {
             version: CURRENT_VERSION,
             folders: folders.to_vec(),
@@ -111,8 +112,11 @@ impl FsFolderStore {
         let json =
             serde_json::to_string_pretty(&file).map_err(|err| AppError::Store(err.to_string()))?;
         let tmp_path = self.folders_tmp_path();
-        fs::write(&tmp_path, json)?;
-        fs::rename(&tmp_path, self.folders_json_path())?;
+        paths::write_0600(&tmp_path, json.as_bytes())?;
+        if let Err(err) = fs::rename(&tmp_path, self.folders_json_path()) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(AppError::from(err));
+        }
         Ok(())
     }
 }

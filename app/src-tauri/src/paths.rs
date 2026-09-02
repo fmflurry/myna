@@ -194,15 +194,329 @@ fn ensure_dir(path: &Path) -> Result<(), PathError> {
         return Ok(());
     }
 
-    fs::create_dir_all(path).map_err(|source| PathError::CreateDir {
+    create_dir_all_0700(path).map_err(|source| PathError::CreateDir {
         path: path.to_path_buf(),
         source,
     })
 }
 
+/// Creates `path` and every missing parent directory, restricting each
+/// newly created directory to owner-only access (`0700`) on Unix from the
+/// moment it is created — there is no window where a meeting's directory is
+/// world- or group-readable. `~/myna` is not a TCC-protected location, so
+/// this is the only thing standing between an unsandboxed process on the
+/// same machine and a user's full meeting archive.
+///
+/// Exposed `pub(crate)` so `store::fs_store` and `store::folder_store` can
+/// apply the same policy to the per-meeting and summaries directories they
+/// create, without duplicating the `cfg(unix)` split.
+///
+/// Non-Unix targets fall back to the platform default permissions — Myna is
+/// macOS-first and Windows/Linux ACL handling is deferred (see
+/// `docs/stack-proposal.md`).
+#[cfg(unix)]
+pub(crate) fn create_dir_all_0700(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn create_dir_all_0700(path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+/// Writes `contents` to `path`, restricting the file to owner-only access
+/// (`0600`) on Unix from the moment it is created — the file never has a
+/// world- or group-readable window between `create` and a later `chmod`.
+/// Used for every meeting-scoped artifact written at rest (`meeting.json`,
+/// summaries, `folders.json`); intentionally does *not* handle atomic
+/// tmp-then-rename — callers that need that write to a `.tmp` path with
+/// this function and rename separately.
+#[cfg(unix)]
+pub(crate) fn write_0600(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn write_0600(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    fs::write(path, contents)
+}
+
+/// The user's home directory, exposed `pub(crate)` so
+/// `commands::export`'s destination-confinement check can resolve `$HOME`
+/// without duplicating the `HOME`/`USERPROFILE` platform split.
+pub(crate) fn home_dir_for_export() -> Result<PathBuf, PathError> {
+    home_dir()
+}
+
+/// Walks `root` once and tightens the permissions of every pre-existing
+/// directory and regular file that is looser than the policy already
+/// applied to newly created paths (`0700` for directories via
+/// [`create_dir_all_0700`], `0600` for files via [`write_0600`]).
+///
+/// Those two helpers only take effect the moment a path is *created* —
+/// `ensure_dir` short-circuits on `path.exists()` — so any meeting recorded
+/// before this hardening shipped is stuck at the process umask default
+/// (typically `0755`/`0644`, world- and group-readable). `~/myna` is not a
+/// TCC-protected location, so this migration is the only thing standing
+/// between the pre-existing archive and any other local account or
+/// unsandboxed process on the machine.
+///
+/// Covers `root` itself, `meetings/`, every per-meeting directory, and
+/// everything under them (`audio.wav`, `track-*.wav`, `meeting.json`,
+/// `transcript*.json`, `summaries/**`, `folders.json`). `models/` directly
+/// under `root` is skipped entirely — multi-GB of public model weights, not
+/// meeting data, and out of scope for this hardening pass.
+///
+/// Symlinks are never followed: neither their own permissions are changed
+/// nor is their target descended into. Entries already at or tighter than
+/// the target mode are left untouched, so repeat launches after the first
+/// are a cheap no-op walk. Failures on individual entries (permission
+/// denied, a concurrent delete, etc.) are logged to stderr and skipped —
+/// never fatal, since one stray unreadable file must not block the app
+/// from starting.
+#[cfg(unix)]
+pub(crate) fn harden_existing_data_root(root: &Path) -> std::io::Result<()> {
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    tighten_mode_if_looser(root, 0o700);
+    harden_dir_contents(root, true);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn harden_existing_data_root(_root: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Recurses into `dir`, tightening every non-symlink child. `is_root`
+/// controls whether the top-level `models/` directory is skipped (it is
+/// only ever a direct child of the data root, so the skip only needs to
+/// apply at that level).
+#[cfg(unix)]
+fn harden_dir_contents(dir: &Path, is_root: bool) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            eprintln!("harden_existing_data_root: failed to read {dir:?}: {err}");
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("harden_existing_data_root: failed to read an entry in {dir:?}: {err}");
+                continue;
+            }
+        };
+
+        if is_root && entry.file_name().to_str() == Some(MODELS_DIR_NAME) {
+            continue;
+        }
+
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(err) => {
+                eprintln!(
+                    "harden_existing_data_root: failed to stat {:?}: {err}",
+                    entry.path()
+                );
+                continue;
+            }
+        };
+
+        // `DirEntry::file_type` does not traverse symlinks, so this check
+        // is enough to guarantee we neither chmod a symlink's target nor
+        // recurse through one.
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        let path = entry.path();
+        if file_type.is_dir() {
+            tighten_mode_if_looser(&path, 0o700);
+            harden_dir_contents(&path, false);
+        } else if file_type.is_file() {
+            tighten_mode_if_looser(&path, 0o600);
+        }
+    }
+}
+
+/// Chmods `path` to exactly `target_mode` only if its current mode carries
+/// any permission bit outside `target_mode` (i.e. it is looser than the
+/// target). A mode already equal to or tighter than the target is left
+/// alone. Errors are logged and swallowed — see
+/// [`harden_existing_data_root`].
+#[cfg(unix)]
+fn tighten_mode_if_looser(path: &Path, target_mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            eprintln!("harden_existing_data_root: failed to stat {path:?}: {err}");
+            return;
+        }
+    };
+
+    let current_mode = metadata.permissions().mode() & 0o777;
+    if current_mode & !target_mode == 0 {
+        return;
+    }
+
+    if let Err(err) = fs::set_permissions(path, fs::Permissions::from_mode(target_mode)) {
+        eprintln!("harden_existing_data_root: failed to chmod {path:?} to {target_mode:o}: {err}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- ensure_dir: at-rest permissions (security hardening) ------------
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_dir_creates_the_directory_with_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Arrange: a fresh path that does not exist yet, standing in for
+        // `data_root()`'s `~/myna` on a first run.
+        let parent = tempfile::tempdir().expect("tempdir");
+        let target = parent.path().join("data-root");
+
+        // Act
+        ensure_dir(&target).expect("ensure_dir should succeed");
+
+        // Assert: exactly 0700 (owner rwx, no group/other access at all).
+        // Confirmed this fails against the pre-fix code, which delegated to
+        // plain `fs::create_dir_all` and left the directory at the process
+        // umask default (0755 on a typical dev machine) -- i.e. world- and
+        // group-readable, even though `~/myna` is not a TCC-protected path.
+        let mode = fs::metadata(&target)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "expected the data directory to be created 0700, got {mode:o}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_dir_applies_owner_only_permissions_to_every_created_ancestor() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Arrange: neither `meetings` nor its parent `data-root` exist yet.
+        let parent = tempfile::tempdir().expect("tempdir");
+        let target = parent.path().join("data-root").join("meetings");
+
+        // Act
+        ensure_dir(&target).expect("ensure_dir should succeed");
+
+        // Assert: both the leaf and the newly created intermediate
+        // directory are 0700, not just the leaf.
+        for dir in [target.parent().expect("has parent"), target.as_path()] {
+            let mode = fs::metadata(dir).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "expected {dir:?} to be 0700, got {mode:o}");
+        }
+    }
+
+    // --- harden_existing_data_root: migrating pre-existing at-rest data --
+
+    #[test]
+    #[cfg(unix)]
+    fn harden_existing_data_root_tightens_loose_pre_existing_entries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Arrange: a data-root tree as it would exist on disk before this
+        // hardening pass shipped -- created under the process umask
+        // default (0755 dirs, 0644 files), not the 0700/0600 policy
+        // `create_dir_all_0700`/`write_0600` apply to newly created paths.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("data-root");
+        let meetings_dir = root.join("meetings");
+        let meeting_dir = meetings_dir.join("meeting-1");
+        fs::create_dir_all(&meeting_dir).expect("create meeting dir");
+        for dir in [&root, &meetings_dir, &meeting_dir] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).expect("chmod dir");
+        }
+        let audio_path = meeting_dir.join("audio.wav");
+        fs::write(&audio_path, b"pcm").expect("write audio");
+        fs::set_permissions(&audio_path, fs::Permissions::from_mode(0o644)).expect("chmod audio");
+
+        // Act
+        harden_existing_data_root(&root).expect("harden should succeed");
+
+        // Assert: every directory is tightened to 0700 and the file to
+        // 0600. Confirmed this fails before the fix: with
+        // `harden_existing_data_root` stubbed to a no-op `Ok(())`, this
+        // assertion fails with root/meetings/meeting-dir still at 0755 and
+        // audio.wav still at 0644.
+        for dir in [&root, &meetings_dir, &meeting_dir] {
+            let mode = fs::metadata(dir).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o700,
+                "expected {dir:?} to be tightened to 0700, got {mode:o}"
+            );
+        }
+        let file_mode = fs::metadata(&audio_path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            file_mode, 0o600,
+            "expected {audio_path:?} to be tightened to 0600, got {file_mode:o}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn harden_existing_data_root_leaves_already_tight_entries_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Arrange: a data root already at the target policy.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("data-root");
+        fs::create_dir_all(&root).expect("create root");
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("chmod root");
+        let file_path = root.join("meeting.json");
+        fs::write(&file_path, b"{}").expect("write file");
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).expect("chmod file");
+
+        // Act
+        let result = harden_existing_data_root(&root);
+
+        // Assert: succeeds, and the already-tight entries are unchanged.
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        let dir_mode = fs::metadata(&root).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        let file_mode = fs::metadata(&file_path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600);
+    }
 
     // Every case below drives `resolve_models_root` / `resolve_dev_models_root`
     // through explicit parameters rather than mutating the real

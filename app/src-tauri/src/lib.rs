@@ -15,6 +15,7 @@ pub mod paths;
 pub mod session;
 pub mod state;
 pub mod store;
+pub mod update_prefs;
 
 use std::sync::Arc;
 
@@ -29,9 +30,21 @@ use crate::store::fs_store::FsMeetingStore;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(
+            // Fixed, version-free User-Agent: a per-version string would
+            // make every update-check request a fingerprint of exactly
+            // which build is asking. `pubkey`/`endpoints` come from
+            // `tauri.conf.json` (`plugins.updater`), not here.
+            tauri_plugin_updater::Builder::new()
+                .header("User-Agent", "Myna")
+                .expect("\"Myna\" is a valid header value")
+                .build(),
+        )
         .setup(|app| {
             let root = paths::data_root()?;
+            if let Err(err) = paths::harden_existing_data_root(&root) {
+                eprintln!("failed to harden pre-existing data root permissions: {err}");
+            }
             let store = FsMeetingStore::new(root.clone());
             let folders = FsFolderStore::new(root);
             app.manage(AppState::new(store, folders));
@@ -87,6 +100,9 @@ pub fn run() {
             commands::models::start_diarization_download,
             commands::models::cancel_model_download,
             commands::export::export_meeting,
+            commands::updates::update_consent,
+            commands::updates::set_update_consent,
+            commands::updates::check_for_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running myna-app");
