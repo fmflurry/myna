@@ -80,6 +80,10 @@ re-run `generate` (and update that field) if you're rotating the key.
   reinstall. Back this key up somewhere durable and access-controlled
   (a password manager or secrets vault), the same way you'd treat a
   code-signing certificate's private key.
+- The current key (`B3CC8CB79070B452`) was generated **without** a password,
+  so only `TAURI_SIGNING_PRIVATE_KEY` needs provisioning (in CI and locally).
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is not used — leave it unset, or set
+  it to an empty string; either is handled by `scripts/release-macos.sh`.
 
 ## Environment variables
 
