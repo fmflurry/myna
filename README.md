@@ -215,4 +215,10 @@ Myna is released under the **MIT** License — [read it here](LICENSE).
 ### Questions?
 Open an issue or discussion on the project's repository.
 
+### Built with AI
+Myna was built entirely with AI — code, docs, and design. The agent configs, rules, and skills used to build the app are public: [fmflurry/settings-opencode](https://github.com/fmflurry/settings-opencode).
+
+### Support the project
+Myna is really free, and that doesn't change here. If the app has exceeded your expectations and you'd like to support development, a donation is purely optional: [paypal.me/fmflorianmichel](https://paypal.me/fmflorianmichel).
+
 Enjoy recording your meetings. Your data is yours alone.
