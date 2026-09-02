@@ -15,7 +15,7 @@
 
 Every meeting deserves a record. The problem is that every tool offering one either sends your call to someone else's servers or parks a bot in your meeting — both feel intrusive. Myna changes that: **it records your meetings locally, transcribes them offline, and summarizes them with AI running on your own hardware.** Nothing leaves your machine. No account. No API calls. No vendor access to your conversations. Just results you own.
 
-## Privacy: No Data Leaves Your Hardware
+## Privacy: Recording & Transcription Stay Local
 
 Myna is built on a simple premise: your meetings are yours alone. Here's what that means in practice:
 
@@ -25,6 +25,8 @@ Myna is built on a simple premise: your meetings are yours alone. Here's what th
 - **No telemetry, no analytics, no "improve our service" data collection**.
 - **No bot joins your call** — Myna captures from your microphone and system audio; it never participates as a meeting attendee.
 - **The only network call in Myna's lifetime is a one-time download** of the AI models from Hugging Face when you first click **Download** in the app (or run `./scripts/download-models.sh`). After that, **it works completely offline.**
+
+**One optional exception: update checks.** Myna can check GitHub once per 24 hours (off by default, opt-in only) to see if a newer version exists. If enabled, the only data sent is your IP address; no meeting data, OS version, or identifiers leave your machine. Myna only *notifies* you of updates; it never downloads or installs them automatically.
 
 **Verify it yourself:** Myna is MIT-licensed and open-source. Read the code. Run it with your network disconnected.
 
@@ -77,7 +79,48 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 **Platform support:** Myna is developed and tested on macOS only. Windows and Linux builds are not yet verified — see Roadmap.
 
 ### Recommended: Download the .dmg
-Grab the latest macOS `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases), open it and drag Myna to Applications, then launch. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). Requires macOS 14.4+.
+
+Grab the latest macOS `.dmg` from
+[GitHub Releases](https://github.com/fmflurry/myna/releases),
+open it and drag Myna to Applications, then launch.
+
+⚠️ **Important: Unsigned Build** — Myna v0.1.0 is ad-hoc
+signed but not notarized (Developer ID pending). macOS will
+quarantine the app on first download and may reject it with
+*"Myna is damaged and can't be opened."* To allow it to run,
+open Terminal and run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Myna.app
+```
+
+Because the build is ad-hoc signed, your code-identity changes
+with each release, so **macOS will ask for microphone permission
+again after each update**.
+
+### First Launch
+
+On first run, Myna requests system permissions, asks about update checks, and downloads
+its AI models:
+
+**Permissions:** You'll see two permission prompts on first
+record:
+
+1. **Microphone access** — required for all recordings.
+2. **Screen/audio capture** (`kTCCServiceAudioCapture`) —
+   appears only if you select system audio or mixed capture
+   mode; grants access to record other apps' audio.
+
+**Update checks (optional):** Myna will ask if you'd like it to check GitHub once per day
+for new releases. This is off by default and completely optional. If you decline, Myna
+works exactly the same way — you'll just need to check GitHub Releases manually.
+
+**Model download:** The onboarding screen shows which models
+are ready. Click **Download** and watch live progress; cancel
+anytime. This downloads Parakeet-TDT (640 MB), Qwen2.5-Instruct
+(2.0 GB), and Silero VAD (629 KB) from Hugging Face — **~2.6 GB
+total, one time only**. After the download completes, everything
+runs fully offline. Requires macOS 14.4+.
 
 ### Build from Source
 ```bash

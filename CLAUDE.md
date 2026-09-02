@@ -153,7 +153,8 @@ npx tauri info && npx tauri dev && npx tauri build --no-bundle
 - Test runner is `@angular/build:unit-test` with **Vitest on jsdom** (Karma removed—no usable Chrome on this machine). **`vi.mock()` hoisting does not work**, and Angular's `fakeAsync`/`tick` fail with "Expected to be running in 'ProxyZone'". Use `TestBed` providers plus `vi.useFakeTimers()` / `vi.advanceTimersByTime()`.
 - Stub the Tauri boundary with `infrastructure/tauri/testing/tauri-internals.stub.ts` (stubs `window.__TAURI_INTERNALS__`), not by mocking modules.
 - **Never put `providedIn: 'root'` on `MeetingsStore` or `MeetingsFacade`.** They resolve ports bound at the lazy *route* injector; root scope can't see those and the whole app renders blank with `NG0201`.
-- Only two files may import Tauri packages: `infrastructure/tauri/ipc.ts` (`@tauri-apps/api`) and `infrastructure/tauri/tauri-file-dialog.adapter.ts` (`@tauri-apps/plugin-dialog`). Keeps the Tauri boundary isolated.
+- Only two files may import Tauri packages: `infrastructure/tauri/ipc.ts` (`@tauri-apps/api`) and `infrastructure/tauri/tauri-file-dialog.adapter.ts` (`@tauri-apps/plugin-dialog`). Keeps the Tauri boundary isolated. The updater plugin is registered **Rust-side only** (app/src-tauri/src/lib.rs:38) and the webview has no reachable path to it (no updater entry in `capabilities/default.json`), so even webview compromise cannot trigger update checks.
+- Verify the import allowlist is enforced: `cargo test --test ui_tauri_import_allowlist`.
 - Known quirk: a class field bound to a constant *imported from another module* rendered as `undefined` in templates; a method returning it works.
 - The only working headless browser here is `~/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell`. Other Chrome/Chromium installs hang or SIGTRAP.
 

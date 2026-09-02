@@ -48,3 +48,11 @@ recordings/
 *.wav
 *.gguf
 *.onnx
+
+# Tauri updater signing key: the private minisign keypair used to sign
+# updater artifacts must NEVER enter git history. Public keys are baked
+# into `tauri.conf.json`, not committed as loose files.
+*.key
+*.key.pub
+.tauri/
+minisign*.key
