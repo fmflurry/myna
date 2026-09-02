@@ -17,6 +17,8 @@ permissions:
 jobs:
   build-and-release:
     runs-on: macos-14 # Apple Silicon (arm64) — required for the macOS 14.4+ Core Audio process-tap APIs.
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +43,7 @@ jobs:
         run: npm ci
 
       - name: Warn if no signing certificate is configured
-        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        if: env.APPLE_CERTIFICATE == ''
         run: |
           echo "::warning::APPLE_CERTIFICATE secret is not set — this build will ship AD-HOC SIGNED (unsigned)."
           echo "::warning::Ad-hoc builds get a new Designated Requirement on every rebuild, so any microphone"
@@ -55,9 +57,8 @@ jobs:
       # release-macos.sh then falls back to ad-hoc signing on its own and
       # still exits 0.
       - name: Import signing certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.APPLE_CERTIFICATE != ''
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
@@ -71,6 +72,10 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # Intentionally unquoted: `security list-keychain -s` requires each existing
+          # keychain path as its own argument, so word-splitting here is required to
+          # preserve the user's existing search list alongside the new keychain.
+          # shellcheck disable=SC2046
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
 
           rm -f "$CERT_PATH"
