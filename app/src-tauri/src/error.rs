@@ -50,6 +50,12 @@ pub enum AppError {
     /// The in-flight operation was cancelled by the user.
     #[error("cancelled")]
     Cancelled,
+
+    /// The update checker (`tauri-plugin-updater`) failed. An unmatched
+    /// platform key never reaches this variant — that case is mapped to "no
+    /// update available" upstream, see `commands::updates::map_check_result`.
+    #[error("update check failed: {0}")]
+    Updater(String),
 }
 
 impl AppError {
@@ -67,6 +73,7 @@ impl AppError {
             AppError::ModelsMissing(_) => "MODELS_MISSING",
             AppError::Path(_) => "PATH",
             AppError::Cancelled => "CANCELLED",
+            AppError::Updater(_) => "UPDATER",
         }
     }
 }

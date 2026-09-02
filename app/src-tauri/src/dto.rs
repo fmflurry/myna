@@ -300,6 +300,47 @@ impl From<Folder> for FolderDto {
     }
 }
 
+/// Outcome tag for [`UpdateCheckDto`]. `up-to-date` covers both "checked,
+/// nothing newer" and "the manifest has no matching platform key for this
+/// machine" — the latter must never read as an error to the user (see
+/// `commands::updates::map_check_result`).
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateCheckStatus {
+    Available,
+    UpToDate,
+    Skipped,
+    Failed,
+}
+
+/// Why a `check_for_update` call was skipped without ever reaching the
+/// network — populated only when [`UpdateCheckDto::status`] is
+/// [`UpdateCheckStatus::Skipped`].
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateSkipReason {
+    NoConsent,
+    Throttled,
+    Recording,
+}
+
+/// Result of a `check_for_update` call, IPC-facing.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckDto {
+    pub status: UpdateCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<UpdateSkipReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 /// Formats `at` as an RFC 3339 string, falling back to its `Display` form
 /// in the practically-impossible case formatting fails.
 fn rfc3339(at: OffsetDateTime) -> String {

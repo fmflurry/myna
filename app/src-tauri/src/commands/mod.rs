@@ -12,3 +12,4 @@ pub mod placement;
 pub mod recording;
 pub mod summary;
 pub mod templates;
+pub mod updates;
