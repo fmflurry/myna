@@ -1,0 +1,110 @@
+name: Release macOS
+
+# Builds, signs (when certificate secrets are configured), verifies, and
+# publishes the macOS .dmg whenever a `v*` tag is pushed. Delegates the
+# actual build/sign/verify/notarize work to scripts/release-macos.sh — see
+# docs/releasing-macos.md for what that script does and how to provision the
+# signing secrets referenced below.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14 # Apple Silicon (arm64) — required for the macOS 14.4+ Core Audio process-tap APIs.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Warn if no signing certificate is configured
+        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        run: |
+          echo "::warning::APPLE_CERTIFICATE secret is not set — this build will ship AD-HOC SIGNED (unsigned)."
+          echo "::warning::Ad-hoc builds get a new Designated Requirement on every rebuild, so any microphone"
+          echo "::warning::TCC grant a user gives this release will silently break on the next release."
+          echo "::warning::See docs/releasing-macos.md for one-time certificate provisioning."
+
+      # Imports the Developer ID certificate into a throwaway keychain so
+      # `security find-identity -v -p codesigning` (used by
+      # scripts/release-macos.sh to auto-detect the signing identity) can
+      # find it. Skipped entirely when no certificate secret is configured —
+      # release-macos.sh then falls back to ad-hoc signing on its own and
+      # still exits 0.
+      - name: Import signing certificate
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
+
+          rm -f "$CERT_PATH"
+
+      # Optional signing/notarization secrets, forwarded as env vars exactly
+      # as scripts/release-macos.sh expects (see docs/releasing-macos.md).
+      # APPLE_* are optional: when unset, the script signs ad-hoc and skips
+      # notarization, and still completes successfully. TAURI_SIGNING_* are
+      # required (bundle.createUpdaterArtifacts is true) — the script fails
+      # loudly if they're missing rather than shipping an unsigned updater
+      # artifact.
+      - name: Build, sign, and verify release bundle
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/release-macos.sh
+
+      # Emits target/release/bundle/macos/latest.json from the version in
+      # app/src-tauri/tauri.conf.json and the signature scripts/release-macos.sh
+      # just produced/verified. GITHUB_REF_NAME is set by the runner for the
+      # v* tag push that triggered this workflow.
+      - name: Generate latest.json for the updater
+        run: ./scripts/make-latest-json.sh --app-tar-gz target/release/bundle/macos/Myna.app.tar.gz
+
+      - name: Upload dmg and updater artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/Myna.app.tar.gz
+            target/release/bundle/macos/Myna.app.tar.gz.sig
+            target/release/bundle/macos/latest.json
+          generate_release_notes: true
