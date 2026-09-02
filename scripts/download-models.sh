@@ -75,15 +75,6 @@ Options:
 EOF
 }
 
-require_hf() {
-  if ! command -v hf >/dev/null 2>&1; then
-    echo "ERROR: the 'hf' CLI is required but was not found on PATH." >&2
-    echo "Install it via: pip install -U huggingface_hub" >&2
-    echo "(Note: the deprecated 'huggingface-cli' is not supported by this script.)" >&2
-    exit 1
-  fi
-}
-
 # marker_path <dest> <dir_name> <marker_name>
 marker_path() {
   echo "$1/$2/$3"
@@ -151,12 +142,23 @@ fetch_artifact() {
 
 fetch_parakeet() {
   fetch_artifact "Parakeet STT v3" "$PARAKEET_DIR_NAME" "$PARAKEET_MARKER_NAME" \
-    hf download csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 --local-dir "$DEST/$PARAKEET_DIR_NAME"
+    bash -c '
+      set -euo pipefail
+      dest_dir="$1"; base_url="$2"
+      mkdir -p "$dest_dir"
+      for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do
+        curl -fSL -o "$dest_dir/$f" "$base_url/$f"
+      done
+    ' _ \
+    "$DEST/$PARAKEET_DIR_NAME" \
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main"
 }
 
 fetch_qwen() {
   fetch_artifact "Qwen2.5-3B-Instruct GGUF" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME" \
-    hf download Qwen/Qwen2.5-3B-Instruct-GGUF --include "$QWEN_MARKER_NAME" --local-dir "$DEST/$QWEN_DIR_NAME"
+    bash -c 'mkdir -p "$(dirname "$1")" && curl -fSL -o "$1" "$2"' _ \
+    "$DEST/$QWEN_DIR_NAME/$QWEN_MARKER_NAME" \
+    "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$QWEN_MARKER_NAME"
 }
 
 fetch_vad() {
@@ -313,8 +315,6 @@ if [[ "$check_only" -eq 1 ]]; then
   run_check
   exit $?
 fi
-
-require_hf
 
 case "$only" in
   "")

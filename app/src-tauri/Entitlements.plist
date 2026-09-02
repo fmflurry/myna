@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Microphone capture (cpal input stream) requires the standard hardened-
+	runtime audio-input entitlement below.
+
+	System audio capture uses Core Audio process taps (see
+	docs/adr/0007-core-audio-taps.md) and is gated by the TCC service
+	`kTCCServiceAudioCapture`. That TCC service is granted to the app at
+	runtime via the user consent prompt (macOS 14.4+) and has no
+	corresponding hardened-runtime entitlement key to declare here — do not
+	add one; none exists. Do not remove `audio-input` below even though the
+	app currently ships unsigned (`signingIdentity: "-"`): once real code
+	signing + hardened runtime are turned on, its absence would silently
+	break the microphone.
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
