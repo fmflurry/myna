@@ -11,7 +11,10 @@
 [![No Account](https://img.shields.io/badge/account-not%20required-FFC300?style=flat-square&logo=circle-check)](docs/usage.md)
 [![Price: $0](https://img.shields.io/badge/price-%240-0F1115?style=flat-square&logo=handshake)](LICENSE)
 
-**[⬇ Download & Install](#getting-started)** · [Features](#features) · [Privacy](#privacy-recording--transcription-stay-local) · [Roadmap](#roadmap)
+- **[⬇ Download & Install](#getting-started)**
+- [Features](#features)
+- [Privacy](#privacy-recording--transcription-stay-local)
+- [Roadmap](#roadmap)
 
 ## Why Myna?
 
