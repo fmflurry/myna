@@ -8,13 +8,24 @@
 //! prompt.
 
 use myna_audio::DeviceInfo;
+use tauri::State;
 
 use crate::dto::{AudioSourceDto, SystemAudioStatusDto};
 use crate::error::AppError;
+use crate::state::AppState;
 
 /// Lists all available audio input devices.
+///
+/// Doubles as the app's periodic idle-model-eviction tick: the UI's
+/// `DevicesFacade` polls this command every 5 s for the lifetime of the
+/// meetings module, so [`AppState::evict_stt_if_idle`] runs here instead
+/// of introducing a dedicated timer. The check is non-blocking (all
+/// `try_lock`s) and refuses while a recording or import holds the engine,
+/// so a warm-poll tick costs microseconds; the real release only happens
+/// once [`crate::state::IDLE_MODEL_TTL`] has elapsed since last use.
 #[tauri::command]
-pub async fn list_input_devices() -> Result<Vec<DeviceInfo>, AppError> {
+pub async fn list_input_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, AppError> {
+    state.evict_stt_if_idle();
     tauri::async_runtime::spawn_blocking(|| Ok(myna_audio::list_input_devices()?))
         .await
         .unwrap_or_else(|_| {

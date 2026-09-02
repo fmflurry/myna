@@ -111,6 +111,35 @@ const PRE_ROLL_SEC: f32 = 0.3;
 /// [`SILENCE_SEARCH_WINDOW_SEC`]) for a quieter point to cut at instead.
 const MAX_DECODE_CHUNK_SEC: f32 = 5.0;
 
+/// Hard cap, in seconds, on how much audio [`SimulatedStreamer`]'s
+/// in-progress utterance `buffer` may retain while a VAD segment is open.
+///
+/// [`crate::vad::VadConfig::max_speech_sec`] is *not* a force-close (see its
+/// doc comment: `accept_waveform` only *tightens* the VAD once exceeded), so
+/// a pathological segment that never sees a [`crate::vad::DEFAULT_MIN_SILENCE_SEC`]-long
+/// pause stays open indefinitely. Meanwhile [`SimulatedStreamer::trim_leading_silence`]
+/// deliberately early-returns while `speech_started` (dropping pre-trigger
+/// audio mid-utterance would corrupt the next `drain_finals` pre-roll), so
+/// without a cap here the buffer grows for the whole meeting: 16 kHz mono
+/// f32 is ~3.84 MB/minute — ~230 MB/hour per track, double that for a
+/// `mixed` two-track session.
+///
+/// `30.0` is chosen so normal speech never reaches it; only continuous
+/// audio without a half-second pause can. The longest documented production
+/// outlier is a 33.12s French segment (see `crate::vad::VadConfig::
+/// max_speech_sec`'s docs), which would trip this cap once — harmlessly:
+/// the force-drain only changes *when* the oldest audio is decoded (as a
+/// `MAX_DECODE_CHUNK_SEC`-sized final with absolute timestamps, utterance
+/// state preserved, VAD untouched), never whether the transcript survives.
+///
+/// One honest transient seam: the detached cut is an exact
+/// `MAX_DECODE_CHUNK_SEC` boundary with no silence-aware search, so a word
+/// straddling it can transiently appear in both the detached `Final` and
+/// the live partial. [`PartialCommitState::detach_committed_prefix`] drops
+/// every committed word fully behind the cut, so at most that one
+/// straddling word is duplicated, and only until the utterance closes.
+const MAX_UTTERANCE_SEC: f32 = 30.0;
+
 /// Maximum trailing window, in seconds, decoded for a live partial
 /// hypothesis. [`SimulatedStreamer::maybe_partial`] re-decodes the growing
 /// utterance buffer from scratch every [`PARTIAL_INTERVAL_SEC`]; decoding
@@ -128,7 +157,7 @@ const PARTIAL_WINDOW_SEC: f32 = 4.0;
 
 /// Stability margin, in seconds, [`PartialCommitState::commit_if_due`]
 /// keeps between `committed_upto` and the live edge (`buffer_len`) before
-/// folding a word into `committed_text`. Must stay smaller than
+/// folding a word into `committed_words`. Must stay smaller than
 /// [`PARTIAL_WINDOW_SEC`] — that gap is what guarantees a word is always
 /// committed while it is still inside the decode window, before it can
 /// ever age out of it (see that function's docs for why a fixed
@@ -208,10 +237,17 @@ impl PartialThrottle {
 /// cost blowup [`PARTIAL_WINDOW_SEC`] exists to prevent. The fix is to
 /// decode only a bounded trailing window (as before), but track which
 /// prefix of the utterance has already scrolled safely behind that window
-/// and fold its text into `committed_text` — a plain `String`, not audio —
-/// so it never needs decoding again. Each partial then displays
-/// `committed_text` plus whatever the (still-bounded) window's decode adds
-/// beyond it.
+/// and fold its words into `committed_words` — text, not audio — so it
+/// never needs decoding again. Each partial then displays the committed
+/// words plus whatever the (still-bounded) window's decode adds beyond
+/// them.
+///
+/// Committed words are kept individually, each with its buffer-relative
+/// end offset, rather than as one flat `String`: that per-word timing is
+/// what lets [`Self::detach_committed_prefix`] drop exactly the words a
+/// force-drain re-emitted as a `Final`. A flat string could not tell which
+/// words sat behind the detached cut, so finalized text stayed inside the
+/// live partial — duplicating it on screen until the utterance closed.
 ///
 /// Split out from [`SimulatedStreamer`] so the windowing/commit arithmetic
 /// is unit-testable against synthetic word lists, without a loaded
@@ -219,21 +255,68 @@ impl PartialThrottle {
 /// `Instant` instead of calling `Instant::now()` itself.
 #[derive(Debug, Default)]
 struct PartialCommitState {
-    /// Text already committed from earlier parts of the current utterance.
-    committed_text: String,
-    /// Sample offset, within the utterance buffer, that `committed_text`
-    /// covers. Words ending at or before this offset are never
-    /// re-displayed from a fresh decode — they're already in
-    /// `committed_text`.
+    /// Whole words already committed from earlier parts of the current
+    /// utterance, in display order (see [`CommittedWord`]).
+    committed_words: Vec<CommittedWord>,
+    /// Sample offset, within the utterance buffer, that the committed
+    /// words cover. Words ending at or before this offset are never
+    /// re-displayed from a fresh decode — they're already committed.
     committed_upto: usize,
+}
+
+/// One word folded into the committed partial prefix, with its
+/// utterance-buffer-relative end offset in *samples* (not seconds) so
+/// [`PartialCommitState::detach_committed_prefix`] can re-anchor the
+/// survivors after a force-drain with exact integer arithmetic. The start
+/// offset is deliberately not kept: detachment decides on the end alone
+/// (a word ending at or before the cut was fully re-emitted as a `Final`),
+/// and never splits a word mid-way.
+#[derive(Debug, Clone)]
+struct CommittedWord {
+    text: String,
+    end_sample: usize,
 }
 
 impl PartialCommitState {
     /// Clears committed state — called whenever the current utterance
     /// ends, so no text bleeds into the next one.
     fn reset(&mut self) {
-        self.committed_text.clear();
+        self.committed_words.clear();
         self.committed_upto = 0;
+    }
+
+    /// The committed prefix rendered as display text.
+    fn committed_text(&self) -> String {
+        self.committed_words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Re-anchors committed state after [`SimulatedStreamer::force_drain_overflow`]
+    /// detached the oldest `detached_samples` of the utterance buffer and
+    /// re-emitted them as `Final`s: drops every committed word ending at
+    /// or before the detached cut (its text now lives in a `Final`, so
+    /// keeping it committed would duplicate the finalized prefix inside
+    /// the live partial), shifts the survivors' end offsets to the
+    /// buffer's new leading edge, and shifts `committed_upto` exactly as
+    /// the pre-fix code did.
+    ///
+    /// A word *straddling* the cut is kept whole (never split): the cut is
+    /// an exact [`MAX_DECODE_CHUNK_SEC`] boundary with no silence-aware
+    /// search, so that one word may transiently appear in both the
+    /// detached `Final` and the partial until the utterance closes — see
+    /// [`MAX_UTTERANCE_SEC`]'s docs.
+    fn detach_committed_prefix(&mut self, detached_samples: usize) {
+        if detached_samples == 0 {
+            return;
+        }
+        self.committed_upto = self.committed_upto.saturating_sub(detached_samples);
+        for word in &mut self.committed_words {
+            word.end_sample = word.end_sample.saturating_sub(detached_samples);
+        }
+        self.committed_words.retain(|word| word.end_sample > 0);
     }
 
     /// Sample offset at which to start decoding the next live partial:
@@ -251,8 +334,8 @@ impl PartialCommitState {
 
     /// Applies one decode's result: `words` are timed relative to the
     /// decoded slice `window_start..buffer_len`. Returns the full text to
-    /// display this round (`committed_text` plus everything beyond it),
-    /// and commits newly-eligible words into `committed_text` for next
+    /// display this round (the committed words plus everything beyond it),
+    /// and commits newly-eligible words into `committed_words` for next
     /// time via [`Self::commit_if_due`].
     fn apply_decode(&mut self, buffer_len: usize, window_start: usize, words: Vec<Word>) -> String {
         let offset_sec = window_start as f32 / TARGET_SAMPLE_RATE as f32;
@@ -272,14 +355,14 @@ impl PartialCommitState {
             .map(|word| word.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let text = join_committed(&self.committed_text, &tail_text);
+        let text = join_committed(&self.committed_text(), &tail_text);
 
         self.commit_if_due(buffer_len, &absolute_words);
         text
     }
 
     /// Folds every whole word that is now more than [`PARTIAL_COMMIT_HOP_SEC`]
-    /// behind the live edge (`buffer_len`) into `committed_text`, and
+    /// behind the live edge (`buffer_len`) into `committed_words`, and
     /// advances `committed_upto` up to that rolling boundary.
     ///
     /// This runs every decode (not just periodically): [`PARTIAL_COMMIT_HOP_SEC`]
@@ -314,10 +397,10 @@ impl PartialCommitState {
 
         for word in absolute_words {
             if word.end_sec > committed_upto_sec && word.end_sec <= boundary_sec {
-                if !self.committed_text.is_empty() {
-                    self.committed_text.push(' ');
-                }
-                self.committed_text.push_str(&word.text);
+                self.committed_words.push(CommittedWord {
+                    text: word.text.clone(),
+                    end_sample: (word.end_sec * TARGET_SAMPLE_RATE as f32) as usize,
+                });
             }
         }
         self.committed_upto = commit_boundary;
@@ -392,6 +475,16 @@ pub struct SimulatedStreamer {
     /// already-buffered pre-trigger audio (see [`PRE_ROLL_SEC`]) it can
     /// prepend to a segment.
     buffer_start_sample: usize,
+    /// Absolute sample index (since the streamer was created) up to which
+    /// audio has been *emitted as [`SttEvent::Final`]s*. Unlike
+    /// [`Self::buffer_start_sample`] — which also jumps when
+    /// [`Self::reset_utterance`] or [`Self::trim_leading_silence`] drop
+    /// fed-but-never-decoded audio — this advances only when a decode
+    /// completes, so [`Self::drain_finals`] can skip exactly the
+    /// already-emitted prefix of a VAD segment without ever discarding a
+    /// segment outright or clipping its undecoded leading audio (see
+    /// [`decoded_prefix_skip`]).
+    decoded_upto: usize,
     speech_started: bool,
     partial_throttle: PartialThrottle,
     /// Incremental-commit state for the current utterance's live partial —
@@ -426,6 +519,7 @@ impl SimulatedStreamer {
             buffer: Vec::new(),
             offset: 0,
             buffer_start_sample: 0,
+            decoded_upto: 0,
             speech_started: false,
             partial_throttle: PartialThrottle::new(PARTIAL_INTERVAL_SEC),
             partial_commit: PartialCommitState::default(),
@@ -442,6 +536,7 @@ impl SimulatedStreamer {
 
         self.feed_vad();
         let mut events = self.drain_finals()?;
+        events.extend(self.force_drain_overflow()?);
         self.trim_leading_silence();
 
         if let Some(partial) = self.maybe_partial()? {
@@ -492,32 +587,112 @@ impl SimulatedStreamer {
     /// absolute to the recording (derived from each chunk's own absolute
     /// sample offsets, never reset per chunk), so seek and diarization
     /// alignment are unaffected by the split.
+    ///
+    /// When [`Self::force_drain_overflow`] (or an earlier segment's decode
+    /// in this same batch) has already emitted the leading portion of a
+    /// segment as finals (the VAD keeps its own copy of segment audio,
+    /// independent of this struct's `buffer`), that already-decoded prefix
+    /// is skipped here via the dedicated [`Self::decoded_upto`] watermark —
+    /// never via `buffer_start_sample`, which also advances when
+    /// [`Self::reset_utterance`] drops fed-but-never-decoded audio and
+    /// would therefore discard a second segment completing in the same
+    /// push outright (see [`decoded_prefix_skip`]).
     fn drain_finals(&mut self) -> Result<Vec<SttEvent>, SttError> {
         let mut events = Vec::new();
         let cap_samples = (MAX_DECODE_CHUNK_SEC * TARGET_SAMPLE_RATE as f32) as usize;
         for (start_sample, samples) in self.vad.drain_segments() {
-            let (decode_start_sample, decode_samples) = self.with_pre_roll(start_sample, samples);
-            let chunks = split_into_chunks(decode_start_sample, &decode_samples, cap_samples);
-            for (chunk_start_sample, chunk_end_sample) in chunks {
-                let local_start = chunk_start_sample - decode_start_sample;
-                let local_end = chunk_end_sample - decode_start_sample;
-                let text = self.engine.transcribe_samples(
-                    TARGET_SAMPLE_RATE,
-                    &decode_samples[local_start..local_end],
-                )?;
-                let start_sec = chunk_start_sample as f32 / TARGET_SAMPLE_RATE as f32;
-                let end_sec = chunk_end_sample as f32 / TARGET_SAMPLE_RATE as f32;
-                events.push(SttEvent::Final {
-                    segment: TranscriptSegment {
-                        start_sec,
-                        end_sec,
+            // `decoded_upto` is exactly the first sample not yet emitted
+            // as a Final, so it is the right cut point for skipping the
+            // already-decoded prefix; it is `<= start_sample` whenever no
+            // decode has reached this segment (`saturating_sub` yields 0,
+            // the pre-cap-fire behaviour preserved exactly).
+            let skip = decoded_prefix_skip(self.decoded_upto, start_sample, samples.len());
+            if skip < samples.len() {
+                let trimmed = if skip == 0 {
+                    samples
+                } else {
+                    samples[skip..].to_vec()
+                };
+                let (decode_start_sample, decode_samples) =
+                    self.with_pre_roll(start_sample + skip, trimmed);
+                let chunks = split_into_chunks(decode_start_sample, &decode_samples, cap_samples);
+                for (chunk_start_sample, chunk_end_sample) in chunks {
+                    let local_start = chunk_start_sample - decode_start_sample;
+                    let local_end = chunk_end_sample - decode_start_sample;
+                    let text = self.engine.transcribe_samples(
+                        TARGET_SAMPLE_RATE,
+                        &decode_samples[local_start..local_end],
+                    )?;
+                    events.push(final_segment_event(
+                        chunk_start_sample,
+                        chunk_end_sample,
                         text,
-                        speaker: Speaker::default(),
-                        speaker_pinned: false,
-                    },
-                });
+                    ));
+                    // Advance only now that this chunk's decode completed —
+                    // a failed decode must not mark its audio as emitted.
+                    self.decoded_upto = self.decoded_upto.max(chunk_end_sample);
+                }
             }
             self.reset_utterance();
+        }
+        Ok(events)
+    }
+
+    /// Force-finalizes the oldest audio out of the in-progress utterance
+    /// buffer whenever it exceeds [`MAX_UTTERANCE_SEC`] — the RAM cap that
+    /// closes the hole left by the VAD never force-closing a segment and
+    /// [`Self::trim_leading_silence`] early-returning during speech (see
+    /// that constant's docs for the full diagnosis).
+    ///
+    /// Each iteration detaches the oldest [`MAX_DECODE_CHUNK_SEC`]-sized
+    /// prefix via the pure [`utterance_cap_drain`] bookkeeping and decodes
+    /// it through the same [`split_into_chunks`] path as
+    /// [`Self::drain_finals`], so the emitted finals carry the same
+    /// absolute timestamps and speaker stamping. The utterance *continues*:
+    /// `speech_started` stays set and the VAD keeps segmenting, only the
+    /// buffer's leading edge moves. Loops (rather than a single `if`) so
+    /// one oversized `push` — e.g. a fast file-based replay — still gets
+    /// fully reclaimed in one call; each iteration strictly shrinks the
+    /// buffer, so it terminates.
+    ///
+    /// The detached prefix is safe to drop from `buffer`: it is clamped to
+    /// samples already fed to the VAD (same invariant as
+    /// [`Self::reset_utterance`]'s docs), and its text is re-emitted as a
+    /// `Final` with absolute timestamps, which downstream sorted-insert
+    /// keeps in transcript order.
+    fn force_drain_overflow(&mut self) -> Result<Vec<SttEvent>, SttError> {
+        let mut events = Vec::new();
+        let cap_samples = (MAX_DECODE_CHUNK_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+        while let Some((start_sample, drained)) = utterance_cap_drain(
+            self.speech_started,
+            &mut self.buffer,
+            &mut self.offset,
+            &mut self.buffer_start_sample,
+        ) {
+            // The detached prefix is re-emitted as `Final`s below, so
+            // committed partial words covering it must be dropped (else
+            // the live caption shows the finalized text again inside the
+            // partial until the utterance closes) and the survivors
+            // re-anchored to the buffer's new leading edge.
+            self.partial_commit.detach_committed_prefix(drained.len());
+            for (chunk_start_sample, chunk_end_sample) in
+                split_into_chunks(start_sample, &drained, cap_samples)
+            {
+                let local_start = chunk_start_sample - start_sample;
+                let local_end = chunk_end_sample - start_sample;
+                let text = self
+                    .engine
+                    .transcribe_samples(TARGET_SAMPLE_RATE, &drained[local_start..local_end])?;
+                events.push(final_segment_event(
+                    chunk_start_sample,
+                    chunk_end_sample,
+                    text,
+                ));
+                // Advance only now that this chunk's decode completed; once
+                // the whole prefix decodes this equals the post-detach
+                // `buffer_start_sample` — the end of the force-drained span.
+                self.decoded_upto = self.decoded_upto.max(chunk_end_sample);
+            }
         }
         Ok(events)
     }
@@ -596,7 +771,7 @@ impl SimulatedStreamer {
     /// The decode input itself never exceeds [`PARTIAL_WINDOW_SEC`]
     /// (bounding cost), but the *displayed* text covers the whole
     /// utterance so far via [`PartialCommitState`], which folds words that
-    /// have scrolled behind the window into `committed_text` instead of
+    /// have scrolled behind the window into `committed_words` instead of
     /// ever re-decoding them.
     fn maybe_partial(&mut self) -> Result<Option<SttEvent>, SttError> {
         let throttle_ready = self.partial_throttle.should_decode(Instant::now());
@@ -662,6 +837,108 @@ impl SimulatedStreamer {
         self.speech_started = false;
         self.partial_commit.reset();
     }
+
+    /// Test-only view of the in-progress utterance buffer length, for
+    /// asserting the [`MAX_UTTERANCE_SEC`] retention bound. The model-free
+    /// cap test drives [`utterance_cap_drain`] directly (this struct cannot
+    /// be constructed without downloaded model artifacts — see the
+    /// `split_into_chunks` tests' module comment), so this seam exists for
+    /// end-to-end verification paths that *do* load a real engine (see the
+    /// `#[ignore]`d tests' convention).
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn buffered_samples(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+/// Builds a [`SttEvent::Final`] from absolute sample offsets, shared by
+/// [`SimulatedStreamer::drain_finals`] and
+/// [`SimulatedStreamer::force_drain_overflow`] so both stamp identical
+/// absolute timestamps and default speaker attribution.
+fn final_segment_event(start_sample: usize, end_sample: usize, text: String) -> SttEvent {
+    SttEvent::Final {
+        segment: TranscriptSegment {
+            start_sec: start_sample as f32 / TARGET_SAMPLE_RATE as f32,
+            end_sec: end_sample as f32 / TARGET_SAMPLE_RATE as f32,
+            text,
+            speaker: Speaker::default(),
+            speaker_pinned: false,
+        },
+    }
+}
+
+/// Pure skip decision behind [`SimulatedStreamer::drain_finals`]: how many
+/// leading samples of a VAD segment `(start_sample, start_sample +
+/// segment_len)` have already been emitted as `Final`s and must not be
+/// decoded a second time.
+///
+/// The input is the dedicated [`SimulatedStreamer::decoded_upto`]
+/// watermark, NOT `buffer_start_sample`: that field also advances whenever
+/// [`SimulatedStreamer::reset_utterance`] or
+/// [`SimulatedStreamer::trim_leading_silence`] drop fed-but-never-decoded
+/// audio, so using it as the cut point silently discarded a second VAD
+/// segment completing in the same 1 s ingest push (`skip >= segment_len` —
+/// the VAD keeps its own copy of segment audio, so the segment is still
+/// drained even though the buffer's leading edge moved past it), and
+/// clipped the never-decoded leading audio off a segment that merely
+/// *started* in such a push — the same leading-word-loss class
+/// [`PRE_ROLL_SEC`] exists for. `decoded_upto` only advances when a
+/// decode completes, so the skip is exactly the already-emitted prefix —
+/// never more.
+///
+/// Clamped to `segment_len` so a fully-decoded segment skips everything
+/// (the caller's `skip < len` gate then emits nothing for it) instead of
+/// indexing past its end. Pure so the watermark decision is unit-testable
+/// without a loaded [`SttEngine`], mirroring [`utterance_cap_drain`].
+fn decoded_prefix_skip(decoded_upto: usize, start_sample: usize, segment_len: usize) -> usize {
+    decoded_upto.saturating_sub(start_sample).min(segment_len)
+}
+
+/// Pure decision + bookkeeping behind
+/// [`SimulatedStreamer::force_drain_overflow`] — the model-free seam for
+/// the [`MAX_UTTERANCE_SEC`] utterance-buffer cap, mirroring why
+/// [`PartialThrottle`], [`PartialCommitState`] and [`split_into_chunks`]
+/// are pure: `SttEngine` and `VadSegmenter` wrap concrete ONNX runtimes
+/// with no trait seam and no fake, so a pure function over the buffer
+/// bookkeeping is the only unit-testable surface.
+///
+/// While `speech_started` and `buffer` holds more than
+/// [`MAX_UTTERANCE_SEC`] of audio, detaches the oldest
+/// [`MAX_DECODE_CHUNK_SEC`]-sized prefix and advances the retention
+/// indices (`fed_offset`, `buffer_start_sample`) past it, returning the
+/// prefix paired with the absolute start sample it was detached from —
+/// the caller decodes it through the [`split_into_chunks`] path. Like
+/// [`SimulatedStreamer::reset_utterance`], it only ever detaches samples
+/// the VAD has already been fed (`drain_count` is clamped to
+/// `fed_offset`): unfed audio is never silently discarded.
+///
+/// Returns `None` when no drain is due — idle, at or under the cap, or
+/// nothing fed. Callers loop while this returns `Some` to recover from a
+/// single oversized push.
+fn utterance_cap_drain(
+    speech_started: bool,
+    buffer: &mut Vec<f32>,
+    fed_offset: &mut usize,
+    buffer_start_sample: &mut usize,
+) -> Option<(usize, Vec<f32>)> {
+    if !speech_started {
+        return None;
+    }
+    let cap_samples = (MAX_UTTERANCE_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+    if buffer.len() <= cap_samples {
+        return None;
+    }
+    let chunk_samples = (MAX_DECODE_CHUNK_SEC * TARGET_SAMPLE_RATE as f32) as usize;
+    let drain_count = chunk_samples.min(*fed_offset);
+    if drain_count == 0 {
+        return None;
+    }
+    let start_sample = *buffer_start_sample;
+    let drained: Vec<f32> = buffer.drain(0..drain_count).collect();
+    *fed_offset -= drain_count;
+    *buffer_start_sample += drain_count;
+    Some((start_sample, drained))
 }
 
 /// How far back, in seconds, [`split_into_chunks`] searches from the hard
@@ -992,7 +1269,7 @@ mod tests {
         // of the buffer, so a word straddling the commit seam is always
         // re-decoded in full rather than truncated.
         let state = PartialCommitState {
-            committed_text: String::new(),
+            committed_words: Vec::new(),
             committed_upto: window_samples() * 3,
         };
         let buffer_len = state.committed_upto + hop_samples();
@@ -1109,7 +1386,7 @@ mod tests {
         let buffer_len_1 = 100_100 + hop; // commit boundary == 100_100, inside the word
         state.commit_if_due(buffer_len_1, std::slice::from_ref(&straddling));
         assert!(
-            !state.committed_text.contains("straddles"),
+            !state.committed_text().contains("straddles"),
             "a word still within the stability margin must never be committed mid-word"
         );
 
@@ -1117,7 +1394,7 @@ mod tests {
         // safely behind the margin and becomes eligible.
         let buffer_len_2 = buffer_len_1 + 500;
         state.commit_if_due(buffer_len_2, std::slice::from_ref(&straddling));
-        let occurrences = state.committed_text.matches("straddles").count();
+        let occurrences = state.committed_text().matches("straddles").count();
         assert_eq!(
             occurrences, 1,
             "the seam word must be committed exactly once — no duplication, and not lost"
@@ -1128,7 +1405,10 @@ mod tests {
     fn reset_clears_committed_state_so_nothing_bleeds_into_the_next_utterance() {
         // Arrange
         let mut state = PartialCommitState {
-            committed_text: "leftover text".to_string(),
+            committed_words: vec![CommittedWord {
+                text: "leftover".to_string(),
+                end_sample: 12_340,
+            }],
             committed_upto: 12_345,
         };
 
@@ -1136,8 +1416,60 @@ mod tests {
         state.reset();
 
         // Assert
-        assert_eq!(state.committed_text, "");
+        assert!(state.committed_words.is_empty());
+        assert_eq!(state.committed_text(), "");
         assert_eq!(state.committed_upto, 0);
+    }
+
+    #[test]
+    fn detach_committed_prefix_drops_force_reemitted_words_and_reanchors_the_rest() {
+        // Regression test for the live-caption duplication: after
+        // `force_drain_overflow` re-emits the oldest 5 s of the utterance
+        // as finals, committed partial words fully behind that cut must be
+        // dropped (their text now lives in a `Final`), a word straddling
+        // the cut is kept whole, and later words survive re-anchored to the
+        // buffer's new leading edge.
+        let detached = samples(MAX_DECODE_CHUNK_SEC); // 80_000
+        let mut state = PartialCommitState::default();
+        state.commit_if_due(
+            detached + hop_samples() * 2,
+            &[
+                word_at("gone", detached - 4_000, detached - 2_000),
+                word_at("straddle", detached - 1_000, detached + 1_000),
+                word_at("kept", detached + 2_000, detached + 4_000),
+            ],
+        );
+        assert_eq!(
+            state.committed_words.len(),
+            3,
+            "all three end behind the commit boundary"
+        );
+
+        state.detach_committed_prefix(detached);
+
+        let text = state.committed_text();
+        assert!(
+            !text.contains("gone"),
+            "a word re-emitted as a force-drained Final must not stay in the partial: {text}"
+        );
+        assert!(
+            text.contains("straddle"),
+            "a straddling word is never split: {text}"
+        );
+        assert!(
+            text.contains("kept"),
+            "words behind the live edge survive: {text}"
+        );
+        assert_eq!(
+            state.committed_upto,
+            hop_samples(),
+            "committed_upto shifts exactly as the pre-fix code did (112_000 - 80_000)"
+        );
+        // Re-anchored offsets stay usable: a second detach of the remaining
+        // prefix drops the straddling word too, and nothing underflows.
+        state.detach_committed_prefix(detached);
+        assert_eq!(state.committed_upto, 0);
+        assert!(!state.committed_text().contains("kept"));
     }
 
     #[test]
@@ -1534,6 +1866,244 @@ mod tests {
             "the hard decode-chunk cap must be pinned below every production-measured \
              failure (7.00s, 7.00s, 6.65s all decoded as English), not merely under the \
              original 8s bench knee"
+        );
+    }
+
+    // --- Hard cap on the in-progress utterance buffer (RAM-leak fix) ---
+    //
+    // The VAD never force-closes a segment (`max_speech_sec` only tightens
+    // it — see `crate::vad::VadConfig::max_speech_sec`'s docs, which is how
+    // a 33.12s segment happened in production), and `trim_leading_silence`
+    // early-returns while `speech_started`. Pre-fix, a segment that never
+    // closed let `buffer` grow for the whole meeting (~230 MB/hour/track of
+    // 16 kHz f32). Like the split tests above, this drives the pure
+    // `utterance_cap_drain` seam (no model-free way to construct the
+    // streamer itself) through the exact per-push sequence `push()` runs
+    // around the VAD/engine calls: extend -> feed every full window ->
+    // drain_finals (the stub VAD never emits a segment, so it contributes
+    // nothing) -> force_drain_overflow. Removing the cap-drain loop below
+    // reproduces the leak exactly: the buffer ends at the full 10 minutes.
+
+    #[test]
+    fn push_with_never_closing_vad_caps_buffer() {
+        const TEN_MIN_SEC: f32 = 600.0;
+        let chunk = vec![0.05_f32; VAD_WINDOW_SIZE];
+        let pushes = samples(TEN_MIN_SEC) / VAD_WINDOW_SIZE;
+
+        let mut buffer: Vec<f32> = Vec::new();
+        let mut fed_offset = 0usize;
+        let mut buffer_start_sample = 0usize;
+        let speech_started = true; // stub VAD: latched on, never closes a segment
+        let mut drained_total = 0usize;
+        let mut last_drain_end = 0usize;
+        let mut max_buffered = 0usize;
+
+        for _ in 0..pushes {
+            buffer.extend_from_slice(&chunk);
+            // feed_vad equivalent: every full window is fed; the stub VAD
+            // returns no segments, so drain_finals contributes nothing.
+            while buffer.len() - fed_offset >= VAD_WINDOW_SIZE {
+                fed_offset += VAD_WINDOW_SIZE;
+            }
+            // The real cap drain that `push()` runs via
+            // `force_drain_overflow()` after `drain_finals()`.
+            while let Some((start_sample, drained)) = utterance_cap_drain(
+                speech_started,
+                &mut buffer,
+                &mut fed_offset,
+                &mut buffer_start_sample,
+            ) {
+                assert_eq!(
+                    start_sample, last_drain_end,
+                    "force-drained prefixes must be contiguous in absolute sample space"
+                );
+                assert_eq!(
+                    drained.len(),
+                    samples(MAX_DECODE_CHUNK_SEC),
+                    "each force-drain detaches exactly one MAX_DECODE_CHUNK_SEC prefix"
+                );
+                last_drain_end = start_sample + drained.len();
+                drained_total += drained.len();
+            }
+            max_buffered = max_buffered.max(buffer.len());
+        }
+
+        let cap_plus_one_window = samples(MAX_UTTERANCE_SEC) + VAD_WINDOW_SIZE;
+        assert!(
+            max_buffered <= cap_plus_one_window,
+            "utterance buffer must stay capped at MAX_UTTERANCE_SEC (+ one VAD window of \
+             slack); pre-fix it grew unbounded — peak was {max_buffered} samples"
+        );
+        assert!(
+            buffer.len() <= cap_plus_one_window,
+            "buffer at rest must stay capped, got {} samples",
+            buffer.len()
+        );
+        // Nothing is silently discarded from the leading edge: every sample
+        // is either force-drained (and decoded by the caller) or retained.
+        assert_eq!(drained_total + buffer.len(), samples(TEN_MIN_SEC));
+        assert_eq!(
+            buffer_start_sample, drained_total,
+            "buffer_start_sample must advance exactly with the force-drained prefix"
+        );
+    }
+
+    #[test]
+    fn utterance_cap_drain_is_inert_while_idle_below_the_cap_and_before_anything_is_fed() {
+        // Normal speech must never hit the cap, and the reset_utterance
+        // invariant holds: only already-fed samples are ever detached.
+        let mut below_cap = flat_buffer_of_amplitude(29.9, 0.05);
+        let mut fed = below_cap.len();
+        let mut start = 0usize;
+        assert!(
+            utterance_cap_drain(true, &mut below_cap, &mut fed, &mut start).is_none(),
+            "a 29.9s utterance is below the 30s cap and must not be touched"
+        );
+        assert_eq!(start, 0);
+
+        let mut idle = flat_buffer_of_amplitude(31.0, 0.05);
+        let mut fed = idle.len();
+        let mut start = 0usize;
+        assert!(
+            utterance_cap_drain(false, &mut idle, &mut fed, &mut start).is_none(),
+            "while idle, retention is trim_leading_silence's job, not the cap's"
+        );
+        assert_eq!(idle.len(), samples(31.0));
+
+        let mut unfed = flat_buffer_of_amplitude(31.0, 0.05);
+        let mut fed = 0usize;
+        let mut start = 0usize;
+        assert!(
+            utterance_cap_drain(true, &mut unfed, &mut fed, &mut start).is_none(),
+            "samples the VAD has not seen yet must never be detached"
+        );
+        assert_eq!(unfed.len(), samples(31.0));
+    }
+
+    // --- Double-decode skip watermark (`decoded_upto`) ---
+    //
+    // Regression tests for the review findings on the RAM-cap fix: the
+    // `drain_finals` double-decode skip used `buffer_start_sample` as
+    // "first sample not yet force-drained", but that field *also* jumps
+    // when `reset_utterance` (inside the same drain batch) or
+    // `trim_leading_silence` drop fed-but-NEVER-DECODED audio. The fix
+    // introduces a dedicated `decoded_upto` watermark advanced only when a
+    // final's decode completes, and makes the skip decision the pure
+    // `decoded_prefix_skip` seam below (model-free, like
+    // `utterance_cap_drain`). Each test first asserts the *pre-fix*
+    // formula (`buffer_start_sample.saturating_sub(start_sample)`) loses
+    // audio in the scenario, then asserts the watermark-based seam does
+    // not.
+
+    #[test]
+    fn two_segment_batch_skips_only_decoded_audio_so_the_second_segment_survives_the_reset_jump() {
+        // Scenario A: one 1 s ingest push completes two VAD segments. The
+        // push covers absolute samples [0, 16_000); seg1 = [1_000, 9_000),
+        // seg2 = [10_000, 16_000). The VAD keeps its own copy of segment
+        // audio, so seg2 is still drained even after seg1's
+        // `reset_utterance` jumps `buffer_start_sample` to 16_000 — past
+        // seg2's END.
+        let (seg2_start, seg2_len) = (10_000usize, 6_000usize);
+        let buffer_start_sample_after_reset = 16_000usize;
+
+        // Pre-fix formula: skip = 6_000 >= seg2_len, so the
+        // `skip < samples.len()` gate discarded seg2 outright — a whole
+        // silently-lost utterance per the review.
+        let buggy_skip = buffer_start_sample_after_reset.saturating_sub(seg2_start);
+        assert!(
+            buggy_skip >= seg2_len,
+            "documents the pre-fix failure mode: old skip {buggy_skip} >= segment length \
+             {seg2_len} means seg2 was silently discarded"
+        );
+
+        // Post-fix: the watermark only ever reached seg1's last decoded
+        // chunk end (9_000), which is *before* seg2 starts — nothing of
+        // seg2 was emitted as a Final, so nothing may be skipped.
+        let decoded_upto = 9_000;
+        assert_eq!(
+            decoded_prefix_skip(decoded_upto, seg2_start, seg2_len),
+            0,
+            "seg2 was never decoded, so both segments must decode in full with no loss"
+        );
+    }
+
+    #[test]
+    fn onset_sharing_push_keeps_the_new_segments_never_decoded_leading_audio() {
+        // Scenario B: seg1 completes in the same push where seg2's onset
+        // starts. Pre-fix, seg1's `reset_utterance` jumped
+        // `buffer_start_sample` to mid-seg2, and the skip clipped seg2's
+        // never-decoded leading audio — the same leading-word-loss class
+        // `PRE_ROLL_SEC` exists to fix.
+        let (seg2_start, seg2_len) = (12_000usize, 8_000usize);
+        let buffer_start_sample_after_reset = 16_000usize; // lands mid-seg2
+
+        let buggy_skip = buffer_start_sample_after_reset.saturating_sub(seg2_start);
+        assert!(
+            buggy_skip > 0 && buggy_skip < seg2_len,
+            "documents the pre-fix failure mode: old skip {buggy_skip} > 0 clipped seg2's \
+             never-decoded leading audio (leading-word loss)"
+        );
+
+        // Post-fix: seg1's decode ended at 9_000, before seg2's onset at
+        // 12_000, so the watermark skips nothing and seg2's leading audio
+        // stays intact for the pre-roll path.
+        let decoded_upto = 9_000;
+        assert_eq!(
+            decoded_prefix_skip(decoded_upto, seg2_start, seg2_len),
+            0,
+            "seg2's leading audio was never emitted as a Final — the skip must be zero"
+        );
+    }
+
+    #[test]
+    fn cap_fired_skip_equals_exactly_the_force_drained_prefix() {
+        // The legitimate case the skip exists for: the utterance cap fired
+        // and force-drained the oldest MAX_DECODE_CHUNK_SEC prefix as
+        // finals; the VAD now drains a segment overlapping that prefix.
+        // The skip must be exactly the drained overlap — no more (loss),
+        // no less (double text). Drives the real `utterance_cap_drain`
+        // seam so the watermark's advance point (post-detach
+        // `buffer_start_sample`) is exercised, not just asserted.
+        let mut buffer: Vec<f32> = flat_buffer_of_amplitude(31.0, 0.05);
+        let mut fed_offset = buffer.len();
+        let mut buffer_start_sample = 0usize;
+        let (drain_start, drained) =
+            utterance_cap_drain(true, &mut buffer, &mut fed_offset, &mut buffer_start_sample)
+                .expect("31s of speech is over the 30s cap");
+        assert_eq!(drain_start, 0);
+        assert_eq!(drained.len(), samples(MAX_DECODE_CHUNK_SEC));
+        // The watermark `force_drain_overflow` sets after decoding the
+        // detached prefix is exactly the post-detach `buffer_start_sample`.
+        let decoded_upto = buffer_start_sample;
+
+        // A later VAD segment spanning [3.75s, 9.375s) overlaps the drained
+        // [0s, 5s) prefix by exactly 1.25s.
+        let (seg_start, seg_len) = (samples(3.75), samples(5.625));
+        assert_eq!(
+            decoded_prefix_skip(decoded_upto, seg_start, seg_len),
+            samples(1.25),
+            "the skip must be exactly the force-drained prefix of the segment"
+        );
+        // And a segment starting at or after the watermark skips nothing.
+        assert_eq!(decoded_prefix_skip(decoded_upto, decoded_upto, seg_len), 0);
+    }
+
+    #[test]
+    fn max_utterance_sec_stays_far_above_the_decode_chunk_cap() {
+        // The force-drain detaches a MAX_DECODE_CHUNK_SEC prefix while the
+        // utterance keeps buffering; if the two ever converged, every push
+        // past the cap would drain the whole utterance and reset retention
+        // semantics. 30s also keeps normal speech clear of the cap (the
+        // longest documented outlier is the 33.12s production segment,
+        // which trips it exactly once — harmlessly, see the constant's
+        // docs).
+        assert_eq!(MAX_UTTERANCE_SEC, 30.0);
+        let chunk_budget = 5.0 * MAX_DECODE_CHUNK_SEC;
+        assert!(
+            MAX_UTTERANCE_SEC > chunk_budget,
+            "the utterance cap must stay well above one decode chunk (got {MAX_UTTERANCE_SEC} \
+             vs {chunk_budget}) so a force-drain detaches a strict prefix and the utterance \
+             keeps buffering"
         );
     }
 }

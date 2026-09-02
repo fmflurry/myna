@@ -1,11 +1,14 @@
 //! Model-gated regression coverage for the ⌘Q Metal-teardown crash: ggml
 //! unconditionally asserts every Metal buffer is freed before its device
-//! is destroyed (`ggml-metal-device.m:656`). Myna holds the loaded
-//! [`Summarizer`] in a `OnceLock` that is never dropped
-//! (`app/src-tauri/src/state.rs`), so its weight buffers stay registered
-//! and that assert fires — deterministically, every quit — during
-//! `exit()`'s static-destructor pass. See `myna_llm::init_ggml_env`'s docs
-//! for the full chain and the fix (`GGML_METAL_NO_RESIDENCY=1`).
+//! is destroyed (`ggml-metal-device.m:656`). Myna now caches models in an
+//! evictable `ModelSlot` (`app/src-tauri/src/state.rs`) and drops the
+//! [`Summarizer`] at the end of every summarization (STT after an idle
+//! TTL), so its weight buffers are normally freed long before quit — but
+//! a crash, or an `Arc` still held when `exit()`'s static-destructor pass
+//! runs, leaves them registered and the assert fires. The residency
+//! workaround (`GGML_METAL_NO_RESIDENCY=1`) is the exit-safety guarantee
+//! for both teardown paths below; see `myna_llm::init_ggml_env`'s docs
+//! for the full chain and the fix.
 //!
 //! A crash at process exit can't be observed as a normal `#[test]`
 //! failure (the test binary itself is the process that aborts), so both
@@ -47,8 +50,8 @@ fn run_as_child(test_name: &str) -> std::process::ExitStatus {
 #[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
 fn a_leaked_summarizer_does_not_abort_the_process_at_exit() {
     if std::env::var_os(CHILD).is_some() {
-        // Child: mirror AppState's OnceLock — load and never drop, then
-        // let libtest's own process exit run ggml's static destructors.
+        // Child: mirror AppState's evictable ModelSlot cache — load and never
+        // drop, then let libtest's own process exit run ggml's static destructors.
         let summarizer = Summarizer::load(&qwen_model_path()).expect("model load");
         std::mem::forget(summarizer);
         return;

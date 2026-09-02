@@ -273,6 +273,18 @@ pub fn edit_summary_from(
 /// Does the actual work of [`summarize_meeting`], factored out so the
 /// caller can hold [`AppState::summarization_guard`] across the whole call —
 /// that guard's `Drop` releases the busy flag regardless of outcome.
+///
+/// End-of-operation model release: on every `Ok`/`Err` outcome the cached
+/// [`Summarizer`] is released via [`AppState::release_summarizer`] before
+/// this returns, dropping the ~2.5 GB of weights + KV cache back to the
+/// OS. The release only clears the slot when the slot is the sole `Arc`
+/// holder — the operation's own reference is dropped here first (it lives
+/// inside [`run_inference`]`'s` scope), and the busy guard held by
+/// [`summarize_meeting`] guarantees no second concurrent summarization
+/// references it. (A panic mid-operation skips the release; the model then
+/// stays cached until the next summarization releases it — degraded, not
+/// leaked.) The next summarization pays a seconds-scale reload; see
+/// [`AppState::summarizer`] for the tradeoff.
 fn run_summarization(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -280,10 +292,22 @@ fn run_summarization(
     template_name: String,
     language: Option<String>,
 ) -> Result<SummaryDto, AppError> {
-    let (language_code, language_label) = resolve(language.as_deref());
+    let result = summarize_and_persist(app, state, id, &template_name, language.as_deref());
+    state.release_summarizer();
+    result
+}
+
+fn summarize_and_persist(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    id: MeetingId,
+    template_name: &str,
+    language: Option<&str>,
+) -> Result<SummaryDto, AppError> {
+    let (language_code, language_label) = resolve(language);
 
     let meeting = state.store.get(id)?;
-    let template = load_template(app, &template_name)?;
+    let template = load_template(app, template_name)?;
     let render_ctx = build_render_context(&meeting, language_label)?;
     let summarizer = state.summarizer(app)?;
 
@@ -291,7 +315,7 @@ fn run_summarization(
         app,
         state,
         &id,
-        &template_name,
+        template_name,
         &template,
         &render_ctx,
         summarizer,
@@ -300,9 +324,9 @@ fn run_summarization(
     let created_at = OffsetDateTime::now_utc();
     let path = state
         .store
-        .save_summary(id, &template_name, language_code, &markdown)?;
+        .save_summary(id, template_name, language_code, &markdown)?;
     let updated = meeting.with_summary(SummaryRef {
-        template: template_name.clone(),
+        template: template_name.to_owned(),
         created_at,
         path,
         language: language_code.to_string(),
@@ -315,13 +339,13 @@ fn run_summarization(
     emit_done(
         app,
         &id.to_string(),
-        &template_name,
+        template_name,
         language_code,
         &markdown,
     );
 
     Ok(SummaryDto::from(Summary {
-        template: template_name,
+        template: template_name.to_owned(),
         markdown,
         created_at,
         language: language_code.to_string(),

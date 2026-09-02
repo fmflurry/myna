@@ -229,6 +229,12 @@ fn stop_recording_blocking(app: &AppHandle) -> Result<MeetingDto, AppError> {
     );
     let stop_result = session.stop();
     emit_recording_state(app, None, RecordingState::Idle, source, system_source);
+    // The session (and its `Arc<SttEngine>`) is gone: restart the
+    // engine's idle-TTL countdown from *now* so a follow-up recording
+    // within [`crate::state::IDLE_MODEL_TTL`] reuses the warm engine, and
+    // only a genuinely idle app releases its ~1 GB later. The salvage path
+    // below also stops after `stop()`, so touching here covers both.
+    state.touch_stt_last_used();
 
     let (transcript, dropped_chunks) = match stop_result {
         Ok(result) => result,
@@ -364,6 +370,8 @@ fn cancel_recording_blocking(app: &AppHandle) -> Result<(), AppError> {
     );
     let stop_result = session.stop();
     emit_recording_state(app, None, RecordingState::Idle, source, system_source);
+    // End-of-operation STT idle-TTL restart — see `stop_recording_blocking`.
+    state.touch_stt_last_used();
 
     discard_cancelled_meeting(&state.store, meeting_id, stop_result)
 }
@@ -407,6 +415,14 @@ fn discard_cancelled_meeting(
 /// microseconds-scale — so there is nothing to move off the main thread.
 #[tauri::command]
 pub fn recording_state(state: State<'_, AppState>) -> Result<RecordingStatePayload, AppError> {
+    // Idle-model eviction hook (boot/reload path): a webview reload after
+    // an idle meeting gets the `recording_state` snapshot, and this is the
+    // natural moment to hand a TTL-expired STT engine back to the OS. The
+    // check is all-`try_lock`/non-blocking and refuses while a session or
+    // import is live, so it can never interfere with the `stopping`
+    // contract below. See `commands::devices::list_input_devices` for the
+    // periodic half of this hook.
+    state.evict_stt_if_idle();
     recording_state_payload(&state)
 }
 

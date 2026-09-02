@@ -22,4 +22,5 @@ anyhow = { workspace = true }
 ctrlc = { workspace = true }
 
 [dev-dependencies]
+sysinfo = "0.39.6"
 tempfile = { workspace = true }

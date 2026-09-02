@@ -16,7 +16,7 @@ use sherpa_onnx::{
 };
 
 use crate::error::SttError;
-use crate::wav::read_wav_to_f32;
+use crate::wav::WavBlockReader;
 
 /// `min_duration_on` passed to `OfflineSpeakerDiarizationConfig`: segments
 /// shorter than this are dropped by the segmentation stage.
@@ -25,6 +25,12 @@ const MIN_DURATION_ON: f32 = 0.3;
 /// `min_duration_off` passed to `OfflineSpeakerDiarizationConfig`: silence
 /// gaps shorter than this do not split a segment.
 const MIN_DURATION_OFF: f32 = 0.5;
+
+/// Frames pulled per [`WavBlockReader::next_block`] while assembling the
+/// diarization buffer. 16,000 frames is 1 s at 16 kHz — large enough that
+/// per-block overhead stays negligible, small enough that the transient
+/// block is noise next to the final buffer.
+const DIARIZE_BLOCK_FRAMES: usize = 16_000;
 
 /// Configuration for loading a [`Diarizer`].
 #[derive(Debug, Clone)]
@@ -105,7 +111,25 @@ impl Diarizer {
 
     /// Diarizes a WAV file on disk, returning segments sorted by start time.
     pub fn diarize_wav(&self, path: &Path) -> Result<DiarizeResult, SttError> {
-        let (samples, _sample_rate) = read_wav_to_f32(path)?;
+        // Build one owned mono buffer block-wise so the interleaved
+        // all-samples Vec is never materialized: peak Rust-side memory is
+        // ~1x the file's frame count (plus one transient block), not 2x.
+        // Mono blocks pass through `downmix_to_mono` by move, so the common
+        // 16 kHz track-system case never copies at all. The sherpa-onnx C++
+        // layer keeps its own internal copy of the slice handed to
+        // `process` — unavoidable through the C API — so total peak stays
+        // at 2x file bytes.
+        let mut reader = WavBlockReader::open(path)?;
+        // The header's declared frame count is attacker-controlled for
+        // user-imported files — clamp the reservation to the file's real
+        // size before pre-allocating (see [`reservation_frames`]).
+        let file_bytes = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        let capacity =
+            reservation_frames(reader.total_frames(), file_bytes, reader.bytes_per_frame());
+        let mut samples = Vec::with_capacity(capacity);
+        while let Some(block) = reader.next_block(DIARIZE_BLOCK_FRAMES)? {
+            samples.extend(block);
+        }
 
         let result = self
             .inner
@@ -143,6 +167,28 @@ fn require_artifact(path: &Path) -> Result<(), SttError> {
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// Upper-bound [`Diarizer::diarize_wav`]'s sample-buffer reservation by
+/// what the file can actually hold.
+///
+/// `declared_frames` comes from the WAV header's data-chunk length, which
+/// hound reports verbatim — a corrupt or hostile user-imported file can
+/// claim 2^31 frames (~8 GB of `f32`) inside a 244-byte file, and
+/// `Vec::with_capacity` would take that claim at face value and abort the
+/// process on the speculative allocation. The file's real byte size is the
+/// only trustworthy bound: `declared.min(file_bytes / bytes_per_frame)`,
+/// floored at one [`DIARIZE_BLOCK_FRAMES`] block so amortised `extend`
+/// covers any residual growth. Pure so the forged-header guard is
+/// unit-testable without the diarization models.
+fn reservation_frames(declared_frames: u64, file_bytes: u64, bytes_per_frame: u64) -> usize {
+    if bytes_per_frame == 0 {
+        return DIARIZE_BLOCK_FRAMES;
+    }
+    let clamped = declared_frames.min(file_bytes / bytes_per_frame);
+    usize::try_from(clamped)
+        .unwrap_or(DIARIZE_BLOCK_FRAMES)
+        .max(DIARIZE_BLOCK_FRAMES)
 }
 
 #[cfg(test)]
@@ -199,6 +245,81 @@ mod tests {
             }
             other => panic!("expected ModelNotFound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reservation_frames_clamps_a_forged_wav_header_to_the_files_real_size() {
+        // Arrange: a 16 kHz mono PCM16 file with 100 real frames whose
+        // declared data-chunk length is forged to ~4 GB (2^31 frames). The
+        // pre-fix `Vec::with_capacity(reader.total_frames())` took that
+        // claim at face value — a speculative ~8 GB `f32` reservation and
+        // an OOM abort on a 244-byte file.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("forged.wav");
+        let mut writer = hound::WavWriter::create(
+            &path,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 16_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .expect("create wav");
+        for frame in 0..100i16 {
+            writer.write_sample(frame).expect("write sample");
+        }
+        writer.finalize().expect("finalize wav");
+        let mut bytes = std::fs::read(&path).expect("read wav");
+        assert_eq!(
+            &bytes[36..40],
+            b"data",
+            "canonical PCM header puts the data chunk at offset 36"
+        );
+        let forged_len: u32 = 0xFFFF_FFFE; // even, so hound accepts the claim
+        bytes[4..8].copy_from_slice(&forged_len.to_le_bytes());
+        bytes[40..44].copy_from_slice(&forged_len.to_le_bytes());
+        std::fs::write(&path, bytes).expect("write forged wav");
+
+        // The header claim really is trusted by the reader layer:
+        let reader = WavBlockReader::open(&path).expect("open forged wav");
+        let declared = reader.total_frames();
+        assert!(
+            declared > 1_000_000_000,
+            "forged header must claim > 10^9 frames, got {declared}"
+        );
+
+        // Act
+        let file_bytes = std::fs::metadata(&path).expect("metadata").len();
+        let reservation = reservation_frames(declared, file_bytes, reader.bytes_per_frame());
+
+        // Assert: bounded by the file's real bytes, not the forged claim.
+        assert!(
+            reservation <= DIARIZE_BLOCK_FRAMES + (file_bytes / 2) as usize,
+            "reservation {reservation} must be bounded by the file's real size \
+             ({file_bytes} bytes), not the forged {declared}-frame claim"
+        );
+        assert!(
+            reservation < 1_000_000,
+            "must never speculatively reserve GB-scale memory, got {reservation} frames"
+        );
+    }
+
+    #[test]
+    fn reservation_frames_keeps_an_honest_header_and_survives_a_zero_sized_frame() {
+        // Honest 1-hour 16 kHz mono PCM16 file: reservation equals the
+        // declared count (no clamp needed, no extra copying behaviour).
+        let honest_frames = 16_000u64 * 3_600;
+        let file_bytes = honest_frames * 2 + 44;
+        assert_eq!(
+            reservation_frames(honest_frames, file_bytes, 2),
+            honest_frames as usize
+        );
+        // Degenerate spec (bytes_per_frame == 0): fall back to the block
+        // floor instead of dividing by zero.
+        assert_eq!(reservation_frames(123, 456, 0), DIARIZE_BLOCK_FRAMES);
+        // Tiny honest file: floored at one block, never zero.
+        assert_eq!(reservation_frames(10, 64, 2), DIARIZE_BLOCK_FRAMES);
     }
 
     #[test]
