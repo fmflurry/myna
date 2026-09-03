@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-09-03
+
+### Added
+
+- **Settings menu and modal** — a native "Settings…" item in the macOS
+  app menu (⌘, / Ctrl+, accelerator) and a title-bar gear button open an
+  in-app Settings modal. It surfaces only real, working settings: opt-in
+  update checks and the default summary language.
+- **Event-name drift guard** — a Rust↔TypeScript parity test
+  (`event_parity.rs`) fails the build when the UI's frozen event list and
+  the Rust event constants diverge, mirroring the existing command-parity
+  guard.
+
+### Changed
+
+- **Speaker detection is now manual-only** — stopping a recording no
+  longer auto-runs diarization; trigger it from the "Detect speakers"
+  button in the meeting detail pane (ADR 0009).
+- **Custom application menu** — the default Tauri menu is replaced with an
+  equivalent one (all predefined items, including the Edit clipboard roles,
+  reproduced item-for-item) plus the new "Settings…" entry.
+
+### Fixed
+
+- **Modal backdrop keyboard handling** — Enter and Space now dismiss the
+  Settings and About modals only when the backdrop itself is focused, so
+  activating a control inside the dialog no longer closes it.
+
 ## [0.1.0] — 2026-09-01
 
 ### Added
