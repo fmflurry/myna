@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "myna-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.22.1",
  "hound",
@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "myna-audio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cpal",
  "hound",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "myna-coreaudio-tap"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "block2",
  "objc2",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "myna-integration-tests"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "myna-audio",
  "myna-llm",
@@ -2417,7 +2417,7 @@ dependencies = [
 
 [[package]]
 name = "myna-llm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "myna-stt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "ctrlc",
