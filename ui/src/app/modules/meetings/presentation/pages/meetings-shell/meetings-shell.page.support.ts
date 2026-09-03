@@ -1,15 +1,14 @@
-import type { Signal } from '@angular/core';
+import type { DestroyRef, Signal, WritableSignal } from '@angular/core';
 import { computed, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Router } from '@angular/router';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
-import type { MeetingsErrorInfo } from '../../../application/stores/meetings.store';
 import { describeSpeakerOp, type SpeakerOp } from '../../../application/stores/speaker-history.model';
 import { describeTranscriptOp, type TranscriptOp } from '../../../application/stores/transcript-history.model';
 import type { SystemAudioStatus } from '../../../core/models/capture-source.model';
 import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
-import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { UpdateConsent } from '../../../core/models/update.model';
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 
@@ -114,34 +113,6 @@ export function describeLatestSpeakerUndo(history: readonly SpeakerOp[]): string
   return op === undefined ? null : describeSpeakerOp(op);
 }
 
-/**
- * Auto-diarize gate run once after `stopRecording` settles: only when the
- * stop landed cleanly (`error` slot empty), the meeting actually has a
- * `track-system.wav` (the backend answers NotFound without one — a mic-only
- * recording must never trigger), and the diarization models are on disk.
- * Manual corrections survive the relabel backend-side
- * (crates/myna-stt/src/relabel.rs:64), so pinned segments need no UI guard.
- */
-export const shouldAutoDiarizeAfterStop = (
-  error: MeetingsErrorInfo | undefined,
-  meeting: Meeting | undefined,
-  modelsStatus: ModelsStatus | undefined,
-): boolean =>
-  error === undefined && meeting?.hasSystemTrack === true && modelsStatus?.diarization?.present === true;
-
-/**
- * Stops the recording, then auto-runs speaker detection when the finished
- * meeting can actually be diarized. `onDiarize` is the shell's manual
- * `onDiarizeRequested` handler, so the in-flight guard and error surfacing
- * are identical to the "Detect speakers" button.
- */
-export async function runStopRecording(facade: MeetingsFacade, onDiarize: () => void): Promise<void> {
-  await facade.stopRecording();
-  if (shouldAutoDiarizeAfterStop(facade.error(), facade.selectedMeeting(), facade.modelsStatus())) {
-    onDiarize();
-  }
-}
-
 /** Loads the persisted consent on every launch; a `'granted'` result immediately runs a throttled, non-blocking check. */
 export async function loadUpdatesOnLaunch(facade: MeetingsFacade): Promise<void> {
   await facade.updates.loadConsent();
@@ -225,4 +196,60 @@ export class MeetingOpQueue {
       this.queued -= 1;
     });
   }
+}
+
+/** Settings-modal visibility + close affordances + native-menu open, grouped so `MeetingsShellPage` stays under the 400-line `max-lines` cap. */
+export interface SettingsControls {
+  readonly showSettings: Signal<boolean>;
+  readonly toggleSettings: () => void;
+  /** Closes the modal — the shell's `toggleAbout` calls it so About/Settings exclusion is bidirectional. */
+  readonly closeSettings: () => void;
+  readonly onBackdropActivate: (event: MouseEvent) => void;
+  readonly onBackdropKeydown: (event: KeyboardEvent) => void;
+}
+
+/**
+ * Builds the settings-modal controls. Every open path (gear toggle, native
+ * "Settings…" menu request) closes About, and the shell's `toggleAbout`
+ * closes Settings via {@link SettingsControls.closeSettings} — the two
+ * modals are mutually exclusive in both directions. The error callback keeps
+ * a missing Tauri event bridge (headless specs; a release where `listen()`
+ * cannot register) from crashing boot — the gear button opens Settings
+ * regardless.
+ */
+export function createSettingsControls(
+  facade: MeetingsFacade,
+  showAbout: WritableSignal<boolean>,
+  destroyRef: DestroyRef,
+): SettingsControls {
+  const showSettings = signal(false);
+  const openSettings = (): void => {
+    showAbout.set(false);
+    showSettings.set(true);
+  };
+  const closeSettings = (): void => showSettings.set(false);
+  const toggleSettings = (): void => (showSettings() ? closeSettings() : openSettings());
+  facade
+    .settingsRequests()
+    .pipe(takeUntilDestroyed(destroyRef))
+    .subscribe({ next: () => openSettings(), error: () => undefined });
+  return {
+    showSettings: showSettings.asReadonly(),
+    toggleSettings,
+    closeSettings,
+    onBackdropActivate: (event) => {
+      if (event.target === event.currentTarget) {
+        closeSettings();
+      }
+    },
+    onBackdropKeydown: (event) => {
+      // Escape is modal-wide; Enter/Space only when the backdrop itself is
+      // the target — a bubbled Space from the consent checkbox must toggle
+      // the checkbox, not close the modal.
+      if (event.key === 'Escape' || (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' '))) {
+        event.preventDefault();
+        closeSettings();
+      }
+    },
+  };
 }

@@ -7,6 +7,7 @@ import { AudioRepositoryPort } from './core/ports/audio-repository.port';
 import { FileDialogPort } from './core/ports/file-dialog.port';
 import { FolderRepositoryPort } from './core/ports/folder-repository.port';
 import { MeetingRepositoryPort } from './core/ports/meeting-repository.port';
+import { MenuPort } from './core/ports/menu.port';
 import { ModelsStatusPort } from './core/ports/models-status.port';
 import { PreferencesPort } from './core/ports/preferences.port';
 import { RecorderPort } from './core/ports/recorder.port';
@@ -21,6 +22,7 @@ import { TauriAudioRepositoryAdapter } from './infrastructure/tauri/tauri-audio-
 import { TauriFileDialogAdapter } from './infrastructure/tauri/tauri-file-dialog.adapter';
 import { TauriFolderRepositoryAdapter } from './infrastructure/tauri/tauri-folder-repository.adapter';
 import { TauriMeetingRepositoryAdapter } from './infrastructure/tauri/tauri-meeting-repository.adapter';
+import { TauriMenuAdapter } from './infrastructure/tauri/tauri-menu.adapter';
 import { TauriModelsStatusAdapter } from './infrastructure/tauri/tauri-models-status.adapter';
 import { TauriRecorderAdapter } from './infrastructure/tauri/tauri-recorder.adapter';
 import { TauriSummarizerAdapter } from './infrastructure/tauri/tauri-summarizer.adapter';
@@ -93,6 +95,7 @@ export function provideMeetings(): EnvironmentProviders {
     { provide: MeetingRepositoryPort, useClass: TauriMeetingRepositoryAdapter },
     { provide: FolderRepositoryPort, useClass: TauriFolderRepositoryAdapter },
     { provide: TemplateRepositoryPort, useClass: TauriTemplateRepositoryAdapter },
+    { provide: MenuPort, useClass: TauriMenuAdapter },
     { provide: ModelsStatusPort, useClass: TauriModelsStatusAdapter },
     { provide: FileDialogPort, useClass: TauriFileDialogAdapter },
     { provide: PreferencesPort, useClass: LocalStoragePreferencesAdapter },

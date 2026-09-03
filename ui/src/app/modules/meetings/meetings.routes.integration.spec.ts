@@ -221,6 +221,32 @@ describe('meetings routing integration', () => {
     expect(facade.recordingState()).toBe('recording');
     expect(harness.routeNativeElement?.querySelector('app-audio-player')).toBeNull();
   });
+
+  it('routes a real menu://settings event through the TauriMenuAdapter to the facade and opens the settings modal', async () => {
+    const harness = await RouterTestingHarness.create('/meetings');
+    await flushMicrotasks();
+
+    const facade = harness.routeDebugElement!.injector.get(MeetingsFacade);
+    let requestCount = 0;
+    const subscription = facade.settingsRequests().subscribe(() => {
+      requestCount += 1;
+    });
+    // `onEvent` registers its listener asynchronously — the emit below only
+    // reaches the adapter once the `listen()` promise chain has drained.
+    await flushMicrotasks();
+
+    expect(harness.routeNativeElement?.querySelector('app-settings')).toBeNull();
+
+    tauri.emit('menu://settings', null);
+    await flushMicrotasks();
+    harness.fixture.detectChanges();
+
+    expect(requestCount).toBe(1);
+    // The shell's own subscription (registered at component construction)
+    // fans out from the same event and opens the settings modal.
+    expect(harness.routeNativeElement?.querySelector('app-settings')).toBeTruthy();
+    subscription.unsubscribe();
+  });
 });
 
 const transcriptTexts = (root: Element): readonly string[] =>

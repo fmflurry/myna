@@ -31,6 +31,7 @@ export const EVENT_NAMES = [
   'models://done',
   'update://progress',
   'update://done',
+  'menu://settings',
 ] as const;
 
 export type EventName = (typeof EVENT_NAMES)[number];
@@ -63,6 +64,8 @@ export interface EventSignatures {
   readonly 'models://done': ModelDownloadDone;
   readonly 'update://progress': UpdateProgressWireDto;
   readonly 'update://done': UpdateInstallDone;
+  /** Rust emits `()` on the native "Settings…" menu click → wire `null`. */
+  readonly 'menu://settings': null;
 }
 
 export type EventPayload<E extends EventName> = EventSignatures[E];

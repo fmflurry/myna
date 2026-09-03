@@ -24,6 +24,7 @@ import { MeetingDetailPaneComponent } from '../../components/meeting-detail-pane
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
+import { SettingsComponent } from '../../components/settings/settings.component';
 import { UpdateBannerComponent } from '../../components/update-banner/update-banner.component';
 import { UpdateConsentDialogComponent } from '../../components/update-consent-dialog/update-consent-dialog.component';
 import type {
@@ -35,7 +36,7 @@ import type {
   TranscriptSegmentSpeakerReassign,
 } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runStopRecording } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createSettingsControls, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -44,7 +45,7 @@ import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createUpdateHandlers, descr
  */
 @Component({
   selector: 'app-meetings-shell-page',
-  imports: [MeetingSidebarComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent, UpdateConsentDialogComponent, UpdateBannerComponent],
+  imports: [MeetingSidebarComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent, SettingsComponent, UpdateConsentDialogComponent, UpdateBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './meetings-shell.page.html',
   styleUrl: './meetings-shell.page.scss',
@@ -62,11 +63,11 @@ export class MeetingsShellPage implements OnInit {
   protected readonly diarizing = signal(false);
 
   protected readonly modelsReady = computed(() => this.facade.modelsStatus()?.allPresent === true);
-  protected readonly systemAudioStatus = computed(
-    () => this.facade.systemAudioStatus() ?? CHECKING_SYSTEM_AUDIO,
-  );
+  protected readonly systemAudioStatus = computed(() => this.facade.systemAudioStatus() ?? CHECKING_SYSTEM_AUDIO);
 
   protected readonly updateHandlers = createUpdateHandlers(this.facade);
+  /** Settings-modal surface: `showSettings()` + toggle/backdrop handlers; opens on native menu requests (see `createSettingsControls`). */
+  protected readonly settings = createSettingsControls(this.facade, this.showAbout, this.destroyRef);
   protected readonly elapsedSec = signal(0);
   protected readonly elapsedLabel = computed(() => formatMmSs(this.elapsedSec()));
 
@@ -76,9 +77,7 @@ export class MeetingsShellPage implements OnInit {
    * the selection — after a reload the restored session is authoritative even
    * while the route points elsewhere. Live-started → null slot, `busy()` fallback.
    */
-  protected readonly recordingMeetingId = computed<MeetingId | undefined>(() =>
-    this.facade.activeRecording()?.meetingId ?? (this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined),
-  );
+  protected readonly recordingMeetingId = computed<MeetingId | undefined>(() => this.facade.activeRecording()?.meetingId ?? (this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined));
 
   /** Transcript-undo toolbar button label; `null` hides the button. */
   protected readonly transcriptUndoLabel = computed(() => describeLatestTranscriptUndo(this.facade.transcriptUndo()));
@@ -152,6 +151,7 @@ export class MeetingsShellPage implements OnInit {
   }
 
   toggleAbout(): void {
+    this.settings.closeSettings();
     this.showAbout.update((value) => !value);
   }
 
@@ -162,7 +162,7 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onBackdropKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+    if (event.key === 'Escape' || (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' '))) {
       event.preventDefault();
       this.toggleAbout();
     }
@@ -188,9 +188,9 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.startRecording('', this.facade.selectedDevice()?.name);
   }
 
-  /** Stop, then auto-diarize when the finished meeting can be diarized — see `runStopRecording`. */
+  /** Stop; speaker detection is manual-only (ADR 0009) — use the "Detect speakers" button. */
   onStop(): void {
-    void runStopRecording(this.facade, () => this.onDiarizeRequested());
+    void this.facade.stopRecording();
   }
 
   onCancel(): void {
@@ -369,8 +369,8 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onDiarizeRequested(): void {
-    // Re-entry guard: the auto-run after stop and a manual button click can
-    // race; the pane's disabled state is not the only caller anymore.
+    // Re-entry guard: rapid clicks can race before the pane's disabled state
+    // repaints; the "Detect speakers" button is the only trigger (ADR 0009).
     if (this.diarizing()) {
       return;
     }

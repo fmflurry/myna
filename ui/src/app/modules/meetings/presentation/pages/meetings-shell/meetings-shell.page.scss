@@ -82,7 +82,8 @@
   min-width: 0;
 }
 
-.about-trigger {
+.about-trigger,
+.settings-trigger {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -99,7 +100,9 @@
 }
 
 .about-trigger:hover,
-.about-trigger:focus-visible {
+.about-trigger:focus-visible,
+.settings-trigger:hover,
+.settings-trigger:focus-visible {
   border-color: var(--color-border);
   background: var(--color-bg);
   color: var(--color-text);

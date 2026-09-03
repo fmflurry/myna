@@ -1,0 +1,114 @@
+/*
+ * Card surface styling. The `.modal-backdrop` + `.modal` positioning wrapper
+ * lives in `meetings-shell.page.scss` (shared with About); this file styles
+ * only the settings card itself, mirroring the About/attribution card idiom.
+ */
+.settings {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  max-width: 32rem;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--space-3);
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.close {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.update-settings,
+.summary-language {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.update-settings h3,
+.summary-language h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+}
+
+.auto-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.privacy-note {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.check-now-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.check-now {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.check-now:disabled {
+  color: var(--color-text-disabled);
+  background: var(--color-surface-disabled);
+  cursor: not-allowed;
+}
+
+.last-checked {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.language-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 0.9rem;
+}
+
+.language-label {
+  color: var(--color-text-muted);
+}
+
+select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+select:disabled {
+  color: var(--color-text-disabled);
+  background: var(--color-surface-disabled);
+  cursor: not-allowed;
+}

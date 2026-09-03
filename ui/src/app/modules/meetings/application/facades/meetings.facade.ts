@@ -1,4 +1,5 @@
 import { Injectable, inject } from '@angular/core';
+import type { Observable } from 'rxjs';
 
 import type { CaptureSource } from '../../core/models/capture-source.model';
 import type { FolderId } from '../../core/models/folder.model';
@@ -7,6 +8,7 @@ import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import { AudioRepositoryPort } from '../../core/ports/audio-repository.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
+import { MenuPort } from '../../core/ports/menu.port';
 import { RecorderPort } from '../../core/ports/recorder.port';
 import { TranscriberPort } from '../../core/ports/transcriber.port';
 import { CancelImportUseCase } from '../use-cases/cancel-import.usecase';
@@ -113,6 +115,7 @@ export class MeetingsFacade {
   /** Read directly (not via a use case) for the ADR 0011 boot resume: `recording_state` + the live-journal query. */
   private readonly recorder = inject(RecorderPort);
   private readonly transcriber = inject(TranscriberPort);
+  private readonly menu = inject(MenuPort);
   readonly meetings = this.store.meetings;
   readonly selectedMeeting = this.store.selectedMeeting;
   readonly recordingState = this.store.recordingState;
@@ -390,4 +393,6 @@ export class MeetingsFacade {
   toggleFolderExpanded(id: FolderId): void {
     this.store.toggleFolderExpanded(id);
   }
+  /** Native "Settings…" menu clicks, passed through from `MenuPort`; the UI owns navigation. */
+  settingsRequests = (): Observable<void> => this.menu.settingsRequests();
 }

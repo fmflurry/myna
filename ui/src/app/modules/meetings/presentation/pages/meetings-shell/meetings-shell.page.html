@@ -33,6 +33,9 @@
       <button type="button" class="about-trigger" aria-label="About Myna" title="About" (click)="toggleAbout()">
         <span aria-hidden="true">ℹ️</span>
       </button>
+      <button type="button" class="settings-trigger" aria-label="Myna settings" title="Settings" (click)="settings.toggleSettings()">
+        <span aria-hidden="true">⚙️</span>
+      </button>
     </div>
   </header>
 
@@ -149,6 +152,32 @@
         (closed)="toggleAbout()"
         (updateConsentChanged)="updateHandlers.onConsentChanged($event)"
         (checkNowRequested)="updateHandlers.onCheckNow()"
+      />
+    </div>
+  </div>
+}
+
+@if (settings.showSettings()) {
+  <div
+    class="modal-backdrop settings-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close settings"
+    (click)="settings.onBackdropActivate($event)"
+    (keydown)="settings.onBackdropKeydown($event)"
+  >
+    <div class="modal">
+      <app-settings
+        [updateConsent]="facade.updates.consent()"
+        [lastCheck]="facade.updates.lastCheck()"
+        [checking]="facade.updates.checking()"
+        [recording]="facade.busy()"
+        [summaryLanguages]="facade.summaryLanguages()"
+        [selectedSummaryLanguage]="facade.selectedSummaryLanguage()"
+        (closed)="settings.toggleSettings()"
+        (updateConsentChanged)="updateHandlers.onConsentChanged($event)"
+        (checkNowRequested)="updateHandlers.onCheckNow()"
+        (summaryLanguageSelected)="onSummaryLanguageSelected($event)"
       />
     </div>
   </div>

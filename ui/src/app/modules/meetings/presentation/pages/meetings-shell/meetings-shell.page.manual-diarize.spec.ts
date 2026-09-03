@@ -1,7 +1,7 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter, type ParamMap } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, EMPTY } from 'rxjs';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -20,16 +20,18 @@ import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { MeetingsShellPage } from './meetings-shell.page';
 
 /**
- * Manual "Detect speakers" stays available, but a finished mixed/system
- * recording now diarizes itself the moment `stopRecording` resolves — no
- * extra click. Gated on: no error from the stop, the meeting actually has a
- * `track-system.wav` (mic-only recordings can't be diarized; the backend
- * returns NotFound for them), and the diarization models are on disk.
+ * Diarization is MANUAL-ONLY per ADR 0009: the single entry point is the
+ * detail pane's "Detect speakers" button, which routes through
+ * `onDiarizeRequested()` → `facade.diarizeMeeting(id)`. Stopping a recording
+ * must NEVER trigger speaker detection on its own — not even for a
+ * mixed/system recording whose diarization models are on disk. The retired
+ * auto-run gate (`shouldAutoDiarizeAfterStop` / `runStopRecording`'s
+ * continuation) is what assertion (a) below pins shut: it fails against code
+ * that still auto-diarizes after `stopRecording` resolves.
  *
- * Pinned (manually corrected) segments survive the relabel
- * backend-side — see crates/myna-stt/src/relabel.rs:64 — so auto-diarizing
- * right after stop can never clobber manual speaker edits. No UI guard
- * needed for that invariant; this spec just documents it.
+ * The manual path keeps its own in-flight guard (`diarizing`): re-triggering
+ * while a run is pending must not fire a second `diarizeMeeting`, and the
+ * pane button mirrors that state (disabled while `diarizing`).
  */
 
 const baseModels: ModelsStatus = {
@@ -44,7 +46,7 @@ const diarizationReadyModels: ModelsStatus = {
   diarization: { present: true, expectedFiles: [] },
 };
 
-describe('MeetingsShellPage — auto-diarization after stop', () => {
+describe('MeetingsShellPage — manual-only diarization (ADR 0009)', () => {
   const meetings = signal<readonly Meeting[]>([]);
   const selectedMeeting = signal<Meeting | undefined>(undefined);
   const modelsStatus = signal<ModelsStatus | undefined>(diarizationReadyModels);
@@ -99,7 +101,7 @@ describe('MeetingsShellPage — auto-diarization after stop', () => {
   let stopFailure: MeetingsErrorInfo | undefined;
   let stoppedMeeting: Meeting = meetingWith(true);
 
-  /** Resolves once the in-flight `stopRecording` call settles, so specs can await the auto-diarize gate before asserting. */
+  /** Resolves once the in-flight `stopRecording` call settles, so specs can await the stop before asserting. */
   let stopDone: Promise<void> = Promise.resolve();
   const stopRecording = vi.fn((): Promise<void> => {
     stopDone = (async (): Promise<void> => {
@@ -114,6 +116,7 @@ describe('MeetingsShellPage — auto-diarization after stop', () => {
   });
 
   const facadeStub = {
+    settingsRequests: () => EMPTY,
     activeRecording: signal(null),
     resumeActiveRecording: vi.fn(async () => undefined),
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
@@ -169,24 +172,65 @@ describe('MeetingsShellPage — auto-diarization after stop', () => {
     return fixture;
   };
 
-  /** Let the stop resolve, then flush the auto-diarize continuation off `await stopRecording()`. */
+  /** Let the stop resolve, then flush any continuation chained off `await stopRecording()`. */
   const settleStop = async (): Promise<void> => {
     await stopDone;
     await Promise.resolve();
     await Promise.resolve();
   };
 
-  it('diarizes exactly once after a successful stop of a system-track meeting with models present', async () => {
+  // (a) THE manual-only pin: a stop that WOULD have satisfied every former
+  // auto-diarize precondition (clean stop, system track, models on disk)
+  // must still leave diarization untouched. Fails against the auto-run gate.
+  it('never diarizes after onStop, even for a system-track meeting with diarization models present', async () => {
     const fixture = createFixture();
 
     fixture.componentInstance.onStop();
+    await settleStop();
+
+    expect(stopRecording).toHaveBeenCalledTimes(1);
+    expect(diarizeMeeting).not.toHaveBeenCalled();
+  });
+
+  // (b) The manual button path is the one and only trigger.
+  it('diarizes the selected meeting exactly once via onDiarizeRequested', async () => {
+    selectedMeeting.set(meetingWith(true));
+    const fixture = createFixture();
+
+    fixture.componentInstance.onDiarizeRequested();
     await settleStop();
 
     expect(diarizeMeeting).toHaveBeenCalledTimes(1);
     expect(diarizeMeeting).toHaveBeenCalledWith('m1');
   });
 
-  it('never diarizes a mic-only recording (no system track)', async () => {
+  // (c) Re-entry guard on the manual path: while a run is in flight, a second
+  // trigger is dropped AND the pane button mirrors the busy state.
+  it('ignores a second onDiarizeRequested while one is in flight and disables the Detect speakers button', async () => {
+    let releaseDiarize: (() => void) | undefined;
+    diarizeMeeting.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releaseDiarize = resolve; }),
+    );
+    selectedMeeting.set(meetingWith(true));
+    const fixture = createFixture();
+
+    fixture.componentInstance.onDiarizeRequested();
+    fixture.componentInstance.onDiarizeRequested();
+
+    expect(diarizeMeeting).toHaveBeenCalledTimes(1);
+
+    // The pane button mirrors the in-flight state (disabled while `diarizing`).
+    fixture.detectChanges();
+    const button = fixture.nativeElement.querySelector('.detect-speakers') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    releaseDiarize?.();
+    await settleStop();
+  });
+
+  // (d) The retired gate's exclusions stay excluded — and more strongly: no
+  // onStop ever diarizes, whatever the meeting looks like.
+  it('never diarizes after a stop of a mic-only recording (no system track)', async () => {
     stoppedMeeting = meetingWith(false);
     const fixture = createFixture();
 
@@ -197,56 +241,14 @@ describe('MeetingsShellPage — auto-diarization after stop', () => {
     expect(diarizeMeeting).not.toHaveBeenCalled();
   });
 
-  it('never diarizes when the diarization models are absent', async () => {
+  it('never diarizes after a stop when the diarization models are absent', async () => {
     modelsStatus.set(baseModels);
     const fixture = createFixture();
 
     fixture.componentInstance.onStop();
     await settleStop();
 
+    expect(stopRecording).toHaveBeenCalledTimes(1);
     expect(diarizeMeeting).not.toHaveBeenCalled();
-  });
-
-  it('never diarizes when the diarization slot reports not present', async () => {
-    modelsStatus.set({ ...baseModels, diarization: { present: false, expectedFiles: [] } });
-    const fixture = createFixture();
-
-    fixture.componentInstance.onStop();
-    await settleStop();
-
-    expect(diarizeMeeting).not.toHaveBeenCalled();
-  });
-
-  it('never diarizes when the stop failed (error slot set)', async () => {
-    stopFailure = { code: 'IO', message: 'flush failed' };
-    const fixture = createFixture();
-
-    fixture.componentInstance.onStop();
-    await settleStop();
-
-    expect(diarizeMeeting).not.toHaveBeenCalled();
-  });
-
-  it('a manual "Detect speakers" click during the auto-run never fires a second diarize', async () => {
-    let releaseDiarize: (() => void) | undefined;
-    diarizeMeeting.mockImplementationOnce(
-      () => new Promise<void>((resolve) => { releaseDiarize = resolve; }),
-    );
-    const fixture = createFixture();
-
-    fixture.componentInstance.onStop();
-    await vi.waitFor(() => expect(diarizeMeeting).toHaveBeenCalledTimes(1));
-    fixture.detectChanges();
-
-    // The pane button mirrors the in-flight state (disabled while `diarizing`).
-    const button = fixture.nativeElement.querySelector('.detect-speakers') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-
-    // And the shell itself is idempotent even if the op is re-triggered directly.
-    fixture.componentInstance.onDiarizeRequested();
-    expect(diarizeMeeting).toHaveBeenCalledTimes(1);
-
-    releaseDiarize?.();
-    await settleStop();
   });
 });

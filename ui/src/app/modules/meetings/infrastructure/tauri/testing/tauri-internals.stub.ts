@@ -37,13 +37,20 @@ type CommandHandler = (cmd: string, args: unknown) => unknown;
  */
 export function installTauriInternalsStub(handleCommand: CommandHandler): TauriInternalsStub {
   const callbacksById = new Map<number, (payload: unknown) => void>();
-  const eventToCallbackId = new Map<string, number>();
+  // Real Tauri dispatches every event to ALL registered listeners; the map
+  // keeps every `listen()` handler for an event (append, not overwrite) so a
+  // spec that subscribes alongside the app's own listeners sees the same
+  // fan-out. Unsubscribed handlers stay registered — their rxjs subscriber is
+  // closed, so a stale `next` is a harmless no-op, matching the previous
+  // single-listener stub's behavior of never cleaning up.
+  const eventToHandlerIds = new Map<string, number[]>();
   let nextId = 1;
 
   const invokeSpy = vi.fn(async (cmd: string, args?: unknown) => {
     if (cmd === 'plugin:event|listen') {
       const { event, handler } = args as ListenArgs;
-      eventToCallbackId.set(event, handler);
+      const handlerIds = eventToHandlerIds.get(event);
+      eventToHandlerIds.set(event, handlerIds ? [...handlerIds, handler] : [handler]);
       return nextId++;
     }
     if (cmd === 'plugin:event|unlisten') {
@@ -71,12 +78,13 @@ export function installTauriInternalsStub(handleCommand: CommandHandler): TauriI
   return {
     invokeSpy,
     emit(event, payload) {
-      const callbackId = eventToCallbackId.get(event);
-      const callback = callbackId !== undefined ? callbacksById.get(callbackId) : undefined;
-      if (!callback) {
+      const handlerIds = eventToHandlerIds.get(event);
+      if (!handlerIds || handlerIds.length === 0) {
         throw new Error(`No listener registered for event '${event}'`);
       }
-      callback({ payload });
+      for (const handlerId of handlerIds) {
+        callbacksById.get(handlerId)?.({ payload });
+      }
     },
   };
 }

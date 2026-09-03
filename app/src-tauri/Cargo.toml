@@ -36,3 +36,10 @@ tempfile = { workspace = true }
 hound = { workspace = true }
 base64 = "0.22"
 url = "2"
+# Test-only: tauri::menu re-exports MenuId but not Accelerator, and
+# MenuItem::with_id parses accelerator strings silently (errors are
+# dropped). menu.rs tests assert the accelerator parses via muda.
+# default-features=false keeps muda's libxdo (Linux global-shortcut)
+# backend out of the lockfile — only the accelerator parser is used.
+# Never promote to a runtime dependency.
+muda = { version = "0.19", default-features = false }

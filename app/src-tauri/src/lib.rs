@@ -10,6 +10,7 @@ pub mod dto;
 pub mod error;
 pub mod events;
 pub mod ingest;
+pub mod menu;
 pub mod model_init;
 pub mod paths;
 pub mod recovery;
@@ -58,8 +59,13 @@ pub fn run() {
             let folders = FsFolderStore::new(root);
             app.manage(AppState::new(store, folders));
             app.manage(Arc::new(ModelDownloadManager::new()));
+            // Replace tauri's auto-generated default menu (only installed
+            // while `app.menu.is_none()`) with ours: same items, plus
+            // "Settings…" emitting events::MENU_SETTINGS.
+            app.set_menu(menu::build(app.handle())?)?;
             Ok(())
         })
+        .on_menu_event(|app, event| menu::handle(app, &event))
         .invoke_handler(tauri::generate_handler![
             commands::app_info::app_version,
             commands::devices::list_input_devices,
