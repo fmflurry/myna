@@ -5,7 +5,7 @@ Welcome to Myna, your local-first AI meeting recorder and summarizer. This guide
 ## First Run
 
 ### Recommended: Download the .dmg
-Grab the latest macOS `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases), open it and drag Myna to Applications, then launch. The Myna window opens. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
+Grab the latest macOS `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases), open it and drag Myna to Applications, then launch. The Myna window opens. On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (4.7 GB), and Silero VAD (629 KB) from Hugging Face (~5.4 GB total, one time).
 
 The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
 
@@ -24,7 +24,7 @@ Launch Myna:
 npx tauri dev
 ```
 
-On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time).
+On first run, the onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. This fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (4.7 GB), and Silero VAD (629 KB) from Hugging Face (~5.4 GB total, one time).
 
 The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
 
@@ -198,8 +198,8 @@ Myna requires microphone access. If you denied permission on first run:
 
 ### Slow Summary Generation
 
-- **First run**: Qwen2.5-Instruct (2.0 GB) loads into memory; expect 20–30s latency on first summarization.
-- **Subsequent summaries**: Model stays in memory; generation is faster.
+- **First run**: Qwen2.5-Instruct (4.7 GB) loads into memory. A short transcript takes roughly 4–11s to summarize (cold first call ~11s, warm ~4s); for a 30-minute meeting expect up to ~1 minute, since most of the time is spent prefilling the transcript.
+- **Subsequent summaries**: Model and context stay in memory; generation is faster than the cold first call.
 
 To speed up both, consider running on a machine with:
 - **Metal acceleration** (macOS) — automatically detected by llama.cpp.
@@ -219,7 +219,7 @@ Third-party model licenses:
 - **Parakeet-TDT weights** — CC-BY-4.0 (attribution required)
 - **sherpa-onnx runtime** — Apache-2.0
 - **llama.cpp runtime** — MIT
-- **Qwen2.5-Instruct model** — Qwen research model agreement (see `https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF`)
+- **Qwen2.5-Instruct model** — Qwen research model agreement (see `https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF`)
 
 When using Myna, you implicitly accept these licenses. Attribution to Parakeet-TDT is required if you distribute Myna or derived works; Myna's README and source code include the required notices.
 

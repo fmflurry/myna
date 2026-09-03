@@ -39,7 +39,10 @@ fn reports_nothing_present_with_no_artifacts() {
     );
     assert_eq!(
         status.qwen.expected_files,
-        vec!["qwen2.5-3b-instruct-q4_k_m.gguf"]
+        vec![
+            "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+        ]
     );
     assert_eq!(status.silero.expected_files, vec!["silero_vad.onnx"]);
     assert_eq!(status.models_root, dir.path().to_string_lossy());
@@ -47,8 +50,9 @@ fn reports_nothing_present_with_no_artifacts() {
 
 #[test]
 fn reports_partial_artifacts_as_not_present() {
-    // Arrange: only some of Parakeet's expected files exist, and Silero is
-    // entirely absent; only Qwen is complete.
+    // Arrange: only some of Parakeet's expected files exist, Silero is
+    // entirely absent, and Qwen has only the first shard of its split GGUF
+    // — the presence gate requires both shards.
     let dir = tempfile::tempdir().expect("tempdir");
     touch(
         &dir.path()
@@ -57,8 +61,8 @@ fn reports_partial_artifacts_as_not_present() {
     );
     touch(
         &dir.path()
-            .join("qwen2.5-3b-instruct")
-            .join("qwen2.5-3b-instruct-q4_k_m.gguf"),
+            .join("qwen2.5-7b-instruct")
+            .join("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"),
     );
 
     // Act
@@ -67,7 +71,10 @@ fn reports_partial_artifacts_as_not_present() {
     // Assert
     assert!(!status.all_present);
     assert!(!status.parakeet.present);
-    assert!(status.qwen.present);
+    assert!(
+        !status.qwen.present,
+        "first shard alone must not count as present"
+    );
     assert!(!status.silero.present);
 }
 
@@ -84,11 +91,13 @@ fn reports_all_present_with_complete_artifacts() {
     ] {
         touch(&parakeet_dir.join(file));
     }
-    touch(
-        &dir.path()
-            .join("qwen2.5-3b-instruct")
-            .join("qwen2.5-3b-instruct-q4_k_m.gguf"),
-    );
+    let qwen_dir = dir.path().join("qwen2.5-7b-instruct");
+    for file in [
+        "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+    ] {
+        touch(&qwen_dir.join(file));
+    }
     touch(&dir.path().join("silero-vad").join("silero_vad.onnx"));
 
     // Act

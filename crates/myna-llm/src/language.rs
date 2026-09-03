@@ -17,7 +17,7 @@ pub struct SummaryLanguage {
 /// is not recognized.
 pub const DEFAULT_SUMMARY_LANGUAGE: &str = "en";
 
-/// Curated list of languages Qwen2.5-3B-Instruct handles well.
+/// Curated list of languages Qwen2.5-7B-Instruct handles well.
 pub const SUMMARY_LANGUAGES: [SummaryLanguage; 7] = [
     SummaryLanguage {
         code: "en",

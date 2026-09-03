@@ -71,7 +71,7 @@ pub fn meetings_root() -> Result<PathBuf, PathError> {
 
 /// Resolves the models directory.
 ///
-/// Models are ~2.6 GB of weights that must never be bundled into the app;
+/// Models are ~5.4 GB of weights that must never be bundled into the app;
 /// they live in the user's data area (`<data_root>/models`, i.e.
 /// `~/myna/models` by default) in release builds, downloaded there by
 /// `scripts/download-models.sh`.

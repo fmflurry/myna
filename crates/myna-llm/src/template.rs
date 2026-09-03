@@ -4,7 +4,7 @@
 //! (key points, action items, decisions, meeting notes, or a user-added
 //! type). Each template's `section_schema` documents the intended output
 //! shape but is deliberately not enforced against generated output in this
-//! phase: a local 3B-class model cannot be trusted to emit conformant JSON
+//! phase: a local 7B-class model cannot be trusted to emit conformant JSON
 //! without grammar-constrained decoding, which is out of scope here.
 
 use std::fs;

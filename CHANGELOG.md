@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Summarization model upgraded 3B → 7B** — summaries now use
+  Qwen2.5-7B-Instruct (Q4_K_M, ≈4.7 GB, sharded GGUF) instead of
+  Qwen2.5-3B-Instruct, for noticeably richer key points and action
+  items (ADR 0013). Existing installs see the model as missing on
+  first launch and are re-prompted to download it in-app. Summaries
+  run on demand and can take up to ~1 minute for a 30-minute
+  meeting; a 12–16 GB Mac is now the practical floor. The old 3B
+  model is left in place — remove it manually with
+  `rm -rf ~/myna/models/qwen2.5-3b-instruct`.
+
 ## [0.2.2] — 2026-09-03
 
 ### Added

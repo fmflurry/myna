@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetches the local models Myna needs: Parakeet STT (v3), Qwen2.5-3B-Instruct
+# Fetches the local models Myna needs: Parakeet STT (v3), Qwen2.5-7B-Instruct
 # GGUF, and the silero VAD ONNX model. Idempotent: re-running skips any
 # artifact whose marker file already exists on disk.
 #
@@ -16,8 +16,9 @@ LEGACY_DEST="$REPO_ROOT/models"
 PARAKEET_DIR_NAME="parakeet-tdt-0.6b-v3-int8"
 PARAKEET_MARKER_NAME="encoder.int8.onnx"
 
-QWEN_DIR_NAME="qwen2.5-3b-instruct"
-QWEN_MARKER_NAME="qwen2.5-3b-instruct-q4_k_m.gguf"
+QWEN_DIR_NAME="qwen2.5-7b-instruct"
+QWEN_MARKER_NAME="qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+QWEN_MARKER_NAME_2="qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
 
 VAD_DIR_NAME="silero-vad"
 VAD_MARKER_NAME="silero_vad.onnx"
@@ -40,7 +41,7 @@ Usage: scripts/download-models.sh [--dest <dir>]
 Fetches local models into <dest> (default: $MYNA_MODELS_DIR, or ~/myna/models
 if that's unset — the same location the packaged app reads from):
   - Parakeet STT v3 (sherpa-onnx, int8)
-  - Qwen2.5-3B-Instruct GGUF (Q4_K_M)
+  - Qwen2.5-7B-Instruct GGUF (Q4_K_M)
   - silero VAD (ONNX)
   - [optional] speaker diarization: pyannote segmentation-3-0 + NeMo TitaNet
     speaker embedding. Only needed for speaker labels/detection; the app
@@ -52,7 +53,7 @@ Idempotent: already-present artifacts (detected via marker file) are skipped.
 
 If an artifact is already present under the repo's own models/ directory
 (the pre-migration layout) but missing from <dest>, this script will NOT
-re-download it or duplicate the ~2.6 GB of weights. Instead it prints the
+re-download it or duplicate the ~5.4 GB of weights. Instead it prints the
 exact `mv`/`ln -s` command to relocate it — or performs the move itself when
 --migrate is given.
 
@@ -155,10 +156,18 @@ fetch_parakeet() {
 }
 
 fetch_qwen() {
-  fetch_artifact "Qwen2.5-3B-Instruct GGUF" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME" \
-    bash -c 'mkdir -p "$(dirname "$1")" && curl -fSL -o "$1" "$2"' _ \
-    "$DEST/$QWEN_DIR_NAME/$QWEN_MARKER_NAME" \
-    "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$QWEN_MARKER_NAME"
+  fetch_artifact "Qwen2.5-7B-Instruct GGUF" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME" \
+    bash -c '
+      set -euo pipefail
+      dest_dir="$1"; base_url="$2"
+      mkdir -p "$dest_dir"
+      for f in qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf \
+               qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf; do
+        curl -fSL -o "$dest_dir/$f" "$base_url/$f"
+      done
+    ' _ \
+    "$DEST/$QWEN_DIR_NAME" \
+    "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main"
 }
 
 fetch_vad() {
@@ -211,7 +220,7 @@ print_summary() {
   printf '  %-24s %s (%s)\n' "Parakeet STT v3" \
     "$(human_size "$(marker_path "$DEST" "$PARAKEET_DIR_NAME" "$PARAKEET_MARKER_NAME")")" \
     "$(marker_path "$DEST" "$PARAKEET_DIR_NAME" "$PARAKEET_MARKER_NAME")"
-  printf '  %-24s %s (%s)\n' "Qwen2.5-3B-Instruct" \
+  printf '  %-24s %s (%s)\n' "Qwen2.5-7B-Instruct" \
     "$(human_size "$(marker_path "$DEST" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME")")" \
     "$(marker_path "$DEST" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME")"
   printf '  %-24s %s (%s)\n' "silero VAD" \
@@ -239,6 +248,7 @@ run_check() {
   for marker in \
     "$(marker_path "$DEST" "$PARAKEET_DIR_NAME" "$PARAKEET_MARKER_NAME")" \
     "$(marker_path "$DEST" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME")" \
+    "$(marker_path "$DEST" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME_2")" \
     "$(marker_path "$DEST" "$VAD_DIR_NAME" "$VAD_MARKER_NAME")"; do
     if [[ -e "$marker" ]]; then
       echo "OK    $marker"

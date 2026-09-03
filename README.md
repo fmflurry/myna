@@ -25,7 +25,7 @@ Every meeting deserves a record. The problem is that every tool offering one eit
 Myna is built on a simple premise: your meetings are yours alone. Here's what that means in practice:
 
 - **Speech-to-text** runs locally via Parakeet-TDT (ONNX neural net via sherpa-onnx); **no audio is sent to any transcription service**.
-- **Summarization** runs locally via Qwen2.5-3B-Instruct (GGUF via embedded llama.cpp); **no transcript leaves your machine**.
+- **Summarization** runs locally via Qwen2.5-7B-Instruct (GGUF via embedded llama.cpp); **no transcript leaves your machine**.
 - **Recordings, transcripts, and summaries** live in `~/myna/` on your disk (override with `MYNA_DATA_DIR`); **nothing is synced to the cloud**.
 - **No telemetry, no analytics, no "improve our service" data collection**.
 - **No bot joins your call** — Myna captures from your microphone and system audio; it never participates as a meeting attendee.
@@ -56,7 +56,7 @@ Cloud alternatives meter AI compute — "free" plans cap your recording time or 
 - **Live partial captions:** see transcription appear in the UI as you record.
 
 ### Summarization
-- **Qwen2.5-3B-Instruct GGUF** via embedded llama.cpp (2.0 GB): one-shot summaries, no streaming service.
+- **Qwen2.5-7B-Instruct GGUF** via embedded llama.cpp (4.7 GB, two shards): one-shot summaries, no streaming service.
 - **Template-driven:** four built-in summary types — **Key Points**, **Action Items**, **Meeting Notes**, **Decisions** — plus your own custom templates.
 - **Cancellable:** stop summarization mid-generation if needed.
 - **Multi-language output:** summarize in your choice of language.
@@ -123,7 +123,7 @@ works exactly the same way — you'll just need to check GitHub Releases manuall
 **Model download:** The onboarding screen shows which models
 are ready. Click **Download** and watch live progress; cancel
 anytime. This downloads Parakeet-TDT (640 MB), Qwen2.5-Instruct
-(2.0 GB), and Silero VAD (629 KB) from Hugging Face — **~2.6 GB
+(4.7 GB), and Silero VAD (629 KB) from Hugging Face — **~5.4 GB
 total, one time only**. After the download completes, everything
 runs fully offline. Requires macOS 14.4+.
 
@@ -135,7 +135,7 @@ npx tauri dev
 ```
 Opens the Myna window. Ready to record.
 
-On first run, Myna's onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
+On first run, Myna's onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (4.7 GB), and Silero VAD (629 KB) from Hugging Face (~5.4 GB total, one time). The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
 
 For production builds:
 ```bash
@@ -172,7 +172,7 @@ See [docs/usage.md](docs/usage.md) for a complete walkthrough: choosing capture 
 - **Global search** — find meetings, transcripts, and summaries across your entire library.
 - **Export formats** — Markdown, TXT, SRT, VTT, PDF, plus Obsidian and Notion vault exports.
 - **Windows & Linux support** — build, test, and full feature parity on non-macOS platforms.
-- **Model picker** — choose between 3B, 8B, and larger LLMs based on your hardware.
+- **Model picker** — choose between 7B, 14B and larger LLMs based on your hardware.
 - **Custom vocabulary** — biasing and hotword support so proper nouns and technical terms transcribe correctly.
 
 ### Mid-term
@@ -204,7 +204,7 @@ Myna is released under the **MIT** License — [read it here](LICENSE).
 - **Parakeet-TDT model weights** — CC-BY-4.0 (attribution required; credit is included in Myna's source).
 - **sherpa-onnx runtime** — Apache-2.0.
 - **llama.cpp runtime** — MIT.
-- **Qwen2.5-Instruct model** — Qwen research model agreement (see [Hugging Face](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF)).
+- **Qwen2.5-Instruct model** — Qwen research model agreement (see [Hugging Face](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF)).
 
 ### Resources
 - **[Usage Guide](docs/usage.md)** — walkthrough, troubleshooting, export options.

@@ -28,7 +28,7 @@ const FIXTURE_LINE: &str =
 /// used by `tests/language.rs`.
 fn qwen_model_path() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf")
+        .join("../../models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
 }
 
 /// A minimal template used purely to exercise the engine, not to produce a
@@ -50,7 +50,7 @@ fn repeated_transcript(count: usize) -> String {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn transcript_exceeding_n_batch_no_longer_aborts_and_produces_non_empty_summary() {
     // Arrange: ~400 repeats of a ~20-token line is comfortably north of
     // 8,000 tokens — several times past the 2048-token `n_batch` default
@@ -87,7 +87,7 @@ fn transcript_exceeding_n_batch_no_longer_aborts_and_produces_non_empty_summary(
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn transcript_exceeding_n_ctx_falls_back_to_map_reduce_and_produces_non_empty_summary() {
     // Arrange: `n_ctx` is deliberately reduced to 4096 (rather than the
     // 32,768 production default) purely to keep this model-gated test's
@@ -125,7 +125,7 @@ fn transcript_exceeding_n_ctx_falls_back_to_map_reduce_and_produces_non_empty_su
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn cancellation_mid_map_reduce_still_stops_the_operation() {
     // Arrange: same over-n_ctx setup as the map-reduce test above, so this
     // is guaranteed to still be working through chunks (map phase or
@@ -160,14 +160,11 @@ fn cancellation_mid_map_reduce_still_stops_the_operation() {
     assert!(matches!(result, Err(LlmError::Cancelled)));
 }
 
-/// Ceiling on new RSS a second `summarize` call on one `Summarizer` may
-/// allocate. Before the inference-worker rework, every call built a fresh
-/// `LlamaContext` at the 32,768-token production default (~1.2 GB of KV
-/// cache) and freed it on return, so this was exceeded by an order of
-/// magnitude.
-const MAX_CONTEXT_CHURN_MB: u64 = 100;
-
 /// Point-sample of the current process's resident set size, in MB.
+///
+/// Diagnostic only since the 7B migration — see
+/// [`consecutive_summarize_calls_reuse_one_context`] for why RSS deltas
+/// stopped being a trustworthy reuse discriminator at this model size.
 fn current_rss_mb() -> u64 {
     let pid = sysinfo::Pid::from_u32(std::process::id());
     let mut system = sysinfo::System::new();
@@ -185,10 +182,14 @@ fn current_rss_mb() -> u64 {
 
 /// Runs `run` on the current thread while a dedicated sampler thread
 /// records peak process RSS every 5 ms; returns the output alongside that
-/// peak (MB). Peak-vs-pre-call baseline, rather than end-to-end delta, is
-/// the discriminator: the pre-fix code freed each context on return, so
-/// RSS *between* calls could look flat even while each call churned a
-/// fresh ~1.2 GB allocation *during* itself.
+/// peak (MB). Printed by the reuse test as a memory-footprint diagnostic,
+/// not asserted against: the 7B's ~4.4 GB of mmap-backed weights are clean
+/// file pages that macOS evicts under VM pressure, so after several model
+/// load/drop cycles in one process a *reusing* call legitimately "re-allocates"
+/// ~1.8 GB of re-faulted pages — indistinguishable from the ~1.9 GB a
+/// broken per-call `LlamaContext` rebuild would allocate. The reuse
+/// assertion therefore counts context builds directly via
+/// [`Summarizer::context_builds`].
 fn peak_rss_mb_during<T>(run: impl FnOnce() -> T) -> (T, u64) {
     let peak = Arc::new(AtomicU64::new(0));
     let stop = Arc::new(AtomicBool::new(false));
@@ -215,12 +216,12 @@ fn peak_rss_mb_during<T>(run: impl FnOnce() -> T) -> (T, u64) {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn consecutive_summarize_calls_reuse_one_context() {
     // Arrange: ~400 repeats of a ~20-token line (~8k tokens) fits well
     // inside the 32k production context, so both calls take the
     // single-shot path — the exact path that used to allocate a fresh
-    // 1.2 GB `LlamaContext` per call.
+    // 1.9 GB `LlamaContext` per call.
     let prompt = repeated_transcript(400);
     let opts = SummaryOptions {
         max_tokens: 24,
@@ -229,35 +230,51 @@ fn consecutive_summarize_calls_reuse_one_context() {
     let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");
     let cancel = AtomicBool::new(false);
 
+    // The load itself is the one and only context build; both summarize
+    // calls below must reuse it. Counting builds is deterministic — unlike
+    // the RSS churn figures, which macOS page eviction can inflate by the
+    // whole KV-cache size even when reuse works (see `peak_rss_mb_during`).
+    let builds_after_load = summarizer.context_builds();
+
     // Act: call 1 doubles as the warm-up that pages in model weights, so
-    // call 2's measurement is not charged for first-touch faults.
+    // call 2's diagnostic figures are not charged for first-touch faults.
     let (first, peak_1) = peak_rss_mb_during(|| {
         summarizer
             .summarize(&prompt, &opts, &cancel, |_| {})
             .expect("first summarize must succeed")
     });
+    let builds_after_first = summarizer.context_builds();
     let baseline = current_rss_mb();
     let (second, peak_2) = peak_rss_mb_during(|| {
         summarizer
             .summarize(&prompt, &opts, &cancel, |_| {})
             .expect("second summarize must succeed")
     });
+    let builds_after_second = summarizer.context_builds();
     let churn_during_second = peak_2.saturating_sub(baseline);
 
     println!(
         "call 1: {} chars, peak RSS {peak_1} MB; call 2: baseline {baseline} MB, \
-         peak {peak_2} MB, churn within call {churn_during_second} MB \
-         (limit {MAX_CONTEXT_CHURN_MB} MB)",
+         peak {peak_2} MB, churn within call {churn_during_second} MB (diagnostic \
+         only — eviction of mmap'd weights makes RSS unreliable here); context \
+         builds: load {builds_after_load}, after call 1 {builds_after_first}, \
+         after call 2 {builds_after_second}",
         first.len()
     );
 
     // Assert
     assert!(!first.trim().is_empty());
     assert!(!second.trim().is_empty());
-    assert!(
-        churn_during_second < MAX_CONTEXT_CHURN_MB,
-        "the second summarize call allocated {churn_during_second} MB of new RSS; \
-         a ~1.2 GB figure means a fresh LlamaContext is built per call instead \
-         of one being reused across calls"
+    assert_eq!(
+        builds_after_load, 1,
+        "Summarizer::load must build exactly one reusable LlamaContext \
+         (observed {builds_after_load})"
+    );
+    assert_eq!(
+        builds_after_second, builds_after_load,
+        "the two summarize calls rebuilt the LlamaContext \
+         (builds: load {builds_after_load}, after call 1 {builds_after_first}, \
+         after call 2 {builds_after_second}) instead of reusing the one built \
+         at load — this is the exact regression this test guards"
     );
 }

@@ -276,7 +276,7 @@ pub fn edit_summary_from(
 ///
 /// End-of-operation model release: on every `Ok`/`Err` outcome the cached
 /// [`Summarizer`] is released via [`AppState::release_summarizer`] before
-/// this returns, dropping the ~2.5 GB of weights + KV cache back to the
+/// this returns, dropping the ~5 GB of weights + KV cache back to the
 /// OS. The release only clears the slot when the slot is the sole `Arc`
 /// holder — the operation's own reference is dropped here first (it lives
 /// inside [`run_inference`]`'s` scope), and the busy guard held by

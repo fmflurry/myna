@@ -5,7 +5,7 @@ Dev helpers per `docs/stack-proposal.md`.
 ## download-models.sh
 
 Fetches the local models Myna needs — Parakeet STT v3 (sherpa-onnx, int8),
-Qwen2.5-3B-Instruct GGUF (Q4_K_M), and the silero VAD ONNX model — into
+Qwen2.5-7B-Instruct GGUF (Q4_K_M, two shards), and the silero VAD ONNX model — into
 `~/myna/models` by default, the same location the packaged app reads from
 (`paths::models_root()` in release builds). Idempotent — re-running skips
 any artifact already present.
@@ -13,12 +13,13 @@ any artifact already present.
 Override the destination with `MYNA_MODELS_DIR` (same env var the app
 honours) or `--dest <dir>`.
 
-Requires the `hf` CLI (`pip install -U huggingface_hub`) for the Parakeet and
-Qwen downloads; the silero VAD model is fetched via `curl`.
+Downloads use `curl` against each artifact's Hugging Face `resolve/main` URL
+directly (the Qwen model is fetched as its two GGUF shards); no `hf` CLI is
+required.
 
 If you have an older checkout with weights already downloaded into the
 repo's own `models/` directory, this script detects that and will **not**
-re-download or duplicate the ~2.6 GB of weights — it prints the exact
+re-download or duplicate the ~5.4 GB of weights — it prints the exact
 `mv`/`ln -s` command to relocate them, or performs the move itself when you
 pass `--migrate`.
 

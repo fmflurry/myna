@@ -15,7 +15,7 @@
 ## 2. LLM Runtime for Qwen
 
 - **Recommended**: **llama.cpp embedded in-process** (Rust `llama-cpp` bindings; `llama-server`/`llama-cli` for dev only) — no background service.
-- **Rationale**: llama.cpp is the reference runtime for Qwen2.5 GGUF (the Qwen org publishes official GGUF repos and documents llama.cpp usage), with mature Q4_K_M quantization (~1.9 GB for 3B), Metal/CUDA backends, and the `qwen2.5` chat template built in. Embedding it keeps Myna a single local-first app with no daemon to install, start, or supervise — important for a recorder that must just work on launch. MIT-licensed.
+- **Rationale**: llama.cpp is the reference runtime for Qwen2.5 GGUF (the Qwen org publishes official GGUF repos and documents llama.cpp usage), with mature Q4_K_M quantization (~4.7 GB for 7B, shipped as two shards), Metal/CUDA backends, and the `qwen2.5` chat template built in. Embedding it keeps Myna a single local-first app with no daemon to install, start, or supervise — important for a recorder that must just work on launch. MIT-licensed.
 - **Rejected alternatives**:
   - **Ollama** — easier CLI and model management, but adds a persistent background service and complicates in-process embedding; kept as fallback.
   - **Cloud LLM APIs** — violate the fully-local constraint.
@@ -55,7 +55,7 @@
 ## 7. Summarization
 
 - **Recommended**: **Qwen2.5-Instruct GGUF via llama.cpp with templated prompts**.
-- **Rationale**: Qwen2.5-3B-Instruct GGUF (Q4_K_M ≈ 1.9 GB) fits the fully-local, CPU/Metal-friendly constraint with 32K context — comfortably covering meeting transcripts — and llama.cpp supplies the official `qwen2.5` chat template. Templated prompts (decision 8) make summarization deterministic, testable, and user-adjustable without code changes.
+- **Rationale**: Qwen2.5-7B-Instruct GGUF (Q4_K_M ≈ 4.7 GB, shipped as two shards) trades a larger footprint for markedly better summary quality while still fitting the fully-local, CPU/Metal-friendly constraint with 32K context — comfortably covering meeting transcripts. llama.cpp loads the shards transparently from the first file and supplies the official `qwen2.5` chat template. Because summarization is on-demand (triggered after a meeting rather than live), the higher latency of a 7B model is an acceptable trade for the quality gain. Templated prompts (decision 8) make summarization deterministic, testable, and user-adjustable without code changes.
 - **Rejected alternatives**:
   - **Embedding-only retrieval** (no generation) — cannot produce prose summaries.
   - **Cloud LLM summarization** — violates the fully-local constraint.
@@ -95,10 +95,10 @@ Phase 3 cites these in CLAUDE.md.
 hf download csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8 \
   --local-dir models/parakeet-tdt-0.6b-v2-int8
 
-# Qwen2.5 Instruct GGUF (Q4_K_M, ~1.9 GB) — official Qwen repo
-hf download Qwen/Qwen2.5-3B-Instruct-GGUF \
-  --include "qwen2.5-3b-instruct-q4_k_m.gguf" \
-  --local-dir models/qwen2.5-3b-instruct
+# Qwen2.5 Instruct GGUF (Q4_K_M, ~4.7 GB, shipped as two shards) — official Qwen repo
+hf download Qwen/Qwen2.5-7B-Instruct-GGUF \
+  --include "qwen2.5-7b-instruct-q4_k_m-*.gguf" \
+  --local-dir models/qwen2.5-7b-instruct
 ```
 
 **Run STT** (sherpa-onnx, VAD simulated streaming):
@@ -116,10 +116,10 @@ cargo run -p myna-stt -- --model models/parakeet-tdt-0.6b-v2-int8 --stream --inp
 ```bash
 # One-shot summarization from a template
 cargo run -p myna-llm -- summarize \
-  --model models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf \
+  --model models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf \
   --template templates/key-points.json \
   --transcript recordings/meeting.txt
 
 # Dev-only: llama-server for interactive prompt testing
-llama-server -m models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf -c 32768 --port 8080
+llama-server -m models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf -c 32768 --port 8080
 ```
