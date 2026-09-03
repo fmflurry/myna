@@ -18,6 +18,7 @@ const ERROR_MESSAGES: Readonly<Record<MeetingsErrorCode, string>> = {
   AUDIO: 'The microphone could not be accessed.',
   MODELS_MISSING: 'Required local models are missing.',
   PATH: 'The selected file location is invalid.',
+  UPDATER: 'The updater could not install or restart the app.',
   // NOTE(tdd-guide RED prerequisite): CANCELLED is never expected to reach this
   // component — the facade treats it as a silent no-op (never calls setError).
   // Present regardless, since `Record<MeetingsErrorCode, string>` is exhaustive.

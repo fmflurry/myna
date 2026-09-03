@@ -1,3 +1,5 @@
+import type { UpdateInstallState } from '../../core/models/update.model';
+
 /**
  * Minimal `MeetingsFacade.updates` stand-in for shell-page specs whose
  * `facadeStub` predates the update-check feature and is unrelated to it.
@@ -11,9 +13,12 @@ export const NOOP_UPDATES_FACADE_STUB = {
   lastCheck: () => undefined,
   checking: () => false,
   dismissedVersion: () => null,
+  installState: () => ({ status: 'idle' }) satisfies UpdateInstallState,
   loadConsent: async () => undefined,
   grantConsent: async () => undefined,
   declineConsent: async () => undefined,
   checkForUpdate: async () => undefined,
   dismissBanner: () => undefined,
+  installUpdate: async () => undefined,
+  restartApp: async () => undefined,
 };

@@ -39,7 +39,12 @@
   <app-update-banner
     [check]="facade.updates.lastCheck()"
     [dismissedVersion]="facade.updates.dismissedVersion()"
+    [installState]="facade.updates.installState()"
+    [recording]="facade.busy()"
+    [restartError]="updateHandlers.restartError()"
     (dismissed)="updateHandlers.onBannerDismissed()"
+    (updateRequested)="updateHandlers.onUpdate()"
+    (restartRequested)="updateHandlers.onRestart()"
   />
 
   <div class="workspace">

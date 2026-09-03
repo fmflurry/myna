@@ -2,6 +2,7 @@
 
 **Status**: Decided (Phase 1)  
 **Date**: 2026-09-01  
+**Amended by**: [ADR 0012: User-Initiated In-App Update](0012-user-initiated-in-app-update.md) — relaxes the *notify-only, never auto-install* stance below to permit a user-clicked, consent-gated, recording-gated in-app install.  
 **Context**: Myna launched as 0.1.0 with a zero-egress guarantee: no network crates in Rust, no fetch/XHR/WebSocket/beacon in the UI, CSP `default-src 'self'`, no telemetry, self-hosted fonts. Users deserved to know when a new version ships. The need to balance that convenience against the privacy commitment prompted this decision.
 
 ## Decision

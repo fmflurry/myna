@@ -192,3 +192,37 @@ pub struct ModelDownloadDonePayload {
     pub cancelled: bool,
     pub message: Option<String>,
 }
+
+/// Emitted periodically while an in-app update download is in flight (see
+/// `crate::commands::update_install::install_update`), throttled to at most
+/// one emission per 250 ms.
+pub const UPDATE_PROGRESS: &str = "update://progress";
+
+/// Emitted exactly once when an update install attempt ends — whether it
+/// installed, found nothing newer, or failed.
+pub const UPDATE_DONE: &str = "update://done";
+
+/// Payload for [`UPDATE_PROGRESS`]. `downloaded_bytes` is cumulative, not
+/// the latest chunk size. `total_bytes` is `None` when the server sent no
+/// `Content-Length`, and `percent` is `None` whenever the total is unknown
+/// — the UI renders an indeterminate bar rather than a fabricated number.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgressPayload {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: Option<f32>,
+}
+
+/// Payload for [`UPDATE_DONE`]. `success` covers both "installed" and
+/// "already up to date" (in the latter `version` is `None`); on failure
+/// `message` carries the human-readable reason and `version` is `None`.
+/// After a successful install the new version only runs once the app
+/// restarts — the UI offers that via the `restart_app` command.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDonePayload {
+    pub success: bool,
+    pub version: Option<String>,
+    pub message: Option<String>,
+}

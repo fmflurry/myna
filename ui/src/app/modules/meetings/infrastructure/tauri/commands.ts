@@ -66,6 +66,8 @@ export const COMMAND_NAMES = [
   'update_consent',
   'set_update_consent',
   'check_for_update',
+  'install_update',
+  'restart_app',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -84,6 +86,20 @@ export type UpdateCheckStatusDto = 'available' | 'up-to-date' | 'skipped' | 'fai
 
 /** Mirrors the Rust `UpdateSkipReason` (`#[serde(rename_all = "kebab-case")]`). */
 export type UpdateSkipReasonDto = 'no-consent' | 'throttled' | 'recording';
+
+/**
+ * Mirrors the Rust `UpdateDonePayload` (`#[serde(rename_all = "camelCase")]`,
+ * `app/src-tauri/src/events.rs`) — the exact value `install_update`
+ * resolves with AND the payload it emits on `update://done` (one shape,
+ * built once Rust-side; pinned by the serde wire-shape tests in
+ * `commands/update_install.rs`). Gate refusals never produce this: they
+ * reject the invoke with the typed `{code, message}` error envelope.
+ */
+export interface UpdateInstallResultDto {
+  readonly success: boolean;
+  readonly version: string | null;
+  readonly message: string | null;
+}
 
 /** Mirrors the Rust `UpdateCheckDto` (`#[serde(rename_all = "camelCase")]`). */
 export interface UpdateCheckDto {
@@ -257,6 +273,8 @@ export interface CommandSignatures {
     args: { readonly manual: boolean };
     result: UpdateCheckDto;
   };
+  readonly install_update: { args: NoArgs; result: UpdateInstallResultDto };
+  readonly restart_app: { args: NoArgs; result: void };
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];

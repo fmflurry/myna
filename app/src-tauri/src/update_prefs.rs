@@ -150,6 +150,45 @@ pub fn decide_check(
     CheckDecision::Run
 }
 
+/// Outcome of asking "may we install a downloaded update right now?".
+///
+/// Mirrors [`CheckDecision`]'s shape but has no throttle arm: an install
+/// is always user-initiated (the UI only offers it after a check already
+/// cleared [`CHECK_INTERVAL`]), so only the two hard invariants remain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallDecision {
+    /// Go ahead and run the updater install.
+    Run,
+    /// The user has not granted consent (or revoked it since the check).
+    SkipNoConsent,
+    /// A meeting is currently recording; never touch a live session
+    /// (ADR 0011).
+    SkipRecording,
+}
+
+/// Pure decision of whether an update install may run right now.
+///
+/// Precedence, first match wins:
+/// 1. `is_recording` -> [`InstallDecision::SkipRecording`] — ADR 0011's
+///    "never touch a live session" invariant is a safety property, so it
+///    is checked first and can never be shadowed by the consent policy.
+/// 2. `consent != Granted` -> [`InstallDecision::SkipNoConsent`] —
+///    defense-in-depth: the UI only surfaces the install affordance after
+///    a consented check, but consent may have been revoked in between.
+/// 3. otherwise -> [`InstallDecision::Run`]
+///
+/// Pure and side-effect free, like [`decide_check`] — the caller owns
+/// mapping each `Skip*` to its user-visible refusal.
+pub fn decide_install(consent: UpdateConsent, is_recording: bool) -> InstallDecision {
+    if is_recording {
+        return InstallDecision::SkipRecording;
+    }
+    if consent != UpdateConsent::Granted {
+        return InstallDecision::SkipNoConsent;
+    }
+    InstallDecision::Run
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +462,69 @@ mod tests {
         assert_eq!(
             decide_check(UpdateConsent::Granted, Some(stale), false, now, false),
             CheckDecision::Run
+        );
+    }
+
+    // --- decide_install: full precedence matrix --------------------------
+
+    #[test]
+    fn decide_install_matrix_covers_every_precedence_branch() {
+        for consent in [
+            UpdateConsent::Unset,
+            UpdateConsent::Granted,
+            UpdateConsent::Declined,
+        ] {
+            for is_recording in [false, true] {
+                let decision = decide_install(consent, is_recording);
+                let expected = expected_install_decision(consent, is_recording);
+                assert_eq!(
+                    decision, expected,
+                    "consent={consent:?} is_recording={is_recording}"
+                );
+            }
+        }
+    }
+
+    /// Independent re-derivation of the expected precedence (recording
+    /// first, consent second), so the matrix test isn't just re-stating
+    /// `decide_install`'s own branches.
+    fn expected_install_decision(consent: UpdateConsent, is_recording: bool) -> InstallDecision {
+        if is_recording {
+            return InstallDecision::SkipRecording;
+        }
+        if consent != UpdateConsent::Granted {
+            return InstallDecision::SkipNoConsent;
+        }
+        InstallDecision::Run
+    }
+
+    #[test]
+    fn decide_install_skips_recording_even_when_consent_is_granted() {
+        // An install is always user-initiated ("manual"); the recording
+        // guard still binds — ADR 0011: never touch a live session.
+        assert_eq!(
+            decide_install(UpdateConsent::Granted, true),
+            InstallDecision::SkipRecording
+        );
+    }
+
+    #[test]
+    fn decide_install_skips_no_consent_when_unset_or_declined_and_idle() {
+        assert_eq!(
+            decide_install(UpdateConsent::Unset, false),
+            InstallDecision::SkipNoConsent
+        );
+        assert_eq!(
+            decide_install(UpdateConsent::Declined, false),
+            InstallDecision::SkipNoConsent
+        );
+    }
+
+    #[test]
+    fn decide_install_runs_when_granted_and_idle() {
+        assert_eq!(
+            decide_install(UpdateConsent::Granted, false),
+            InstallDecision::Run
         );
     }
 }

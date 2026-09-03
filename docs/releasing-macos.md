@@ -173,6 +173,24 @@ Otherwise the app is silently denied microphone access with no prompt, and
 it will look like a regression rather than an expected consequence of
 re-signing.
 
+### In-place updates behave the same as the DMG path
+
+The updater's in-place install ([ADR 0012](adr/0012-user-initiated-in-app-update.md))
+replaces the running bundle with a build carrying a *new* ad-hoc `cdhash`, so
+it resets the microphone and audio-capture (Screen & System Audio Recording)
+grants **identically** to installing the freshly-signed DMG by hand. There is
+no difference to TCC between "drag the new DMG over the old app" and "click
+Update in-app" while builds are ad-hoc signed — both change the DR, both drop
+the grant. This is why ADR 0012 shows an explicit re-prompt caveat before the
+update restarts the app: the consequence is unavoidable under ad-hoc signing,
+so it is surfaced rather than hidden.
+
+**Developer ID signing fixes this with zero code change.** Once releases are
+signed with a stable Team ID and the DR is pinned to `leaf[subject.OU]` (see
+above), every build satisfies the same Designated Requirement, so the grant
+survives both the DMG path and the in-place updater. The caveat simply stops
+firing; no update-flow code needs to change.
+
 ## CI: tag-triggered releases
 
 `.github/workflows/release.yml` runs `scripts/release-macos.sh` on

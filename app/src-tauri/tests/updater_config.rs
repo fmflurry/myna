@@ -114,3 +114,88 @@ fn bundle_creates_updater_artifacts() {
         "bundle.createUpdaterArtifacts must be true"
     );
 }
+
+// --- capability-boundary guards (ADR 0010 / one-click update plan) ------
+
+/// The webview must have no path to the updater plugin. ADR 0010 gates the
+/// plugin Rust-side ("the Tauri JS plugin API is not wired to the
+/// webview"), and the one-click install keeps that contract: the UI
+/// reaches the updater only through the curated `install_update` /
+/// `restart_app` commands. A future `updater:default` (or any `updater:*`
+/// permission) in ANY capability file would hand the renderer the plugin's
+/// raw `download_and_install` IPC and silently void the guarantee — so the
+/// scan covers every `*.json` in `capabilities/`, not just `default.json`:
+/// a second capability file added later is guarded from day one. Raw-text
+/// scanning (any `updater` substring, case-insensitive) is deliberate: it
+/// catches every entry shape — bare identifier, object with
+/// `identifier`/`allow`/`deny` sub-lists, or nested permissions — with no
+/// parser to smuggle a permission past.
+#[test]
+fn capabilities_grant_no_updater_permission_to_the_webview() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+    let entries = fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
+
+    let mut scanned = 0usize;
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read capabilities entry: {error}"))
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        scanned += 1;
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        // Sanity: still valid JSON — a file we cannot parse is not a file
+        // we can trust to be updater-free.
+        let _: serde_json::Value = serde_json::from_str(&raw)
+            .unwrap_or_else(|error| panic!("{path:?} must be valid JSON: {error}"));
+        assert!(
+            !raw.to_lowercase().contains("updater"),
+            "{} must NOT mention the updater anywhere — the updater is \
+             Rust-owned (ADR 0010) and the webview must keep no path to it",
+            path.display()
+        );
+    }
+    assert!(
+        scanned > 0,
+        "sanity: expected at least one *.json capability file in {}",
+        dir.display()
+    );
+}
+
+/// Pins the "Rust owns the updater call" contract at the IPC-surface
+/// level: the curated install commands must be registered in
+/// `generate_handler!` under exactly the names the UI invokes
+/// (`install_update`, `restart_app`). Source-scans `src/lib.rs` in the
+/// same style as `tests/ui_tauri_import_allowlist.rs` scans the UI —
+/// registering a command is a one-line change, so a text scan is enough
+/// to catch a rename/removal, and it needs no live `AppHandle`.
+#[test]
+fn generate_handler_registers_the_rust_owned_updater_commands() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+
+    let marker = "generate_handler![";
+    let start = source
+        .find(marker)
+        .expect("lib.rs must register commands via generate_handler!");
+    let list = &source[start + marker.len()..];
+    let list = &list[..list
+        .find("])")
+        .expect("generate_handler! list must be closed")];
+
+    for command in [
+        "commands::update_install::install_update",
+        "commands::update_install::restart_app",
+    ] {
+        assert!(
+            list.contains(command),
+            "`{command}` must be registered in lib.rs generate_handler! — the UI is \
+             built against this exact name, and the updater plugin must stay reachable \
+             only through curated Rust commands"
+        );
+    }
+}

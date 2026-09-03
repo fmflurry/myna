@@ -27,6 +27,7 @@ const KNOWN_ERROR_CODES: readonly MeetingsErrorCode[] = [
   'BUSY',
   'MODELS_MISSING',
   'PATH',
+  'UPDATER',
 ];
 
 interface RawErrorEnvelope {

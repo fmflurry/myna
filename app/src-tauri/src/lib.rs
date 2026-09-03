@@ -112,6 +112,8 @@ pub fn run() {
             commands::updates::update_consent,
             commands::updates::set_update_consent,
             commands::updates::check_for_update,
+            commands::update_install::install_update,
+            commands::update_install::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running myna-app");
