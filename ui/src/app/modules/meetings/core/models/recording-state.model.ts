@@ -18,6 +18,7 @@ export type MeetingsErrorCode =
   | 'AUDIO'
   | 'MODELS_MISSING'
   | 'PATH'
+  | 'UPDATER'
   | 'CANCELLED'
   | 'AUDIO_CHUNKS_DROPPED'
   | 'UNKNOWN';

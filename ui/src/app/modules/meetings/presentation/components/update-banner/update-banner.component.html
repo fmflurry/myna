@@ -1,20 +1,54 @@
 @if (bannerInfo(); as info) {
   <div class="update-banner" role="status" aria-live="polite">
-    <p class="message">Myna {{ info.version }} is available.</p>
-
-    <div class="actions">
-      <button type="button" class="copy" (click)="copyDownloadLink(info.downloadUrl)">
-        {{ copied() ? 'Copied!' : 'Copy download link' }}
-      </button>
-      <details class="whats-new">
-        <summary>What's new</summary>
-        <p>{{ info.notes }}</p>
-      </details>
-      <button type="button" class="dismiss" aria-label="Dismiss update notice" (click)="dismiss()">&times;</button>
-    </div>
-
-    @if (!signed()) {
-      <p class="caveat">Installing this will reset Myna's microphone permission &mdash; you'll re-grant it in System Settings.</p>
+    @switch (mode()) {
+      @case ('available') {
+        <p class="message">Myna {{ info.version }} is available.</p>
+        <div class="actions">
+          <button type="button" class="install" (click)="update()">Update</button>
+          <details class="whats-new">
+            <summary>What's new</summary>
+            <p>{{ info.notes }}</p>
+          </details>
+          <button type="button" class="dismiss" aria-label="Dismiss update notice" (click)="dismiss()">&times;</button>
+        </div>
+        @if (!signed()) {
+          <p class="caveat">Installing this will reset Myna's microphone permission &mdash; you'll re-grant it in System Settings.</p>
+        }
+      }
+      @case ('downloading') {
+        <p class="message">Myna {{ info.version }} is downloading.</p>
+        <div class="actions">
+          <button type="button" class="install" disabled aria-busy="true">Downloading&hellip; {{ percentLabel() }}</button>
+        </div>
+      }
+      @case ('ready') {
+        <p class="message">{{ readyMessage() }}</p>
+        <div class="actions">
+          <button
+            type="button"
+            class="restart"
+            [disabled]="recording()"
+            [title]="recording() ? 'finish your recording first' : ''"
+            (click)="restart()"
+          >Restart now</button>
+          <button type="button" class="copy" (click)="copyReleaseLink(info.downloadUrl)">
+            {{ copied() ? 'Copied!' : 'Copy release link' }}
+          </button>
+        </div>
+        @if (restartError(); as error) {
+          <p class="error">{{ error }}</p>
+        }
+      }
+      @case ('failed') {
+        <p class="message error-message">{{ failureMessage() }}</p>
+        <div class="actions">
+          <button type="button" class="install" (click)="retry()">Retry</button>
+          <button type="button" class="copy" (click)="copyReleaseLink(info.downloadUrl)">
+            {{ copied() ? 'Copied!' : 'Copy release link' }}
+          </button>
+          <button type="button" class="dismiss" aria-label="Dismiss update notice" (click)="dismiss()">&times;</button>
+        </div>
+      }
     }
   </div>
 }

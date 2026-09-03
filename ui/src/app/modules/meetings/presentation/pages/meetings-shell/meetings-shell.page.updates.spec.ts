@@ -15,7 +15,7 @@ import type { ModelsStatus } from '../../../core/models/models-status.model';
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
-import type { UpdateCheck, UpdateConsent } from '../../../core/models/update.model';
+import type { UpdateCheck, UpdateConsent, UpdateInstallState } from '../../../core/models/update.model';
 import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import { flushMicrotasks } from '../../../infrastructure/tauri/testing/tauri-internals.stub';
 import { MeetingsShellPage } from './meetings-shell.page';
@@ -39,12 +39,16 @@ describe('MeetingsShellPage update checks', () => {
   const lastCheck = signal<UpdateCheck | undefined>(undefined);
   const checking = signal(false);
   const dismissedVersion = signal<string | null>(null);
+  const installState = signal<UpdateInstallState>({ status: 'idle' });
+  const installUpdate = vi.fn(async (): Promise<void> => undefined);
+  const restartApp = vi.fn(async (): Promise<void> => undefined);
 
   const updatesFacadeStub = {
     consent,
     lastCheck,
     checking,
     dismissedVersion,
+    installState,
     loadConsent: async (): Promise<void> => {
       consent.set(await updatesPort.consent());
     },
@@ -65,6 +69,8 @@ describe('MeetingsShellPage update checks', () => {
       }
     },
     dismissBanner: vi.fn(),
+    installUpdate,
+    restartApp,
   };
 
   const meetings = signal<readonly Meeting[]>([]);
@@ -133,6 +139,9 @@ describe('MeetingsShellPage update checks', () => {
     checking.set(false);
     dismissedVersion.set(null);
     recordingState.set('idle');
+    installState.set({ status: 'idle' });
+    installUpdate.mockClear();
+    restartApp.mockClear();
 
     TestBed.configureTestingModule({
       providers: [
@@ -239,5 +248,64 @@ describe('MeetingsShellPage update checks', () => {
 
     expect(consent()).toBe('declined');
     expect(updatesPort.checkCalls).toEqual([false]);
+  });
+
+  const availableCheck: UpdateCheck = {
+    status: 'available',
+    version: '0.4.0',
+    notes: 'Faster startup.',
+    downloadUrl: 'https://github.com/fmflurry/myna/releases/download/v0.4.0/Myna.app.tar.gz',
+  };
+
+  it('clicking [Update] on the banner calls updates.installUpdate', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    const fixture = await createFixture();
+
+    const updateButton: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .install');
+    expect(updateButton).toBeTruthy();
+    updateButton.click();
+    await flushMicrotasks();
+
+    expect(installUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('clicking [Restart now] on a ready update calls updates.restartApp', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    const fixture = await createFixture();
+
+    const restartButton: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
+    expect(restartButton).toBeTruthy();
+    restartButton.click();
+    await flushMicrotasks();
+
+    expect(restartApp).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rejected restart surfaces its message in the banner instead of throwing', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    restartApp.mockRejectedValueOnce(new Error('restart request failed'));
+    const fixture = await createFixture();
+
+    fixture.nativeElement.querySelector('app-update-banner .restart').click();
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-update-banner').textContent).toContain('restart request failed');
+  });
+
+  it('[Restart now] is disabled while a recording is in progress', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    recordingState.set('recording');
+    const fixture = await createFixture();
+
+    const restartButton: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
+    expect(restartButton.disabled).toBe(true);
   });
 });

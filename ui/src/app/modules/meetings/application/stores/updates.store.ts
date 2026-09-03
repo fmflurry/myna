@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import type { Signal } from '@angular/core';
 
-import type { UpdateCheck, UpdateConsent } from '../../core/models/update.model';
+import type { UpdateCheck, UpdateConsent, UpdateInstallState } from '../../core/models/update.model';
 import { PreferencesPort } from '../../core/ports/preferences.port';
 
 /** localStorage key the last-dismissed update-banner version is persisted under. */
@@ -31,11 +31,13 @@ export class UpdatesStore {
   private readonly lastCheckSignal = signal<UpdateCheck | undefined>(undefined);
   private readonly checkingSignal = signal<boolean>(false);
   private readonly dismissedVersionSignal = signal<string | null>(readDismissedVersion(this.preferences));
+  private readonly installStateSignal = signal<UpdateInstallState>({ status: 'idle' });
 
   readonly consent: Signal<UpdateConsent> = this.consentSignal.asReadonly();
   readonly lastCheck: Signal<UpdateCheck | undefined> = this.lastCheckSignal.asReadonly();
   readonly checking: Signal<boolean> = this.checkingSignal.asReadonly();
   readonly dismissedVersion: Signal<string | null> = this.dismissedVersionSignal.asReadonly();
+  readonly installState: Signal<UpdateInstallState> = this.installStateSignal.asReadonly();
 
   setConsent(consent: UpdateConsent): void {
     this.consentSignal.set(consent);
@@ -53,5 +55,10 @@ export class UpdatesStore {
   setDismissedVersion(version: string | null): void {
     this.preferences.set(DISMISSED_UPDATE_VERSION_PREFERENCE_KEY, version ?? '');
     this.dismissedVersionSignal.set(version);
+  }
+
+  /** Applies the one-click install state-machine snapshot; the facade owns every transition. */
+  setInstallState(state: UpdateInstallState): void {
+    this.installStateSignal.set(state);
   }
 }

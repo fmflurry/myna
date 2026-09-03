@@ -1,5 +1,5 @@
 import type { Signal } from '@angular/core';
-import { computed } from '@angular/core';
+import { computed, signal } from '@angular/core';
 import type { Router } from '@angular/router';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -160,10 +160,17 @@ export interface UpdateHandlers {
   readonly onConsentChanged: (consent: UpdateConsent) => void;
   readonly onCheckNow: () => void;
   readonly onBannerDismissed: () => void;
+  /** Kicks the facade's never-throwing install state machine (banner [Update] / [Retry]). */
+  readonly onUpdate: () => void;
+  /** Applies a ready update; a rejected `restart_app` lands in {@link restartError} instead of throwing. */
+  readonly onRestart: () => void;
+  /** Message from the last rejected restart, shown by the banner in the ready state; `null` hides it. */
+  readonly restartError: Signal<string | null>;
 }
 
 /** Builds {@link UpdateHandlers} bound to `facade`. "Turn on update checks" persists consent THEN immediately runs the first check; the settings toggle and × / Esc never check. */
 export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
+  const restartError = signal<string | null>(null);
   return {
     visible: computed(() => facade.updates.consent() === 'unset' && !facade.busy()),
     onGranted: () => {
@@ -180,6 +187,14 @@ export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
     },
     onCheckNow: () => void facade.updates.checkForUpdate(true),
     onBannerDismissed: () => facade.updates.dismissBanner(),
+    onUpdate: () => void facade.updates.installUpdate(),
+    onRestart: () => {
+      restartError.set(null);
+      facade.updates.restartApp().catch((caught: unknown) => {
+        restartError.set(caught instanceof Error ? caught.message : String(caught));
+      });
+    },
+    restartError: restartError.asReadonly(),
   };
 }
 
