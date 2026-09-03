@@ -17,7 +17,7 @@ pub fn read_wav_to_f32(path: &Path) -> Result<(Vec<f32>, u32), SttError> {
     let spec = reader.spec();
 
     let samples = read_samples(&mut reader, spec.sample_format, spec.bits_per_sample)?;
-    let mono = downmix_to_mono(&samples, spec.channels as usize);
+    let mono = downmix_to_mono(samples, spec.channels as usize);
 
     Ok((mono, spec.sample_rate))
 }
@@ -97,8 +97,20 @@ impl WavBlockReader {
     }
 
     /// Total number of frames in the file, established at [`Self::open`].
+    /// Sourced from the header's *declared* data-chunk length — callers
+    /// pre-sizing allocations from it must clamp against the file's real
+    /// size first (see [`crate::diarize::reservation_frames`]), since a
+    /// corrupt or hostile user-imported file can declare far more frames
+    /// than it holds.
     pub fn total_frames(&self) -> u64 {
         self.total_frames
+    }
+
+    /// Bytes one frame occupies in the file's data chunk (channels ×
+    /// sample width), used to bound a header-declared frame count against
+    /// the file's actual byte size.
+    pub fn bytes_per_frame(&self) -> u64 {
+        u64::from(self.spec.channels) * u64::from(self.spec.bits_per_sample) / 8
     }
 
     /// Reads up to `block_frames` frames, downmixed to mono. Returns
@@ -120,15 +132,16 @@ impl WavBlockReader {
             return Ok(None);
         }
 
-        Ok(Some(downmix_to_mono(&samples, channels)))
+        Ok(Some(downmix_to_mono(samples, channels)))
     }
 }
 
-/// Averages interleaved multi-channel samples down to mono. A no-op for
-/// mono input.
-fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+/// Averages interleaved multi-channel samples down to mono. For mono input
+/// (`channels <= 1`) the caller's buffer is moved out unchanged — no copy —
+/// so zero-copy passthrough holds for whole-file and block-wise reads alike.
+fn downmix_to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
     if channels <= 1 {
-        return samples.to_vec();
+        return samples;
     }
 
     samples
@@ -345,6 +358,33 @@ mod tests {
             reader.total_frames(),
             frame_count as u64,
             "must report frame count, not interleaved sample count (2x for stereo)"
+        );
+    }
+
+    #[test]
+    fn downmix_to_mono_returns_the_input_allocation_for_mono_audio() {
+        // Production diarization reads 16 kHz mono tracks: for `channels <= 1`
+        // a downmix is a pure passthrough, so any fresh allocation is a
+        // redundant full-file copy that doubles peak memory for zero
+        // transformation. The mono path must hand back the caller's own
+        // buffer — same pointer, same capacity — not a copy.
+        let samples: Vec<f32> = (0..1024).map(|i| (i % 7) as f32 * 0.1).collect();
+        let input_ptr = samples.as_ptr();
+        let input_len = samples.len();
+        let input_cap = samples.capacity();
+        let expected = samples.clone();
+
+        let mono = downmix_to_mono(samples, 1);
+        assert_eq!(mono.len(), input_len);
+        assert_eq!(mono, expected);
+        assert!(
+            std::ptr::eq(mono.as_ptr(), input_ptr),
+            "mono passthrough must reuse the caller's buffer, got a fresh allocation"
+        );
+        assert_eq!(
+            mono.capacity(),
+            input_cap,
+            "mono passthrough must not reallocate"
         );
     }
 

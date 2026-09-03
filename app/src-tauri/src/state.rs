@@ -1,14 +1,16 @@
 //! Shared, Tauri-managed application state: the meeting store, the active
-//! recording session (if any), and lazily-loaded, cached STT and
-//! summarization engines.
+//! recording session (if any), and lazily-loaded, evictable model caches
+//! ([`ModelSlot`]) for the STT engine, the summarizer, and the diarizer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
 
 use myna_llm::Summarizer;
 use myna_stt::{DiarizeConfig, Diarizer, SttConfig, SttEngine};
 use tauri::AppHandle;
 
+use crate::domain::MeetingId;
 use crate::error::AppError;
 use crate::paths;
 use crate::session::RecordingSession;
@@ -93,18 +95,215 @@ const LLM_MODEL_DIR_NAME: &str = "qwen2.5-3b-instruct";
 /// File name of the Qwen GGUF model, within [`LLM_MODEL_DIR_NAME`].
 const LLM_MODEL_FILE_NAME: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 
+/// How long the cached STT engine may sit unused after a recording (or
+/// import) completes before [`AppState::evict_stt_if_idle`] releases it.
+/// 10 minutes: long enough that back-to-back recordings and
+/// record→stop→immediately-retranscribe flows reuse the warm engine (each
+/// reload is a seconds-scale Parakeet load), short enough that an app left
+/// idle after a meeting gives the ~1 GB of ONNX weights back to the OS.
+pub const IDLE_MODEL_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The pure decision behind [`AppState::evict_stt_if_idle`]: the STT engine
+/// is released only when no recording session occupies [`AppState::session`]
+/// AND no import/re-transcribe is in flight — both hold a live
+/// `Arc<SttEngine>`, and evicting under either would drop the model out
+/// from under a decoding worker. Extracted so the guard is unit-testable
+/// without a device-backed `RecordingSession` (mirrors the `guard_start`
+/// precedent in `commands::recording`).
+pub fn stt_evict_allowed(session_active: bool, import_busy: bool) -> bool {
+    !session_active && !import_busy
+}
+
+/// An evictable cache slot for one lazily-loaded model.
+///
+/// Replaces the pre-Phase-3 `OnceLock<Arc<T>>` fields, which could load a
+/// model but never release one — every GB-scale artifact a session ever
+/// touched stayed resident until process exit. A `ModelSlot` holds an
+/// `Option<Arc<T>>` with three lifecycle operations:
+///
+/// - [`ModelSlot::get_or_load`]: return the cached model, or load it (once
+///   — the slot mutex serializes concurrent acquires through the load).
+///   A failed load surfaces as `Err` and leaves the slot empty and
+///   retryable, so unlike `OnceLock` no caller-serialization contract is
+///   needed to avoid poisoning a failed load into the cache.
+/// - [`ModelSlot::release_if_last`] / [`ModelSlot::evict_if_idle`]: drop
+///   the cached model — but only when the slot is the sole `Arc` holder,
+///   so a release can never pull a model out from under a live operation.
+///   The model's `Drop` runs outside the slot mutex.
+/// - [`ModelSlot::weak`] / [`ModelSlot::arc_count`]: test seams that make
+///   an actual drop observable (`weak.upgrade().is_none()`), which the
+///   `OnceLock` cache could not express at all.
+///
+/// Reload tradeoff: releasing after each operation means the next
+/// user-triggered summarization/diarization pays a seconds-scale model
+/// load. Both are explicit, infrequent, user-initiated operations where a
+/// progress wait is already expected; the alternative (the old behavior)
+/// was to hold the RAM forever, which is the leak this type exists to fix.
+pub struct ModelSlot<T> {
+    current: Mutex<Option<Arc<T>>>,
+    last_used: Mutex<Instant>,
+}
+
+impl<T> ModelSlot<T> {
+    /// An empty slot, stamped "used now" so a never-acquired model is
+    /// never considered idle-expired.
+    pub fn new() -> Self {
+        Self {
+            current: Mutex::new(None),
+            last_used: Mutex::new(Instant::now()),
+        }
+    }
+
+    /// Returns the cached model, loading it via `load` on a miss and
+    /// stamping `last_used`. The slot mutex is held across `load`, so two
+    /// racing acquires load once, not twice.
+    pub fn get_or_load(
+        &self,
+        load: impl FnOnce() -> Result<Arc<T>, AppError>,
+    ) -> Result<Arc<T>, AppError> {
+        let model = {
+            let mut current = self.lock_current();
+            match current.as_ref() {
+                Some(cached) => Arc::clone(cached),
+                None => {
+                    let loaded = load()?;
+                    *current = Some(Arc::clone(&loaded));
+                    loaded
+                }
+            }
+        };
+        *self.lock_last_used() = Instant::now();
+        Ok(model)
+    }
+
+    /// End-of-operation release: if the slot is the only remaining holder
+    /// of the cached model (the caller has dropped its own `Arc`), take it
+    /// out and drop it. Returns whether the model was released. Refused —
+    /// without dropping — while any live operation still holds a reference.
+    pub fn release_if_last(&self) -> bool {
+        self.take_if(|model| Arc::strong_count(model) == 1)
+            .is_some()
+    }
+
+    /// Idle-time eviction: like [`ModelSlot::release_if_last`], but also
+    /// requires the slot to have gone untouched for `ttl`. Never blocks:
+    /// every lock is `try_lock`, because this runs on the synchronous
+    /// `recording_state`/`list_input_devices` command path and must not
+    /// stall the main thread behind an in-flight load. A refused attempt
+    /// is harmless — the next poll retries after the TTL.
+    pub fn evict_if_idle(&self, ttl: Duration) -> bool {
+        let idle = match self.last_used.try_lock() {
+            Ok(last_used) => last_used.elapsed() >= ttl,
+            Err(_) => false,
+        };
+        if !idle {
+            return false;
+        }
+        let mut current = match self.current.try_lock() {
+            Ok(current) => current,
+            Err(_) => return false,
+        };
+        let evict = current
+            .as_ref()
+            .is_some_and(|model| Arc::strong_count(model) == 1);
+        // Take first, release the guard, THEN drop the model: a
+        // `Summarizer`/`SttEngine` Drop joins worker threads, and that
+        // teardown must not run holding the slot mutex.
+        let evicted = if evict { current.take() } else { None };
+        drop(current);
+        evicted.is_some()
+    }
+
+    /// Stamps `last_used` now, restarting the [`IDLE_MODEL_TTL`] countdown
+    /// from the end of an operation rather than its start (a 30-minute
+    /// recording would otherwise find its engine "expired" the instant it
+    /// stopped).
+    pub fn touch(&self) {
+        *self.lock_last_used() = Instant::now();
+    }
+
+    /// Test seam: a `Weak` handle to the cached model, or `None` when the
+    /// slot is empty. `weak.upgrade().is_none()` after a release/eviction
+    /// is the proof that the model was actually dropped, not just
+    /// forgotten.
+    pub fn weak(&self) -> Option<Weak<T>> {
+        self.lock_current().as_ref().map(Arc::downgrade)
+    }
+
+    /// Test seam: the strong count of the cached model (`None` when the
+    /// slot is empty) — 1 means only the slot holds it, 2+ means a live
+    /// operation does too.
+    pub fn arc_count(&self) -> Option<usize> {
+        self.lock_current().as_ref().map(Arc::strong_count)
+    }
+
+    fn take_if(&self, pred: impl FnOnce(&Arc<T>) -> bool) -> Option<Arc<T>> {
+        let mut current = self.lock_current();
+        if current.as_ref().is_some_and(pred) {
+            current.take()
+        } else {
+            None
+        }
+    }
+
+    /// Poison recovery: a panic inside `load` (step 1) leaves the slot
+    /// `None` (the assignment in step 2 never ran), and a panic during
+    /// eviction leaves a plain `Option` assignment — neither can corrupt
+    /// the value, mirroring `lock_stopping`'s rationale.
+    fn lock_current(&self) -> MutexGuard<'_, Option<Arc<T>>> {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_last_used(&self) -> MutexGuard<'_, Instant> {
+        self.last_used
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl<T> Default for ModelSlot<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// What `recording_state` reports while a stop/cancel is finalizing: the
+/// meeting whose session has already left [`AppState::session`] but whose
+/// save / delete / artifact-cleanup has not completed yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StoppingSession {
+    pub meeting_id: MeetingId,
+    /// Wall-clock seconds frozen at the moment the session was taken —
+    /// lets a reloaded webview render the final timer value instead of 0.
+    pub elapsed_sec: f32,
+}
+
 /// Application state managed by Tauri and injected into every command.
 pub struct AppState {
     pub store: Arc<FsMeetingStore>,
     pub folders: Arc<FsFolderStore>,
     pub session: Mutex<Option<RecordingSession>>,
-    stt_engine: OnceLock<Arc<SttEngine>>,
-    summarizer: OnceLock<Arc<Summarizer>>,
-    /// Cached speaker diarizer, loaded on first use by
-    /// [`AppState::diarizer`] — mirrors [`AppState::stt_engine`]'s
-    /// once-per-app-lifetime caching for the same reason (seconds-scale
-    /// model load).
-    diarizer: OnceLock<Arc<Diarizer>>,
+    /// `Some` between the moment `stop_recording`/`cancel_recording` take
+    /// the session out of [`AppState::session`] and the moment the final
+    /// save / delete / artifact cleanup completes. The session slot is
+    /// empty for that whole window (the worker join + final decode is
+    /// seconds-scale), so without this marker a webview reloading mid-
+    /// stop would poll `recording_state` and see a false `idle` — the
+    /// marker is what makes the `stopping` contract reachable.
+    stopping: Mutex<Option<StoppingSession>>,
+    /// Cached STT engine in an evictable slot: released by
+    /// [`AppState::evict_stt_if_idle`] once no session/import holds it and
+    /// [`IDLE_MODEL_TTL`] has passed since its last use.
+    stt_engine: ModelSlot<SttEngine>,
+    /// Cached summarizer in an evictable slot: released at the end of
+    /// every `run_summarization` via [`AppState::release_summarizer`].
+    summarizer: ModelSlot<Summarizer>,
+    /// Cached speaker diarizer in an evictable slot: released at the end
+    /// of every `run_diarize` via [`AppState::release_diarizer`] — mirrors
+    /// [`AppState::summarizer`]'s end-of-operation lifecycle.
+    diarizer: ModelSlot<Diarizer>,
     /// Shared cancellation flag for the in-flight summarization, if any.
     /// Reset to `false` at the start of every run by
     /// [`AppState::begin_summarization`]; the in-flight
@@ -132,9 +331,10 @@ impl AppState {
             store: Arc::new(store),
             folders: Arc::new(folders),
             session: Mutex::new(None),
-            stt_engine: OnceLock::new(),
-            summarizer: OnceLock::new(),
-            diarizer: OnceLock::new(),
+            stopping: Mutex::new(None),
+            stt_engine: ModelSlot::new(),
+            summarizer: ModelSlot::new(),
+            diarizer: ModelSlot::new(),
             cancel_summary: Arc::new(AtomicBool::new(false)),
             summary_busy: AtomicBool::new(false),
             cancel_import: Arc::new(AtomicBool::new(false)),
@@ -142,74 +342,132 @@ impl AppState {
         }
     }
 
-    /// Returns the cached STT engine, loading it on first use.
+    /// Returns the cached STT engine, loading it on first use after any
+    /// eviction.
     ///
-    /// Model load is seconds-scale, so it must run at most once per app
-    /// lifetime. Callers that may race (e.g. concurrent `start_recording`
-    /// invocations) must serialize through [`AppState::session`] before
-    /// calling this, since `OnceLock::get_or_init`'s closure is infallible
-    /// and a failed load must not poison the cache.
+    /// Model load is seconds-scale, so the slot caches it;
+    /// [`AppState::evict_stt_if_idle`] releases it again once no session
+    /// or import holds a reference and [`IDLE_MODEL_TTL`] has passed.
+    /// Callers that begin an operation (recording, import, re-transcribe)
+    /// acquire through their busy guard first and keep the returned `Arc`
+    /// for the operation's whole duration, which is what makes eviction
+    /// race-free: [`ModelSlot::evict_if_idle`] refuses while any live
+    /// reference exists.
     pub fn stt_engine(&self, app: &AppHandle) -> Result<Arc<SttEngine>, AppError> {
-        if let Some(engine) = self.stt_engine.get() {
-            return Ok(Arc::clone(engine));
-        }
-
-        let engine = Arc::new(SttEngine::load(&SttConfig {
-            model_dir: paths::models_root(app).join(STT_MODEL_DIR_NAME),
-            num_threads: stt_engine_threads(),
-            debug: false,
-            ..SttConfig::default()
-        })?);
-
-        Ok(Arc::clone(self.stt_engine.get_or_init(|| engine)))
+        self.stt_engine.get_or_load(|| {
+            Ok(Arc::new(SttEngine::load(&SttConfig {
+                model_dir: paths::models_root(app).join(STT_MODEL_DIR_NAME),
+                num_threads: stt_engine_threads(),
+                debug: false,
+                ..SttConfig::default()
+            })?))
+        })
     }
 
-    /// Returns the cached summarizer, loading it on first use.
+    /// Returns the cached summarizer, loading it on first use after any
+    /// release.
     ///
-    /// Model load is seconds-scale and `llama_cpp_2::LlamaBackend::init` is
-    /// a process-wide singleton — a second `Summarizer::load` in the same
-    /// process fails — so this must run at most once per app lifetime.
-    /// Callers that may race must serialize through
-    /// [`AppState::begin_summarization`] before calling this, for the same
-    /// reason [`AppState::stt_engine`] documents.
+    /// Model load is seconds-scale. Since Phase 3 the cache is *not*
+    /// once-per-lifetime: `run_summarization` ends every operation with
+    /// [`AppState::release_summarizer`], returning the ~2.5 GB of weights
+    /// and KV cache to the OS immediately. A reload is safe: the
+    /// `LlamaBackend::drop` in llama-cpp-2 0.1.154 resets the
+    /// once-per-process init flag and calls `llama_backend_free`, and
+    /// `Summarizer::drop` joins the inference worker synchronously (proven
+    /// by the model-gated `summarizer_reloads_after_being_dropped` test),
+    /// so the next summarization pays a seconds-scale load. Summarizations
+    /// are explicit, infrequent, user-triggered operations, which is the
+    /// tradeoff; holding the model forever was the leak. Callers must
+    /// still serialize through [`AppState::begin_summarization`] so only
+    /// one operation references the model at a time.
     pub fn summarizer(&self, app: &AppHandle) -> Result<Arc<Summarizer>, AppError> {
-        if let Some(summarizer) = self.summarizer.get() {
-            return Ok(Arc::clone(summarizer));
-        }
-
-        let summarizer = Arc::new(Summarizer::load(
-            &paths::models_root(app)
-                .join(LLM_MODEL_DIR_NAME)
-                .join(LLM_MODEL_FILE_NAME),
-        )?);
-
-        Ok(Arc::clone(self.summarizer.get_or_init(|| summarizer)))
+        self.summarizer.get_or_load(|| {
+            Ok(Arc::new(Summarizer::load(
+                &paths::models_root(app)
+                    .join(LLM_MODEL_DIR_NAME)
+                    .join(LLM_MODEL_FILE_NAME),
+            )?))
+        })
     }
 
-    /// Returns the cached speaker diarizer, loading it on first use. Mirrors
-    /// [`AppState::stt_engine`]'s caching discipline and its callers-must-
-    /// serialize-first contract — `commands::import::diarize_meeting_blocking`
-    /// serializes through [`AppState::begin_import`] before calling this,
-    /// exactly like the STT engine and summarizer do for their own busy
-    /// guards.
+    /// Returns the cached speaker diarizer, loading it on first use after
+    /// any release. Mirrors [`AppState::summarizer`]'s end-of-operation
+    /// lifecycle: `commands::import::run_diarize` releases it via
+    /// [`AppState::release_diarizer`] when the diarization completes, and
+    /// `diarize_meeting_blocking` serializes callers through
+    /// [`AppState::import_guard`] so exactly one operation holds it at a
+    /// time.
     pub fn diarizer(&self, app: &AppHandle) -> Result<Arc<Diarizer>, AppError> {
-        if let Some(diarizer) = self.diarizer.get() {
-            return Ok(Arc::clone(diarizer));
+        self.diarizer.get_or_load(|| {
+            let models_root = paths::models_root(app);
+            Ok(Arc::new(Diarizer::load(&DiarizeConfig {
+                segmentation_model: models_root
+                    .join(DIARIZE_SEG_DIR_NAME)
+                    .join(DIARIZE_SEG_FILE_NAME),
+                embedding_model: models_root
+                    .join(DIARIZE_EMB_DIR_NAME)
+                    .join(DIARIZE_EMB_FILE_NAME),
+                num_threads: stt_engine_threads(),
+                ..DiarizeConfig::default()
+            })?))
+        })
+    }
+
+    /// End-of-operation release for the summarizer slot (see
+    /// [`AppState::summarizer`] for the reload tradeoff). Returns whether
+    /// the model was actually dropped. Called by `commands::summary` once
+    /// the operation's own `Arc` has been dropped.
+    pub fn release_summarizer(&self) -> bool {
+        self.summarizer.release_if_last()
+    }
+
+    /// End-of-operation release for the diarizer slot — the
+    /// [`AppState::release_summarizer`] counterpart for `run_diarize`.
+    pub fn release_diarizer(&self) -> bool {
+        self.diarizer.release_if_last()
+    }
+
+    /// Restarts the STT engine's [`IDLE_MODEL_TTL`] countdown from *now*.
+    /// Called when an operation that used the engine finishes (stop/cancel
+    /// recording, import, re-transcribe), so "idle" means idle since the
+    /// last use, not idle since the last acquire.
+    pub fn touch_stt_last_used(&self) {
+        self.stt_engine.touch();
+    }
+
+    /// Releases the cached STT engine when the app has genuinely gone idle
+    /// from it: no recording session in the slot, no import/re-transcribe
+    /// in flight ([`stt_evict_allowed`]), and [`IDLE_MODEL_TTL`] elapsed
+    /// since the last use. Never blocks (all `try_lock`), so it is safe to
+    /// call from the synchronous command paths that poll it —
+    /// `recording_state` (boot/reload) and `list_input_devices` (the UI's
+    /// 5 s device poll), which together give the check a periodic tick
+    /// without introducing a dedicated timer.
+    pub fn evict_stt_if_idle(&self) -> bool {
+        // A contended session lock means a start/stop is mid-flight:
+        // treat it as active and let the next poll retry.
+        let session_active = match self.session.try_lock() {
+            Ok(session) => session.is_some(),
+            Err(_) => true,
+        };
+        if !stt_evict_allowed(session_active, self.import_busy()) {
+            return false;
         }
+        self.stt_engine.evict_if_idle(IDLE_MODEL_TTL)
+    }
 
-        let models_root = paths::models_root(app);
-        let diarizer = Arc::new(Diarizer::load(&DiarizeConfig {
-            segmentation_model: models_root
-                .join(DIARIZE_SEG_DIR_NAME)
-                .join(DIARIZE_SEG_FILE_NAME),
-            embedding_model: models_root
-                .join(DIARIZE_EMB_DIR_NAME)
-                .join(DIARIZE_EMB_FILE_NAME),
-            num_threads: stt_engine_threads(),
-            ..DiarizeConfig::default()
-        })?);
+    /// Test seams: the raw model slots, so tests can assert release
+    /// actually dropped a loaded model via `weak()`/`arc_count()`.
+    pub fn stt_slot(&self) -> &ModelSlot<SttEngine> {
+        &self.stt_engine
+    }
 
-        Ok(Arc::clone(self.diarizer.get_or_init(|| diarizer)))
+    pub fn summarizer_slot(&self) -> &ModelSlot<Summarizer> {
+        &self.summarizer
+    }
+
+    pub fn diarizer_slot(&self) -> &ModelSlot<Diarizer> {
+        &self.diarizer
     }
 
     /// Marks a summarization as in-flight and resets
@@ -280,6 +538,57 @@ impl AppState {
     pub fn summarization_guard(&self) -> Result<SummarizationGuard<'_>, AppError> {
         self.begin_summarization()?;
         Ok(SummarizationGuard { state: self })
+    }
+
+    /// Marks a stop/cancel as finalizing `meeting_id` (with `elapsed_sec`
+    /// frozen at take time) and returns an RAII [`StoppingGuard`] that
+    /// clears the marker when dropped — so every exit path of the command,
+    /// including early `?` returns and panics, releases it once the save /
+    /// delete / artifact-cleanup has completed. Call while holding the
+    /// session `Mutex`, *before* taking the session out of the slot, so
+    /// there is no window where the slot is empty and the marker unset
+    /// (the MINOR-1 contract: a reload during the final-decode join must
+    /// see `stopping`, never a false `idle`).
+    pub fn begin_stopping(&self, meeting_id: MeetingId, elapsed_sec: f32) -> StoppingGuard<'_> {
+        *self.lock_stopping() = Some(StoppingSession {
+            meeting_id,
+            elapsed_sec,
+        });
+        StoppingGuard { state: self }
+    }
+
+    /// Clears the stopping marker. Called by [`StoppingGuard::drop`].
+    pub fn end_stopping(&self) {
+        *self.lock_stopping() = None;
+    }
+
+    /// The in-flight stop/cancel finalization, if any — read by
+    /// `commands::recording::recording_state`.
+    pub fn stopping(&self) -> Option<StoppingSession> {
+        *self.lock_stopping()
+    }
+
+    /// Locks the stopping marker, recovering from poisoning: the guarded
+    /// value is a single `Option` assignment never read by another thread
+    /// mid-write, so a panic while held cannot have left it inconsistent.
+    fn lock_stopping(&self) -> MutexGuard<'_, Option<StoppingSession>> {
+        self.stopping
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// RAII guard returned by [`AppState::begin_stopping`]. Clears the stopping
+/// marker via [`AppState::end_stopping`] when dropped — including during a
+/// panic unwind — so the stop/cancel command holds it for the whole
+/// finalization body. Mirrors [`ImportGuard`].
+pub struct StoppingGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for StoppingGuard<'_> {
+    fn drop(&mut self) {
+        self.state.end_stopping();
     }
 }
 

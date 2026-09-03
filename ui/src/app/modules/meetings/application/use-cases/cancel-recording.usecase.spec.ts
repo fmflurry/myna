@@ -25,13 +25,13 @@ describe('CancelRecordingUseCase', () => {
 
     await useCase.cancel();
 
-    expect(await recorder.state()).toBe('idle');
+    expect((await recorder.state()).state).toBe('idle');
   });
 
   it('is a no-op when there is nothing to cancel', async () => {
     const result = await useCase.cancel();
 
     expect(result).toBeUndefined();
-    expect(await recorder.state()).toBe('idle');
+    expect((await recorder.state()).state).toBe('idle');
   });
 });

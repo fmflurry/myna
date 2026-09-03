@@ -12,8 +12,4 @@ export class TauriModelsStatusAdapter extends ModelsStatusPort {
     const dto = await invokeCommand('models_status', {});
     return mapModelsStatusDtoToDomain(dto);
   }
-
-  override async downloadCommand(): Promise<string> {
-    return invokeCommand('download_command', {});
-  }
 }

@@ -526,6 +526,7 @@ fn recording_state_payload_serializes_the_system_source_under_the_adapters_name(
             }
             .into(),
         ),
+        elapsed_sec: None,
     };
 
     // Act
@@ -614,6 +615,7 @@ fn audio_paths_under(dir: &std::path::Path) -> AudioPaths {
         playback: dir.join("audio.wav"),
         mic: dir.join("track-mic.wav"),
         system: dir.join("track-system.wav"),
+        journal_path: dir.join("transcript-journal.jsonl"),
     }
 }
 

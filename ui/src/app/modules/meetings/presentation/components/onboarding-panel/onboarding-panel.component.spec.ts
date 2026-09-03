@@ -1,5 +1,4 @@
 import { TestBed } from '@angular/core/testing';
-import { vi } from 'vitest';
 
 import type { ModelDownloadState } from '../../../application/stores/meetings.store';
 import type { ModelsStatus } from '../../../core/models/models-status.model';
@@ -49,18 +48,24 @@ describe('OnboardingPanelComponent', () => {
     expect(emitted.length).toBe(1);
   });
 
-  it('copies the download command to the clipboard', async () => {
-    const writeText = vi.fn(async (text: string) => {
-      void text;
-    });
-    Object.assign(navigator, { clipboard: { writeText } });
+  it('never shows shell commands, script paths, or a copy button', () => {
     const fixture = createFixture(notReady);
 
-    await fixture.componentInstance.copyDownloadCommand();
-    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('download-models.sh');
+    expect(fixture.nativeElement.textContent).not.toContain('./scripts/');
+    expect(fixture.nativeElement.querySelector('.copy-download-command')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.download')).toBeNull();
+  });
 
-    expect(writeText).toHaveBeenCalledWith('./scripts/download-models.sh');
-    expect(fixture.nativeElement.querySelector('.download button').textContent).toContain('Copied!');
+  it('explains the download in plain, human language', () => {
+    const fixture = createFixture(notReady);
+    const text: string = fixture.nativeElement.textContent;
+
+    expect(text).toContain('get your AI models');
+    expect(text).toContain('nothing is ever sent to the cloud');
+    expect(text).toContain('Download models');
+    // The download is ~2.6 GB — copy must not minimize it.
+    expect(text).not.toContain('small AI models');
   });
 
   it('shows a Download models button when idle and emits downloadRequested when clicked', () => {
@@ -93,6 +98,13 @@ describe('OnboardingPanelComponent', () => {
     const progress = fixture.nativeElement.querySelector('.download-progress');
     expect(progress.textContent).toContain('encoder.int8.onnx');
     expect(progress.textContent).toContain('1 of 3');
+    // Static guidance must live OUTSIDE the aria-live region, or every
+    // progress tick re-announces it to screen readers.
+    expect(progress.textContent).not.toContain('Please keep Myna open');
+    const hint: HTMLElement = fixture.nativeElement.querySelector('.download-hint');
+    expect(hint.textContent).toContain('Please keep Myna open until it finishes.');
+    expect(hint.getAttribute('role')).toBeNull();
+    expect(hint.closest('[aria-live]')).toBeNull();
 
     const cancelButton: HTMLButtonElement = fixture.nativeElement.querySelector('.cancel-download');
     expect(cancelButton).toBeTruthy();
@@ -101,7 +113,7 @@ describe('OnboardingPanelComponent', () => {
     expect(emitted.length).toBe(1);
   });
 
-  it('renders the failure message when the download fails', () => {
+  it('tells the user what to do and keeps the real backend detail when the download fails', () => {
     const failed: ModelDownloadState = {
       phase: 'failed',
       artifact: 'encoder.int8.onnx',
@@ -114,7 +126,27 @@ describe('OnboardingPanelComponent', () => {
     const fixture = createFixture(notReady, failed);
 
     const error = fixture.nativeElement.querySelector('.download-error');
-    expect(error.textContent).toContain('Network error downloading encoder.int8.onnx');
+    expect(error.textContent).toContain('Download failed. Check your internet connection and try again.');
+    expect(error.querySelector('.download-error-detail').textContent).toContain(
+      'Network error downloading encoder.int8.onnx',
+    );
     expect(fixture.nativeElement.querySelector('.start-download')).toBeTruthy();
+  });
+
+  it('still shows retry guidance when the failure carries no backend message', () => {
+    const failed: ModelDownloadState = {
+      phase: 'failed',
+      artifact: null,
+      index: 0,
+      total: 3,
+      success: false,
+      cancelled: false,
+      message: null,
+    };
+    const fixture = createFixture(notReady, failed);
+
+    const error = fixture.nativeElement.querySelector('.download-error');
+    expect(error.textContent).toContain('Download failed. Check your internet connection and try again.');
+    expect(error.querySelector('.download-error-detail')).toBeNull();
   });
 });

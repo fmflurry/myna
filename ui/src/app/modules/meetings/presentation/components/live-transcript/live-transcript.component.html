@@ -1,5 +1,5 @@
 <div class="live-transcript" #scrollContainer (scroll)="onScroll($event)">
-  @for (segment of finalizedSegments(); track $index) {
+  @for (segment of finalizedSegments(); track trackBySegment($index, segment)) {
     <p class="final">
       <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
       @if (hasSpeakerLabel(segment.speaker)) {

@@ -5,16 +5,13 @@ import { toMeetingId } from '../../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
 import { transcriptSegment } from '../../../application/testing/transcript-segment.factory';
+import { setViewportWidth } from '../../../application/testing/viewport.helper';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
 
 /** Matches this component's own narrow/wide breakpoint. */
 const WIDE_WIDTH_PX = 1400;
 const NARROW_WIDTH_PX = 900;
 const DEFAULT_JSDOM_WIDTH_PX = 1024;
-
-const setViewportWidth = (width: number): void => {
-  Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
-};
 
 describe('MeetingDetailPaneComponent — split-workspace layout', () => {
   const templates: SummaryTemplate[] = [

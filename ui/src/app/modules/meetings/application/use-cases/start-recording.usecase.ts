@@ -15,8 +15,8 @@ export class StartRecordingUseCase {
     source?: CaptureSource,
     systemSource?: string,
   ): Promise<Meeting> {
-    const state = await this.recorder.state();
-    if (state !== 'idle') {
+    const snapshot = await this.recorder.state();
+    if (snapshot.state !== 'idle') {
       throw new MeetingsError('BUSY', 'A recording is already in progress.');
     }
     return this.recorder.start(title, deviceName, source, systemSource);

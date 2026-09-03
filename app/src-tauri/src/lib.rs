@@ -12,7 +12,9 @@ pub mod events;
 pub mod ingest;
 pub mod model_init;
 pub mod paths;
+pub mod recovery;
 pub mod session;
+pub mod session_manifest;
 pub mod state;
 pub mod store;
 pub mod update_prefs;
@@ -46,6 +48,13 @@ pub fn run() {
                 eprintln!("failed to harden pre-existing data root permissions: {err}");
             }
             let store = FsMeetingStore::new(root.clone());
+            // ADR 0011: every `session.json` manifest found at this point is
+            // an orphan — no session can exist yet in this process. Fold each
+            // one back into a real meeting before anything can observe (or
+            // overwrite) it. The same scan also repairs pre-ADR-0011 legacy
+            // orphans (no manifest, 0 s meeting, placeholder-header WAV).
+            // Best-effort and never blocks boot.
+            recovery::recover_orphaned_sessions(&store);
             let folders = FsFolderStore::new(root);
             app.manage(AppState::new(store, folders));
             app.manage(Arc::new(ModelDownloadManager::new()));
@@ -64,6 +73,7 @@ pub fn run() {
             commands::recording::stop_recording,
             commands::recording::cancel_recording,
             commands::recording::recording_state,
+            commands::recording::get_live_transcript,
             commands::import::import_audio,
             commands::import::retranscribe_meeting,
             commands::import::cancel_import,
@@ -95,7 +105,6 @@ pub fn run() {
             commands::summary::get_summary,
             commands::summary::edit_summary,
             commands::models::models_status,
-            commands::models::download_command,
             commands::models::start_model_download,
             commands::models::start_diarization_download,
             commands::models::cancel_model_download,

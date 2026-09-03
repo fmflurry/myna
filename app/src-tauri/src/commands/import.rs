@@ -100,7 +100,12 @@ fn import_audio_blocking(
     ingest::guard_import(state.import_busy(), recording_active)?;
     let _guard = state.import_guard()?;
 
-    run_import(app, &state, path, title)
+    let result = run_import(app, &state, path, title);
+    // The STT engine was in use until this line; restart its idle-TTL
+    // countdown from *now* so a re-recording within the TTL window still
+    // reuses the warm engine (eviction only fires 10 min after last use).
+    state.touch_stt_last_used();
+    result
 }
 
 /// Does the actual work of [`import_audio`], factored out so the caller can
@@ -220,7 +225,10 @@ fn retranscribe_meeting_blocking(
     ingest::guard_import(state.import_busy(), recording_active)?;
     let _guard = state.import_guard()?;
 
-    run_retranscribe(app, &state, id, path)
+    let result = run_retranscribe(app, &state, id, path);
+    // End-of-operation STT idle-TTL restart — see `import_audio_blocking`.
+    state.touch_stt_last_used();
+    result
 }
 
 /// Does the actual work of [`retranscribe_meeting`], factored out so the
@@ -514,7 +522,24 @@ fn diarize_meeting_blocking(app: &AppHandle, meeting_id: String) -> Result<Meeti
 /// can hold [`AppState::import_guard`] across the whole call — that guard's
 /// `Drop` releases the busy flag regardless of outcome, including a panic
 /// partway through this function — mirrors [`run_retranscribe`].
+///
+/// End-of-operation model release (mirrors `commands::summary`'s
+/// summarizer release): the diarizer's ONNX models are dropped via
+/// [`AppState::release_diarizer`] once this function's own `Arc` is gone
+/// and the import guard guarantees no concurrent holder, so the next
+/// diarization pays a seconds-scale reload instead of the models leaking
+/// for the app's whole lifetime.
 fn run_diarize(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    id: MeetingId,
+) -> Result<MeetingDto, AppError> {
+    let result = diarize_and_relabel(app, state, id);
+    state.release_diarizer();
+    result
+}
+
+fn diarize_and_relabel(
     app: &AppHandle,
     state: &State<'_, AppState>,
     id: MeetingId,

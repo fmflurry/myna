@@ -21,12 +21,28 @@
 //! `llama_decode` call: if either limit would still be exceeded (a bug
 //! upstream of it notwithstanding), it returns [`LlmError::PromptTooLong`]
 //! instead of letting ggml abort the process.
+//!
+//! All llama.cpp state — backend, model, and the single reusable
+//! `LlamaContext` — is owned by a dedicated inference thread created by
+//! [`Summarizer::load`]. That indirection is forced, not stylistic:
+//! `LlamaContext` is `!Send` (it wraps raw pointers) and borrows the
+//! model it was built from, so it can be neither stored inside a
+//! `Send + Sync` struct nor shared across threads; on the worker it is a
+//! plain stack local borrowing a sibling local. The public [`Summarizer`]
+//! methods are thin blocking client APIs over a message channel to that
+//! thread — only owned `String`s and results cross the boundary. Reusing
+//! one context across calls is also the fix for the ~1.2 GB KV-cache
+//! allocation that was previously churned by every `summarize` call
+//! (including every map-reduce chunk).
 
 use std::num::NonZeroU32;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Once;
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use encoding_rs::Decoder;
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -84,6 +100,15 @@ const CONTEXT_MARGIN_TOKENS: u32 = 64;
 /// backstop against a pathological template or model output that doesn't
 /// shrink.
 const MAX_REDUCE_DEPTH: u32 = 4;
+
+/// How often a blocked [`Summarizer::summarize`] caller re-checks its
+/// `cancel` flag while waiting for the inference worker to stream a
+/// result. Bounds cancellation latency to this interval plus one
+/// generated token — small enough to feel immediate, and negligible
+/// next to a decode step. The worker cannot poll the `AtomicBool`
+/// itself: `&AtomicBool` borrows the caller's stack, so cancellation is
+/// forwarded to it as a one-shot message (see [`Job::Generate`]).
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Tunable generation parameters for [`Summarizer::summarize`].
 #[derive(Debug, Clone)]
@@ -189,10 +214,66 @@ pub fn init_ggml_env() {
     });
 }
 
+/// One unit of work for the inference worker thread (see [`Summarizer`]'s
+/// struct docs for why work is delegated at all).
+enum Job {
+    /// Tokenize `prompt` through the model's chat template and report the
+    /// token count — the same measurement [`Summarizer::summarize`] makes
+    /// internally, needed by the map-reduce fit checks.
+    CountTokens {
+        prompt: String,
+        resp: Sender<Result<usize, LlmError>>,
+    },
+    /// Prefill `prompt` and stream generated pieces through `stream`,
+    /// ending with exactly one [`StreamMsg::Done`].
+    Generate {
+        prompt: String,
+        opts: SummaryOptions,
+        /// Carries the caller's cancellation as a single `true` message;
+        /// the caller's `&AtomicBool` cannot cross to this thread.
+        cancel: Receiver<bool>,
+        stream: Sender<StreamMsg>,
+    },
+    /// Free the context, model, and backend and end the worker thread.
+    Shutdown,
+}
+
+/// One streamed update for [`Job::Generate`].
+enum StreamMsg {
+    /// A decoded piece of generated text.
+    Piece(String),
+    /// Terminal message: the accumulated summary, or the error that
+    /// stopped generation. Always sent exactly once per job.
+    Done(Result<String, LlmError>),
+}
+
 /// A loaded Qwen (or any GGUF chat) model ready to summarize prompts.
+///
+/// All llama.cpp state — backend, model, and the single reusable
+/// `LlamaContext` — lives on a dedicated inference thread owned by this
+/// value, for two reasons:
+///
+/// - `LlamaContext` is `!Send` (raw pointers) and borrows the model it
+///   was built from, so it can be neither stored inside a `Send + Sync`
+///   struct (which this must be: the Tauri app shares `Arc<Summarizer>`
+///   across `spawn_blocking` threads) nor moved between threads. On the
+///   worker it is a plain stack local borrowing a sibling local — no
+///   self-reference needed.
+/// - Building a context allocates the whole KV cache (~1.2 GB at the
+///   32k-token default). Before this design every `summarize` call —
+///   including every map-reduce chunk — paid that allocation and freed
+///   it again; one context is now built per `Summarizer` and reused,
+///   with its KV cache cleared between jobs.
+///
+/// Every public method is a blocking round-trip to the worker, so jobs
+/// on one `Summarizer` serialize (the app additionally guards
+/// summarization with a busy flag; a second caller simply queues).
+/// Dropping the last reference shuts the worker down and joins it,
+/// freeing weights and KV cache before `drop` returns.
 pub struct Summarizer {
-    backend: LlamaBackend,
-    model: LlamaModel,
+    jobs: Sender<Job>,
+    /// `None` only transiently: [`Drop::drop`] takes the handle to join it.
+    worker: Option<JoinHandle<()>>,
 }
 
 impl Summarizer {
@@ -204,6 +285,12 @@ impl Summarizer {
     /// Calls [`init_ggml_env`] first (idempotent — see its docs) so this
     /// crate is self-protecting against the ⌘Q Metal-teardown abort even
     /// if a caller forgets to call it themselves.
+    ///
+    /// Spawns the inference worker (see [`Summarizer`]), which initializes
+    /// the backend, loads the model, and builds the reusable context;
+    /// this call blocks until that completes, so a failure at any step —
+    /// including context (KV-cache) allocation — surfaces here rather
+    /// than at the first [`Summarizer::summarize`].
     pub fn load(model_path: &Path) -> Result<Self, LlmError> {
         init_ggml_env();
 
@@ -211,11 +298,32 @@ impl Summarizer {
             return Err(LlmError::ModelNotFound(model_path.to_path_buf()));
         }
 
-        let backend = LlamaBackend::init().map_err(|err| LlmError::Load(err.to_string()))?;
-        let model = LlamaModel::load_from_file(&backend, model_path, &LlamaModelParams::default())
-            .map_err(|err| LlmError::Load(err.to_string()))?;
+        let (jobs_tx, jobs_rx) = channel();
+        let (ready_tx, ready_rx) = channel();
+        let worker_path = model_path.to_path_buf();
+        let worker = std::thread::Builder::new()
+            .name("myna-llm-inference".to_string())
+            .spawn(move || inference_worker(worker_path, jobs_rx, ready_tx))
+            .map_err(|err| LlmError::Load(format!("spawning inference worker: {err}")))?;
 
-        Ok(Self { backend, model })
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                jobs: jobs_tx,
+                worker: Some(worker),
+            }),
+            Ok(Err(err)) => {
+                let _ = worker.join();
+                Err(err)
+            }
+            Err(_) => {
+                // `ready_tx` dropped without a report: the worker panicked
+                // while loading. `join` surfaces its panic to the log.
+                let _ = worker.join();
+                Err(LlmError::Load(
+                    "inference worker panicked while loading the model".to_string(),
+                ))
+            }
+        }
     }
 
     /// Renders `template` against `ctx` and summarizes the result, like
@@ -331,6 +439,11 @@ impl Summarizer {
     /// [`Summarizer::summarize_transcript`] for transcript-driven prompts,
     /// which checks fit up front and transparently falls back to
     /// map-reduce for prompts that don't fit.
+    ///
+    /// Runs on the inference worker against its reused context (see
+    /// [`Summarizer`]); this call blocks until the job finishes.
+    /// Cancellation keeps its pre-worker semantics exactly: the flag is
+    /// observed once per generated token, never mid-prefill.
     pub fn summarize(
         &self,
         prompt: &str,
@@ -338,73 +451,51 @@ impl Summarizer {
         cancel: &AtomicBool,
         mut on_token: impl FnMut(&str),
     ) -> Result<String, LlmError> {
-        let formatted = self.format_prompt(prompt)?;
-        let tokens = self
-            .model
-            .str_to_token(&formatted, AddBos::Always)
-            .map_err(|err| LlmError::Tokenize(err.to_string()))?;
+        let (cancel_tx, cancel_rx) = channel();
+        let (stream_tx, stream_rx) = channel();
+        self.post(Job::Generate {
+            prompt: prompt.to_string(),
+            opts: opts.clone(),
+            cancel: cancel_rx,
+            stream: stream_tx,
+        })?;
 
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(opts.n_ctx))
-            .with_n_batch(DEFAULT_N_BATCH)
-            .with_n_threads(opts.n_threads);
-        let mut ctx = self
-            .model
-            .new_context(&self.backend, ctx_params)
-            .map_err(|err| LlmError::Context(err.to_string()))?;
-
-        let batch_capacity = ctx.n_batch().max(1) as usize;
-        let mut batch = LlamaBatch::new(batch_capacity, 1);
-        let mut n_cur = prefill(&mut ctx, &mut batch, &tokens)?;
-
-        let sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(opts.temperature),
-            LlamaSampler::top_p(opts.top_p, TOP_P_MIN_KEEP),
-            LlamaSampler::dist(opts.seed),
-        ]);
-
-        generate(
-            &self.model,
-            &mut ctx,
-            &mut batch,
-            sampler,
-            &mut n_cur,
-            opts.max_tokens,
-            cancel,
-            &mut on_token,
-        )
+        // The worker owns the `!Send` context and the `&AtomicBool` here
+        // cannot cross to it, so poll the flag on this (caller's) thread
+        // and forward a one-shot cancellation message on each timeout.
+        loop {
+            match stream_rx.recv_timeout(CANCEL_POLL_INTERVAL) {
+                Ok(StreamMsg::Piece(piece)) => on_token(&piece),
+                Ok(StreamMsg::Done(result)) => return result,
+                Err(RecvTimeoutError::Timeout) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        // Best effort: the worker may already be done.
+                        let _ = cancel_tx.send(true);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => return Err(worker_gone()),
+            }
+        }
     }
 
-    /// Format `prompt` as a single user turn via the model's baked-in chat
-    /// template, falling back to ChatML when the GGUF has none.
-    fn format_prompt(&self, prompt: &str) -> Result<String, LlmError> {
-        let template = match self.model.chat_template(None) {
-            Ok(tmpl) => tmpl,
-            Err(_) => LlamaChatTemplate::new(FALLBACK_CHAT_TEMPLATE)
-                .map_err(|_| LlmError::NoChatTemplate)?,
-        };
-
-        let messages = vec![
-            LlamaChatMessage::new("user".to_string(), prompt.to_string())
-                .map_err(|err| LlmError::Tokenize(err.to_string()))?,
-        ];
-
-        self.model
-            .apply_chat_template(&template, &messages, true)
-            .map_err(|err| LlmError::Tokenize(err.to_string()))
+    /// Sends `job` to the inference worker, mapping a dead worker (panic,
+    /// or use-after-shutdown) to an error rather than a silent hang.
+    fn post(&self, job: Job) -> Result<(), LlmError> {
+        self.jobs.send(job).map_err(|_| worker_gone())
     }
 
     /// Tokenizes `prompt` through the same chat-template formatting
     /// [`Summarizer::summarize`] uses, returning only the token count.
     /// Used to check whether a candidate prompt fits `opts.n_ctx` without
-    /// otherwise duplicating [`Summarizer::summarize`]'s logic.
+    /// otherwise duplicating [`Summarizer::summarize`]'s logic. A
+    /// round-trip to the inference worker, which owns the model.
     fn formatted_token_count(&self, prompt: &str) -> Result<usize, LlmError> {
-        let formatted = self.format_prompt(prompt)?;
-        let tokens = self
-            .model
-            .str_to_token(&formatted, AddBos::Always)
-            .map_err(|err| LlmError::Tokenize(err.to_string()))?;
-        Ok(tokens.len())
+        let (resp_tx, resp_rx) = channel();
+        self.post(Job::CountTokens {
+            prompt: prompt.to_string(),
+            resp: resp_tx,
+        })?;
+        resp_rx.recv().map_err(|_| worker_gone())?
     }
 
     /// Maximum token budget for a single map-reduce transcript chunk: the
@@ -431,6 +522,204 @@ impl Summarizer {
             ))
         })
     }
+}
+
+/// Error for any operation that needs the inference worker after it has
+/// exited (panic, or a job posted through a leaked-but-shutdown handle).
+fn worker_gone() -> LlmError {
+    LlmError::Context("the myna-llm inference worker thread is no longer running".to_string())
+}
+
+impl Drop for Summarizer {
+    /// Frees the llama.cpp state: the worker finishes (or abandons) any
+    /// in-flight job, then drops context, model, and backend — in that
+    /// order — on its way out, and `join` guarantees that completed
+    /// before this returns. A later app phase that evicts the cached
+    /// `Summarizer` relies on this to return the ~1.2 GB KV cache (and
+    /// the weights) to the OS.
+    fn drop(&mut self) {
+        let _ = self.jobs.send(Job::Shutdown);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// The inference worker's whole life: load, report readiness, then serve
+/// jobs until shutdown. Backend, model, and context are stack locals of
+/// this function — the context may only borrow the model while they
+/// share a scope (and llama.cpp requires model and backend to outlive
+/// it), which is exactly what "owned by this thread" buys; Rust drops
+/// locals in reverse declaration order, so the context is freed before
+/// the model and the backend before both.
+fn inference_worker(model_path: PathBuf, jobs: Receiver<Job>, ready: Sender<Result<(), LlmError>>) {
+    let (backend, model) = match load_backend_and_model(&model_path) {
+        Ok(pair) => pair,
+        Err(err) => {
+            let _ = ready.send(Err(err));
+            return;
+        }
+    };
+    let mut context = match build_context(&model, &backend, DEFAULT_N_CTX, DEFAULT_N_THREADS) {
+        Ok(context) => context,
+        Err(err) => {
+            let _ = ready.send(Err(err));
+            return;
+        }
+    };
+    // (effective n_ctx, requested n_threads) the current context was
+    // built with — see [`serve_generation`] for when it is rebuilt.
+    let mut context_key = (context.n_ctx(), DEFAULT_N_THREADS);
+
+    if ready.send(Ok(())).is_err() {
+        return; // the caller gave up before load finished
+    }
+
+    for job in jobs {
+        match job {
+            Job::Shutdown => break,
+            Job::CountTokens { prompt, resp } => {
+                let _ = resp.send(count_formatted_tokens(&model, &prompt));
+            }
+            Job::Generate {
+                prompt,
+                opts,
+                cancel,
+                stream,
+            } => {
+                let result = serve_generation(
+                    &model,
+                    &backend,
+                    &mut context,
+                    &mut context_key,
+                    &opts,
+                    &prompt,
+                    &cancel,
+                    &stream,
+                );
+                let _ = stream.send(StreamMsg::Done(result));
+            }
+        }
+    }
+}
+
+/// Initializes the llama.cpp backend and loads the model. Runs only on
+/// the inference worker thread ([`inference_worker`]).
+fn load_backend_and_model(model_path: &Path) -> Result<(LlamaBackend, LlamaModel), LlmError> {
+    let backend = LlamaBackend::init().map_err(|err| LlmError::Load(err.to_string()))?;
+    let model = LlamaModel::load_from_file(&backend, model_path, &LlamaModelParams::default())
+        .map_err(|err| LlmError::Load(err.to_string()))?;
+    Ok((backend, model))
+}
+
+/// Builds an inference context sized for `n_ctx`/`n_threads`, with the
+/// fixed [`DEFAULT_N_BATCH`] decode cap. The returned context borrows
+/// `model` (llama.cpp requires the model to outlive its contexts; the
+/// backend argument is a proof-of-init token that does not constrain the
+/// context's lifetime in `llama-cpp-2` 0.1.154).
+fn build_context<'a>(
+    model: &'a LlamaModel,
+    backend: &LlamaBackend,
+    n_ctx: u32,
+    n_threads: i32,
+) -> Result<LlamaContext<'a>, LlmError> {
+    let ctx_params = LlamaContextParams::default()
+        .with_n_ctx(NonZeroU32::new(n_ctx))
+        .with_n_batch(DEFAULT_N_BATCH)
+        .with_n_threads(n_threads);
+    model
+        .new_context(backend, ctx_params)
+        .map_err(|err| LlmError::Context(err.to_string()))
+}
+
+/// Serves one [`Job::Generate`]: rebuild the shared context only when
+/// this call asks for different allocation parameters than the current
+/// context was built with (the map-reduce tests, for instance, run at
+/// `n_ctx: 4096` while production uses the default), clear its KV cache,
+/// then prefill and generate, streaming pieces through `stream`.
+#[allow(clippy::too_many_arguments)]
+fn serve_generation<'a>(
+    model: &'a LlamaModel,
+    backend: &LlamaBackend,
+    context: &mut LlamaContext<'a>,
+    context_key: &mut (u32, i32),
+    opts: &SummaryOptions,
+    prompt: &str,
+    cancel: &Receiver<bool>,
+    stream: &Sender<StreamMsg>,
+) -> Result<String, LlmError> {
+    if (opts.n_ctx, opts.n_threads) != *context_key {
+        // The key stores the context's *effective* n_ctx, so a request
+        // llama.cpp would cap below the ask rebuilds per call — correct,
+        // just no cheaper than the pre-fix behavior for that shape.
+        *context = build_context(model, backend, opts.n_ctx, opts.n_threads)?;
+        *context_key = (context.n_ctx(), opts.n_threads);
+    }
+    context.clear_kv_cache();
+
+    let formatted = format_prompt(model, prompt)?;
+    let tokens = model
+        .str_to_token(&formatted, AddBos::Always)
+        .map_err(|err| LlmError::Tokenize(err.to_string()))?;
+
+    let batch_capacity = context.n_batch().max(1) as usize;
+    let mut batch = LlamaBatch::new(batch_capacity, 1);
+    let mut n_cur = prefill(context, &mut batch, &tokens)?;
+
+    let sampler = LlamaSampler::chain_simple([
+        LlamaSampler::temp(opts.temperature),
+        LlamaSampler::top_p(opts.top_p, TOP_P_MIN_KEEP),
+        LlamaSampler::dist(opts.seed),
+    ]);
+
+    generate(
+        model,
+        context,
+        &mut batch,
+        sampler,
+        &mut n_cur,
+        opts.max_tokens,
+        cancel,
+        &mut |piece| stream.send(StreamMsg::Piece(piece.to_string())).is_ok(),
+    )
+}
+
+/// Format `prompt` as a single user turn via the model's baked-in chat
+/// template, falling back to ChatML when the GGUF has none.
+fn format_prompt(model: &LlamaModel, prompt: &str) -> Result<String, LlmError> {
+    let template = match model.chat_template(None) {
+        Ok(tmpl) => tmpl,
+        Err(_) => {
+            LlamaChatTemplate::new(FALLBACK_CHAT_TEMPLATE).map_err(|_| LlmError::NoChatTemplate)?
+        }
+    };
+
+    let messages = vec![
+        LlamaChatMessage::new("user".to_string(), prompt.to_string())
+            .map_err(|err| LlmError::Tokenize(err.to_string()))?,
+    ];
+
+    model
+        .apply_chat_template(&template, &messages, true)
+        .map_err(|err| LlmError::Tokenize(err.to_string()))
+}
+
+/// Tokenize `prompt` through [`format_prompt`], returning only the token
+/// count (behind the [`Summarizer::formatted_token_count`] round-trip).
+fn count_formatted_tokens(model: &LlamaModel, prompt: &str) -> Result<usize, LlmError> {
+    let formatted = format_prompt(model, prompt)?;
+    let tokens = model
+        .str_to_token(&formatted, AddBos::Always)
+        .map_err(|err| LlmError::Tokenize(err.to_string()))?;
+    Ok(tokens.len())
+}
+
+/// True when the caller has cancelled the in-flight job: either it
+/// forwarded its `AtomicBool` state (`Ok(true)`), or it dropped the
+/// sender entirely (`Disconnected` — the caller panicked or abandoned
+/// the job, so there is no one left to serve).
+fn is_cancelled(cancel: &Receiver<bool>) -> bool {
+    !matches!(cancel.try_recv(), Err(TryRecvError::Empty))
 }
 
 /// One `llama_decode` call's worth of a chunked prefill: the absolute
@@ -619,8 +908,9 @@ fn split_oversized_unit(
 }
 
 /// Sample-decode loop: generate up to `max_tokens`, streaming each decoded
-/// piece through `on_token`, stopping early on end-of-generation or
-/// cancellation.
+/// piece through `emit`, stopping early on end-of-generation, on
+/// cancellation observed via `cancel` (see [`is_cancelled`]), or when
+/// `emit` returns false (the receiving caller has gone away).
 #[allow(clippy::too_many_arguments)]
 fn generate(
     model: &LlamaModel,
@@ -629,8 +919,8 @@ fn generate(
     mut sampler: LlamaSampler,
     n_cur: &mut i32,
     max_tokens: u32,
-    cancel: &AtomicBool,
-    on_token: &mut impl FnMut(&str),
+    cancel: &Receiver<bool>,
+    emit: &mut impl FnMut(&str) -> bool,
 ) -> Result<String, LlmError> {
     let n_batch = ctx.n_batch().max(1) as usize;
     let n_ctx = ctx.n_ctx();
@@ -646,10 +936,14 @@ fn generate(
         }
 
         let piece = decode_token(model, token, &mut decoder)?;
-        on_token(&piece);
+        if !emit(&piece) {
+            // The caller dropped the receiving half mid-job (panicked or
+            // abandoned it); nothing downstream still wants this text.
+            return Err(LlmError::Cancelled);
+        }
         generated.push_str(&piece);
 
-        if cancel.load(Ordering::SeqCst) {
+        if is_cancelled(cancel) {
             return Err(LlmError::Cancelled);
         }
 

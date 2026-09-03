@@ -25,7 +25,7 @@ describe('StartRecordingUseCase', () => {
     const meeting = await useCase.with('Weekly sync');
 
     expect(meeting.title).toBe('Weekly sync');
-    expect(await recorder.state()).toBe('recording');
+    expect((await recorder.state()).state).toBe('recording');
   });
 
   it('forwards the requested capture source to the recorder port', async () => {

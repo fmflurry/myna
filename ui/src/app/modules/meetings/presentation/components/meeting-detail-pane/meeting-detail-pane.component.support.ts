@@ -119,9 +119,6 @@ export const isDiarizeDisabled = (
   recording: boolean,
 ): boolean => !modelsPresent || !hasSystemTrack || busy || importing || diarizing || recording;
 
-/** Shell command for manual diarization fetch — keep as collapsed fallback for Windows/no-bash cases. */
-export const DIARIZATION_DOWNLOAD_COMMAND = './scripts/download-models.sh --only diarization';
-
 /**
  * Explains why "Detect speakers" is disabled, but only for the durable
  * reasons worth surfacing inline (recording in progress, models missing, no
@@ -143,6 +140,32 @@ export const diarizeDisabledReason = (
     return 'Speaker detection needs ~45 MB extra models.';
   }
   return hasSystemTrack ? undefined : 'No system audio was captured for this meeting.';
+};
+
+/**
+ * The four built-in summary templates in the order their tabs must appear.
+ * The backend lists templates alphabetically by name (`action-items`,
+ * `decisions`, `key-points`, `meeting-notes`), which reads backwards on
+ * screen; the product order is broadest-summary first: Notes, Key Points,
+ * Decisions, Action Items.
+ */
+export const BUILT_IN_TEMPLATE_TAB_ORDER = ['meeting-notes', 'key-points', 'decisions', 'action-items'] as const;
+
+/**
+ * Stable priority sort for the tab strip: built-ins render in
+ * {@link BUILT_IN_TEMPLATE_TAB_ORDER}; every other template (user-added
+ * ones) keeps its incoming relative order and renders after the built-ins.
+ * `Array.prototype.sort` is stable since ES2019, so equal-rank templates are
+ * never reshuffled. Returns a copy — the caller's array is never mutated.
+ */
+export const sortTemplatesForDisplay = (
+  templates: readonly SummaryTemplate[],
+): readonly SummaryTemplate[] => {
+  const rankOf = (name: string): number => {
+    const index = BUILT_IN_TEMPLATE_TAB_ORDER.findIndex((entry) => entry === name);
+    return index === -1 ? BUILT_IN_TEMPLATE_TAB_ORDER.length : index;
+  };
+  return [...templates].sort((a, b) => rankOf(a.name) - rankOf(b.name));
 };
 
 /**

@@ -1,4 +1,65 @@
-import { diarizeDisabledReason, isDiarizeDisabled } from './meeting-detail-pane.component.support';
+import type { SummaryTemplate } from '../../../core/models/summary-template.model';
+import {
+  BUILT_IN_TEMPLATE_TAB_ORDER,
+  diarizeDisabledReason,
+  isDiarizeDisabled,
+  sortTemplatesForDisplay,
+} from './meeting-detail-pane.component.support';
+
+const template = (name: string): SummaryTemplate => ({ name, description: `${name} desc`, prompt: 'p' });
+
+describe('sortTemplatesForDisplay', () => {
+  it('renders the four built-ins as Notes, Key Points, Decisions, Action Items from the backend alphabetical order', () => {
+    // The Rust backend lists templates sorted by name: action-items, decisions, key-points, meeting-notes.
+    const sorted = sortTemplatesForDisplay([
+      template('action-items'),
+      template('decisions'),
+      template('key-points'),
+      template('meeting-notes'),
+    ]);
+
+    expect(sorted.map((candidate) => candidate.name)).toEqual([
+      'meeting-notes',
+      'key-points',
+      'decisions',
+      'action-items',
+    ]);
+  });
+
+  it('keeps custom templates after the built-ins in their incoming relative order', () => {
+    const sorted = sortTemplatesForDisplay([
+      template('weekly-recap'),
+      template('action-items'),
+      template('custom-follow-ups'),
+      template('meeting-notes'),
+    ]);
+
+    expect(sorted.map((candidate) => candidate.name)).toEqual([
+      'meeting-notes',
+      'action-items',
+      'weekly-recap',
+      'custom-follow-ups',
+    ]);
+  });
+
+  it('leaves the order untouched when no built-ins are present', () => {
+    const sorted = sortTemplatesForDisplay([template('zeta'), template('alpha'), template('mid')]);
+
+    expect(sorted.map((candidate) => candidate.name)).toEqual(['zeta', 'alpha', 'mid']);
+  });
+
+  it('returns a copy and never mutates the caller array', () => {
+    const input = [template('action-items'), template('meeting-notes')];
+
+    sortTemplatesForDisplay(input);
+
+    expect(input.map((candidate) => candidate.name)).toEqual(['action-items', 'meeting-notes']);
+  });
+
+  it('orders exactly the four known built-in names', () => {
+    expect(BUILT_IN_TEMPLATE_TAB_ORDER).toEqual(['meeting-notes', 'key-points', 'decisions', 'action-items']);
+  });
+});
 
 describe('isDiarizeDisabled', () => {
   it('is disabled, not crashing, when the diarization models are missing', () => {

@@ -19,6 +19,8 @@ const MEETING_TMP_FILE: &str = "meeting.json.tmp";
 const AUDIO_FILE: &str = "audio.wav";
 const MIC_TRACK_FILE: &str = "track-mic.wav";
 const SYSTEM_TRACK_FILE: &str = "track-system.wav";
+const SESSION_FILE: &str = "session.json";
+const JOURNAL_FILE: &str = "transcript-journal.jsonl";
 const SUMMARIES_DIR: &str = "summaries";
 const FALLBACK_TEMPLATE_NAME: &str = "template";
 
@@ -169,6 +171,14 @@ impl MeetingStore for FsMeetingStore {
 
     fn system_track_path(&self, id: MeetingId) -> PathBuf {
         self.meeting_dir(id).join(SYSTEM_TRACK_FILE)
+    }
+
+    fn session_manifest_path(&self, id: MeetingId) -> PathBuf {
+        self.meeting_dir(id).join(SESSION_FILE)
+    }
+
+    fn transcript_journal_path(&self, id: MeetingId) -> PathBuf {
+        self.meeting_dir(id).join(JOURNAL_FILE)
     }
 
     fn save_summary(

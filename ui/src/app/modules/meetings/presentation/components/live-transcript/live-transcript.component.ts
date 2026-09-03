@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  type OnDestroy,
   afterRenderEffect,
   computed,
   input,
@@ -37,7 +38,7 @@ const SPEAKER_ACCENT_PALETTE_SIZE = 6;
   templateUrl: './live-transcript.component.html',
   styleUrl: './live-transcript.component.scss',
 })
-export class LiveTranscriptComponent {
+export class LiveTranscriptComponent implements OnDestroy {
   readonly finalizedSegments = input.required<readonly TranscriptSegment[]>();
   readonly partialTextMe = input<string>('');
   readonly partialTextOthers = input<string>('');
@@ -51,13 +52,38 @@ export class LiveTranscriptComponent {
   /** Whether the viewport should keep following new content to the bottom. */
   private readonly pinnedToBottom = signal(true);
 
+  /** Pending rAF handle, or `null` when no auto-scroll is coalesced for this frame. */
+  private pendingScrollFrame: number | null = null;
+
   constructor() {
     afterRenderEffect(() => {
       // Reading all three signals here re-runs this effect after every new
-      // final or partial update renders, so the auto-scroll stays in sync.
+      // final or partial update, so a burst of streaming updates coalesces
+      // into ONE rAF callback — and thus at most one `scrollHeight` layout
+      // read — per animation frame instead of one per update.
       this.finalizedSegments();
       this.partialTextMe();
       this.partialTextOthers();
+      if (this.pinnedToBottom()) {
+        this.scheduleScrollToBottom();
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    if (this.pendingScrollFrame !== null) {
+      cancelAnimationFrame(this.pendingScrollFrame);
+      this.pendingScrollFrame = null;
+    }
+  }
+
+  /** Queues a single scroll-to-bottom for the next frame; repeat calls before the frame fires are no-ops. */
+  private scheduleScrollToBottom(): void {
+    if (this.pendingScrollFrame !== null) {
+      return;
+    }
+    this.pendingScrollFrame = requestAnimationFrame(() => {
+      this.pendingScrollFrame = null;
       const element = this.scrollContainer()?.nativeElement;
       if (element && this.pinnedToBottom()) {
         element.scrollTop = element.scrollHeight;
@@ -74,6 +100,18 @@ export class LiveTranscriptComponent {
 
   formatTimestamp(seconds: number): string {
     return formatMmSs(seconds);
+  }
+
+  /**
+   * `@for` identity: `TranscriptSegment` carries no id. The finalized list
+   * is maintained by sorted insertion (`insertSegmentSorted`), so a
+   * mid-list insert shifts the indices that follow it — the index +
+   * start-time composite pins rows for the common append case, and any
+   * row whose index or `startSec` changes is re-rendered rather than
+   * patched in place with stale content.
+   */
+  trackBySegment(index: number, segment: TranscriptSegment): string {
+    return `${index}:${segment.startSec}`;
   }
 
   /** `''` for `unknown` — renderers must never fabricate attribution the app doesn't have. */

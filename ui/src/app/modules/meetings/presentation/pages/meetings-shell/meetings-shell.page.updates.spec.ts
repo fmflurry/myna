@@ -104,6 +104,8 @@ describe('MeetingsShellPage update checks', () => {
   const noop = async (): Promise<void> => undefined;
 
   const facadeStub = {
+    activeRecording: signal(null),
+    resumeActiveRecording: vi.fn(async () => undefined),
     speakerHistory: signal([]), transcriptUndo: signal(null),
     meetings, selectedMeeting, modelsStatus, modelDownload, devices, selectedDevice, recordingState, level,
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,

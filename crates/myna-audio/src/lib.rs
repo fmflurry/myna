@@ -35,7 +35,7 @@ pub use mixer::{
     MIX_GAIN, RENDERING_QUERY_MIN_INTERVAL, SYSTEM_RENDERING_SILENCE_TIMEOUT, SYSTEM_RING_CAPACITY,
     SYSTEM_STALL_TIMEOUT, TARGET_FILL_SAMPLES,
 };
-pub use recorder::{RecordingSpec, RecordingStats, WavRecorder};
+pub use recorder::{repair_wav_sizes, RecordingSpec, RecordingStats, WavRecorder};
 pub use resample::{downmix_to_mono, Resampler, TARGET_SAMPLE_RATE};
 pub use system::{
     list_system_audio_sources, request_system_audio_permission, system_audio_status,

@@ -27,7 +27,7 @@ describe('StopRecordingUseCase', () => {
     const meeting = await useCase.stop();
 
     expect(meeting.title).toBe('Design review');
-    expect(await recorder.state()).toBe('idle');
+    expect((await recorder.state()).state).toBe('idle');
   });
 
   it('returns a NotRecording error when no recording is in progress', async () => {

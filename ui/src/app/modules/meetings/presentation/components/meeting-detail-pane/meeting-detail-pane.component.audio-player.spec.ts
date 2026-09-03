@@ -76,4 +76,41 @@ describe('MeetingDetailPaneComponent audio player integration', () => {
 
     expect(fixture.nativeElement.querySelector('app-audio-player')).toBeNull();
   });
+
+  it('should not offer playback while the recording is still live', () => {
+    // Mid-recording `audio.wav` has a 0-byte data chunk (RIFF header only)
+    // until the session finalizes; rendering the player over it produced the
+    // spurious "Playback error" banner.
+    const fixture = createFixture();
+    fixture.componentRef.setInput('meeting', { ...meeting, hasAudio: true });
+    fixture.componentRef.setInput('hasAudio', true);
+    fixture.componentRef.setInput('recordingState', 'recording');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-audio-player')).toBeNull();
+  });
+
+  it('should not offer playback while the recording is finalizing', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('meeting', { ...meeting, hasAudio: true });
+    fixture.componentRef.setInput('hasAudio', true);
+    fixture.componentRef.setInput('recordingState', 'stopping');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-audio-player')).toBeNull();
+  });
+
+  it('should restore playback once the session reaches idle', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('meeting', { ...meeting, hasAudio: true });
+    fixture.componentRef.setInput('hasAudio', true);
+    fixture.componentRef.setInput('recordingState', 'recording');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('app-audio-player')).toBeNull();
+
+    fixture.componentRef.setInput('recordingState', 'idle');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-audio-player')).toBeTruthy();
+  });
 });

@@ -6,8 +6,10 @@ import type { AudioDevice, AudioLevel } from '../../core/models/audio-device.mod
 import type { AudioSource } from '../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { Meeting } from '../../core/models/meeting.model';
+import { toMeetingId } from '../../core/models/meeting.model';
 import type { RecordingState } from '../../core/models/recording-state.model';
 import { RecorderPort } from '../../core/ports/recorder.port';
+import type { RecordingSnapshot } from '../../core/ports/recorder.port';
 import type { AudioSourceDto, DeviceInfoDto } from '../dto/device.dto';
 import { mapMeetingDtoToDomain } from '../mappers/meeting.mapper';
 import { invokeCommand, onEvent } from './ipc';
@@ -42,9 +44,13 @@ export class TauriRecorderAdapter extends RecorderPort {
     await invokeCommand('cancel_recording', {});
   }
 
-  override async state(): Promise<RecordingState> {
+  override async state(): Promise<RecordingSnapshot> {
     const dto = await invokeCommand('recording_state', {});
-    return dto.state;
+    return {
+      state: dto.state,
+      meetingId: dto.meetingId !== null ? toMeetingId(dto.meetingId) : null,
+      elapsedSec: dto.elapsedSec ?? null,
+    };
   }
 
   override levels(): Observable<AudioLevel> {

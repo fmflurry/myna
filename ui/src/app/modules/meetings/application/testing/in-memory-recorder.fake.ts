@@ -6,8 +6,10 @@ import { ALL_SYSTEM_AUDIO_SOURCE_ID, type AudioSource } from '../../core/models/
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { Meeting } from '../../core/models/meeting.model';
 import { toMeetingId } from '../../core/models/meeting.model';
+import type { MeetingId } from '../../core/models/meeting.model';
 import type { RecordingState } from '../../core/models/recording-state.model';
 import { RecorderPort } from '../../core/ports/recorder.port';
+import type { RecordingSnapshot } from '../../core/ports/recorder.port';
 
 /** In-memory RecorderPort implementation for specs and the placeholder providers. */
 @Injectable()
@@ -25,6 +27,7 @@ export class InMemoryRecorderFake extends RecorderPort {
   private currentState: RecordingState = 'idle';
   private currentMeeting: Meeting | undefined;
   private nextId = 1;
+  private fakeElapsedSec: number | null = null;
   /** `unknown` mirrors the real backend's default: no preflight API exists for the audio permission. */
   private audioStatus: SystemAudioStatus = { kind: 'unknown' };
   private lastRequestedDevice: string | undefined;
@@ -55,6 +58,7 @@ export class InMemoryRecorderFake extends RecorderPort {
       droppedAudioChunks: 0,
     };
     this.currentState = 'recording';
+    this.fakeElapsedSec = 0;
     this.stateSubject.next(this.currentState);
     return this.currentMeeting;
   }
@@ -83,6 +87,7 @@ export class InMemoryRecorderFake extends RecorderPort {
     }
     this.currentState = 'idle';
     this.currentMeeting = undefined;
+    this.fakeElapsedSec = null;
     this.stateSubject.next(this.currentState);
     return meeting;
   }
@@ -90,11 +95,19 @@ export class InMemoryRecorderFake extends RecorderPort {
   override async cancel(): Promise<void> {
     this.currentMeeting = undefined;
     this.currentState = 'idle';
+    this.fakeElapsedSec = null;
     this.stateSubject.next(this.currentState);
   }
 
-  override async state(): Promise<RecordingState> {
-    return this.currentState;
+  override async state(): Promise<RecordingSnapshot> {
+    const meetingId: MeetingId | null = this.currentMeeting
+      ? toMeetingId(this.currentMeeting.id)
+      : null;
+    return {
+      state: this.currentState,
+      meetingId,
+      elapsedSec: this.currentState === 'recording' ? this.fakeElapsedSec : null,
+    };
   }
 
   override levels(): Observable<AudioLevel> {
@@ -163,6 +176,15 @@ export class InMemoryRecorderFake extends RecorderPort {
   /** Test helper: control what systemAudioStatus()/requestSystemAudioPermission() resolve to. */
   setSystemAudioStatus(status: SystemAudioStatus): void {
     this.audioStatus = status;
+  }
+
+  /**
+   * Test helper: set the elapsed-seconds value the state() snapshot reports
+   * while recording (mirrors the Rust `recording_state` command's live
+   * clock). Ignored unless a recording is active.
+   */
+  setElapsedSec(sec: number): void {
+    this.fakeElapsedSec = sec;
   }
 
   /** Test helper: the `deviceName` argument passed to the most recent start() call. */

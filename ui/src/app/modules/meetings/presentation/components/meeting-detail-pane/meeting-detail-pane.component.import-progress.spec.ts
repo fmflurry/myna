@@ -145,22 +145,40 @@ describe('MeetingDetailPaneComponent import/re-transcribe', () => {
     expect(fixture.nativeElement.querySelector('.import-progress-label').textContent).toBe('Converting audio…');
   });
 
-  it('renders the determinate mm:ss "Transcribing M:SS / M:SS" label during the transcribing phase', () => {
+  it('renders the determinate mm:ss "Transcribing MM:SS / MM:SS" label at the meeting-relative midpoint (dual track)', () => {
     const fixture = createFixture();
     fixture.componentRef.setInput('importing', true);
     fixture.componentRef.setInput('importProgress', {
       meetingId: meetingWithAudio.id,
       phase: 'transcribing',
-      processedSec: 65,
-      totalSec: 130,
+      processedSec: 1950,
+      totalSec: 3900,
     });
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.import-progress-label').textContent).toBe(
-      'Transcribing 01:05 / 02:10',
+      'Transcribing 32:30 / 65:00',
     );
     const fill: HTMLElement = fixture.nativeElement.querySelector('.import-progress-fill');
     expect(fill.style.width).toBe('50%');
+  });
+
+  it('renders a monotonic later label at 75% (second track ahead of first)', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('importing', true);
+    fixture.componentRef.setInput('importProgress', {
+      meetingId: meetingWithAudio.id,
+      phase: 'transcribing',
+      processedSec: 2925,
+      totalSec: 3900,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.import-progress-label').textContent).toBe(
+      'Transcribing 48:45 / 65:00',
+    );
+    const fill: HTMLElement = fixture.nativeElement.querySelector('.import-progress-fill');
+    expect(fill.style.width).toBe('75%');
   });
 
   it('hides the progress bar once the phase reaches done', () => {

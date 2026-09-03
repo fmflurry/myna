@@ -1,5 +1,5 @@
 import { syncToStore } from 'flurryx';
-import { auditTime, filter, type Observable } from 'rxjs';
+import { auditTime, filter, tap, type Observable } from 'rxjs';
 
 import { speakerRole, type TranscriptSegment } from '../../core/models/transcript.model';
 import type { RecorderPort } from '../../core/ports/recorder.port';
@@ -87,6 +87,43 @@ export function insertSegmentSorted(
 }
 
 /**
+ * Identity a journaled final shares with the same segment delivered over
+ * `transcript://final`. `text` is part of the key deliberately: two segments
+ * with identical `(startSec, endSec, speaker)` but different text are two
+ * legitimate arrivals (e.g. a re-decode of the same span), and a key without
+ * text would silently drop the second one.
+ */
+const segmentIdentityKey = (segment: TranscriptSegment): string =>
+  `${segment.startSec}|${segment.endSec}|${segment.speaker}|${segment.text}`;
+
+/**
+ * Returns a NEW chronologically-sorted array with every segment from `incoming`
+ * that `existing` doesn't already hold inserted at its sorted position — never
+ * mutates `existing`. This is the SINGLE merge both the journal seed (ADR 0011
+ * reload replay) and the live `transcript://final` event path go through: the
+ * journal and the stream overlap (a final can land on either side of the seed,
+ * in either order), so routing both through here suppresses duplicates in BOTH
+ * orderings. Segments are deduped by `segmentIdentityKey` — timing, speaker,
+ * AND text — so a same-timing different-text segment is kept, not dropped.
+ */
+export function mergeFinalizedSegments(
+  existing: readonly TranscriptSegment[],
+  incoming: readonly TranscriptSegment[],
+): readonly TranscriptSegment[] {
+  const seen = new Set(existing.map(segmentIdentityKey));
+  let merged = existing;
+  for (const segment of incoming) {
+    const key = segmentIdentityKey(segment);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged = insertSegmentSorted(merged, segment);
+  }
+  return merged;
+}
+
+/**
  * Bridges `RecorderPort` / `TranscriberPort` / `SummarizerPort` observables
  * directly into `slots`. Extracted out of `MeetingsStore`'s constructor so
  * that class stays under the project's `max-lines` budget; this function is
@@ -100,7 +137,19 @@ export function wireRecorderAndTranscriberEvents(
 ): void {
   recorder
     .stateChanges()
-    .pipe(syncToStore(slots, 'RECORDING_STATE', { completeOnFirstEmission: false }))
+    .pipe(
+      // A session that ends (naturally, via Stop, or via Cancel) retires its
+      // restored-snapshot slot, so the boot-only `ACTIVE_RECORDING` elapsed
+      // baseline can never leak into the NEXT recording's timer. The event
+      // stream carries no elapsed clock (`elapsedSec` is null on events by
+      // contract), so only the idle transition is acted on here.
+      tap((state) => {
+        if (state === 'idle') {
+          slots.update('ACTIVE_RECORDING', { data: null, status: 'Success', isLoading: false });
+        }
+      }),
+      syncToStore(slots, 'RECORDING_STATE', { completeOnFirstEmission: false }),
+    )
     .subscribe();
 
   recorder
@@ -129,8 +178,12 @@ export function wireRecorderAndTranscriberEvents(
 
   transcriber.finals().subscribe((final) => {
     const current = slots.get('FINALIZED_SEGMENTS')().data ?? [];
+    // Merge (dedupe + chronological insert), NOT append: after a mid-meeting
+    // reload the journal seed and this stream overlap, and a final arriving
+    // here may already be in the store from the seed. Going through the same
+    // merge as the seed path suppresses double-renders in both orderings.
     slots.update('FINALIZED_SEGMENTS', {
-      data: insertSegmentSorted(current, final.segment),
+      data: mergeFinalizedSegments(current, [final.segment]),
       status: 'Success',
       isLoading: false,
     });

@@ -12,7 +12,7 @@
 //! `cargo test -p myna-llm --release --locked -- --ignored`.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -158,4 +158,106 @@ fn cancellation_mid_map_reduce_still_stops_the_operation() {
 
     // Assert
     assert!(matches!(result, Err(LlmError::Cancelled)));
+}
+
+/// Ceiling on new RSS a second `summarize` call on one `Summarizer` may
+/// allocate. Before the inference-worker rework, every call built a fresh
+/// `LlamaContext` at the 32,768-token production default (~1.2 GB of KV
+/// cache) and freed it on return, so this was exceeded by an order of
+/// magnitude.
+const MAX_CONTEXT_CHURN_MB: u64 = 100;
+
+/// Point-sample of the current process's resident set size, in MB.
+fn current_rss_mb() -> u64 {
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        false,
+        sysinfo::ProcessRefreshKind::nothing().with_memory(),
+    );
+    system
+        .process(pid)
+        .expect("the current process must be observable via sysinfo")
+        .memory()
+        / (1024 * 1024)
+}
+
+/// Runs `run` on the current thread while a dedicated sampler thread
+/// records peak process RSS every 5 ms; returns the output alongside that
+/// peak (MB). Peak-vs-pre-call baseline, rather than end-to-end delta, is
+/// the discriminator: the pre-fix code freed each context on return, so
+/// RSS *between* calls could look flat even while each call churned a
+/// fresh ~1.2 GB allocation *during* itself.
+fn peak_rss_mb_during<T>(run: impl FnOnce() -> T) -> (T, u64) {
+    let peak = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (sampler_peak, sampler_stop) = (Arc::clone(&peak), Arc::clone(&stop));
+    let sampler = std::thread::spawn(move || {
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        let mut system = sysinfo::System::new();
+        while !sampler_stop.load(Ordering::Relaxed) {
+            system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                false,
+                sysinfo::ProcessRefreshKind::nothing().with_memory(),
+            );
+            if let Some(process) = system.process(pid) {
+                sampler_peak.fetch_max(process.memory() / (1024 * 1024), Ordering::Relaxed);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    let output = run();
+    stop.store(true, Ordering::Relaxed);
+    sampler.join().expect("RSS sampler thread must not panic");
+    (output, peak.load(Ordering::Relaxed))
+}
+
+#[test]
+#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+fn consecutive_summarize_calls_reuse_one_context() {
+    // Arrange: ~400 repeats of a ~20-token line (~8k tokens) fits well
+    // inside the 32k production context, so both calls take the
+    // single-shot path — the exact path that used to allocate a fresh
+    // 1.2 GB `LlamaContext` per call.
+    let prompt = repeated_transcript(400);
+    let opts = SummaryOptions {
+        max_tokens: 24,
+        ..SummaryOptions::default()
+    };
+    let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");
+    let cancel = AtomicBool::new(false);
+
+    // Act: call 1 doubles as the warm-up that pages in model weights, so
+    // call 2's measurement is not charged for first-touch faults.
+    let (first, peak_1) = peak_rss_mb_during(|| {
+        summarizer
+            .summarize(&prompt, &opts, &cancel, |_| {})
+            .expect("first summarize must succeed")
+    });
+    let baseline = current_rss_mb();
+    let (second, peak_2) = peak_rss_mb_during(|| {
+        summarizer
+            .summarize(&prompt, &opts, &cancel, |_| {})
+            .expect("second summarize must succeed")
+    });
+    let churn_during_second = peak_2.saturating_sub(baseline);
+
+    println!(
+        "call 1: {} chars, peak RSS {peak_1} MB; call 2: baseline {baseline} MB, \
+         peak {peak_2} MB, churn within call {churn_during_second} MB \
+         (limit {MAX_CONTEXT_CHURN_MB} MB)",
+        first.len()
+    );
+
+    // Assert
+    assert!(!first.trim().is_empty());
+    assert!(!second.trim().is_empty());
+    assert!(
+        churn_during_second < MAX_CONTEXT_CHURN_MB,
+        "the second summarize call allocated {churn_during_second} MB of new RSS; \
+         a ~1.2 GB figure means a fresh LlamaContext is built per call instead \
+         of one being reused across calls"
+    );
 }

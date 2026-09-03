@@ -71,13 +71,13 @@ export class MeetingsShellPage implements OnInit {
   protected readonly elapsedLabel = computed(() => formatMmSs(this.elapsedSec()));
 
   /**
-   * Id of the meeting currently being recorded, if any. During a recording
-   * the recording meeting IS the selected meeting (`startRecording` sets it,
-   * and the busy-guard in `onMeetingSelected` blocks selection from
-   * changing), so `busy()` + `selectedMeeting()?.id` identifies it.
+   * Id of the meeting currently being recorded, if any. Prefers the
+   * `ACTIVE_RECORDING` slot (boot `recording_state` snapshot, ADR 0011) over
+   * the selection — after a reload the restored session is authoritative even
+   * while the route points elsewhere. Live-started → null slot, `busy()` fallback.
    */
   protected readonly recordingMeetingId = computed<MeetingId | undefined>(() =>
-    this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined,
+    this.facade.activeRecording()?.meetingId ?? (this.facade.busy() ? this.facade.selectedMeeting()?.id : undefined),
   );
 
   /** Transcript-undo toolbar button label; `null` hides the button. */
@@ -90,12 +90,13 @@ export class MeetingsShellPage implements OnInit {
   private readonly meetingOps = new MeetingOpQueue();
 
   constructor() {
-    // Drives the live elapsed timer purely off `recordingState`, independent
-    // of transcript/level events, so it never stalls or drifts with them.
+    // Drives the live elapsed timer purely off `recordingState`, independent of
+    // transcript/level events. Baseline seeds from `ACTIVE_RECORDING` (boot
+    // `recording_state` snapshot, ADR 0011); a live-started recording → 0.
     effect(() => {
       const isRecording = this.facade.recordingState() === 'recording';
       if (isRecording && this.timerHandle === undefined) {
-        this.elapsedSec.set(0);
+        this.elapsedSec.set(this.facade.activeRecording()?.elapsedSec ?? 0);
         this.timerHandle = setInterval(() => this.elapsedSec.update((value) => value + 1), 1000);
       } else if (!isRecording && this.timerHandle !== undefined) {
         clearInterval(this.timerHandle);
@@ -111,6 +112,11 @@ export class MeetingsShellPage implements OnInit {
   }
 
   ngOnInit(): void {
+    // Re-attach a live recording FIRST (ADR 0011): its store writes await the
+    // `recording_state` query, so they land after all synchronous boot work —
+    // the resumed session always wins over the initial `clearSelection`.
+    void this.facade.resumeActiveRecording();
+
     void this.facade.loadMeetings();
     void this.facade.loadTemplates();
     void this.facade.checkModels();
@@ -123,9 +129,8 @@ export class MeetingsShellPage implements OnInit {
     void loadUpdatesOnLaunch(this.facade);
 
     // Reactive, not a one-time `snapshot` read: `''` and `meeting/:id` share
-    // this same component, and Angular's default route-reuse strategy keeps
-    // the instance alive (never re-running `ngOnInit`) across navigations
-    // between two `meeting/:id` activations that only differ by param — a
+    // this component, and Angular's default route-reuse keeps the instance
+    // alive (never re-running `ngOnInit`) across param-only navigations — a
     // second sidebar selection would otherwise never re-open a meeting.
     this.route.paramMap
       .pipe(

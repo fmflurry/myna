@@ -51,6 +51,20 @@ pub trait MeetingStore {
     /// `crate::session::source_has_system`.
     fn system_track_path(&self, id: MeetingId) -> PathBuf;
 
+    /// Returns the path at which a live recording's session durability
+    /// manifest (`session.json`) lives. Its existence is the recovery
+    /// invariant "a recording is in progress" (see
+    /// `crate::session_manifest`); it is written when a session starts and
+    /// deleted once the finished meeting has been saved.
+    fn session_manifest_path(&self, id: MeetingId) -> PathBuf;
+
+    /// Returns the path at which a live recording's transcript journal
+    /// (`transcript-journal.jsonl`) lives — one finalized segment per line,
+    /// appended by the decode worker so finals survive a crash (see
+    /// `crate::session_manifest`). Deleted once the finished meeting has
+    /// been saved.
+    fn transcript_journal_path(&self, id: MeetingId) -> PathBuf;
+
     /// Persists a generated summary's markdown for a meeting/template/
     /// language triple, returning the path it was written to. Different
     /// languages for the same template are stored independently so they do

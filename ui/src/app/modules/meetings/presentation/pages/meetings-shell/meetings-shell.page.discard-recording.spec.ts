@@ -139,6 +139,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
+    activeRecording: signal(null),
+    resumeActiveRecording: vi.fn(async () => undefined),
     meetings,
     selectedMeeting,
     modelsStatus,

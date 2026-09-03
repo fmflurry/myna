@@ -54,6 +54,12 @@ pub struct RecordingStatePayload {
     /// recording.
     #[serde(rename = "effectiveSystemSource")]
     pub system_source: Option<AudioSourceDto>,
+    /// Wall-clock seconds elapsed since the recording started, when known.
+    /// Always `None` on [`RECORDING_STATE`] *events* (the emitter sites
+    /// don't hold the session to read its clock from); the `recording_state`
+    /// command fills it in for the active session so a webview reload can
+    /// restore the live timer without replaying any events.
+    pub elapsed_sec: Option<f32>,
 }
 
 /// Builds and emits a [`RECORDING_STATE`] event. Shared by
@@ -72,6 +78,7 @@ pub fn emit_recording_state(
         state,
         source,
         system_source: system_source.map(AudioSourceDto::from),
+        elapsed_sec: None,
     };
     let _ = app.emit(RECORDING_STATE, payload);
 }

@@ -9,11 +9,21 @@ h1 {
   font-size: 1.3rem;
 }
 
+.details {
+  margin: var(--space-4) 0;
+}
+
+.details h2 {
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-muted);
+}
+
 .group {
   margin: var(--space-4) 0;
 }
 
-.group h2 {
+.group h3 {
   font-size: 0.95rem;
   margin: 0 0 var(--space-2);
   color: var(--color-text-muted);
@@ -53,44 +63,43 @@ li.present {
   font-size: 0.9rem;
 }
 
+/* Progress text and its static hint stack vertically inside the flex row. */
+.download-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Kept outside the aria-live region so screen readers announce it once,
+   not on every download progress tick. */
+.download-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
 .download-error {
   margin: var(--space-2) 0 0;
   font-size: 0.85rem;
   color: var(--color-danger);
 }
 
-.hint {
-  margin: 0 0 var(--space-2);
+/* Raw backend detail kept under the human guidance line — real data, de-emphasised. */
+.download-error-detail {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   color: var(--color-text-muted);
 }
 
-.download {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin: var(--space-4) 0;
-  padding: var(--space-3);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-}
-
-.download code {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  overflow-x: auto;
-}
-
 /*
  * Standard button treatment (matches meeting-detail-pane's toolbar buttons).
- * Both buttons previously had no background/color rule at all, so they fell
+ * These buttons previously had no background/color rule at all, so they fell
  * back to unstyled UA chrome — invisible near-white-on-near-white in dark
  * mode. This screen is the first thing a new user sees before any model is
  * installed, so it's the highest-severity instance of that bug.
  */
-.copy-download-command,
 .recheck,
 .start-download,
 .cancel-download {

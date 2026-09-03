@@ -24,6 +24,7 @@ export const COMMAND_NAMES = [
   'stop_recording',
   'cancel_recording',
   'recording_state',
+  'get_live_transcript',
   'list_meetings',
   'get_meeting',
   'delete_meeting',
@@ -36,7 +37,6 @@ export const COMMAND_NAMES = [
   'summarize_meeting',
   'cancel_summarization',
   'models_status',
-  'download_command',
   'export_meeting',
   'system_audio_status',
   'request_system_audio_permission',
@@ -119,6 +119,16 @@ export interface CommandSignatures {
   readonly stop_recording: { args: NoArgs; result: MeetingDto };
   readonly cancel_recording: { args: NoArgs; result: void };
   readonly recording_state: { args: NoArgs; result: RecordingStatePayloadDto };
+  /**
+   * Reads the active recording's durability journal. Returns `null` when
+   * `meetingId` is not the currently-recording meeting (idle, or a
+   * different meeting) — Rust maps snake_case `meeting_id` to the
+   * camelCase `meetingId` invoke arg.
+   */
+  readonly get_live_transcript: {
+    args: { readonly meetingId: string };
+    result: TranscriptDto | null;
+  };
   readonly list_meetings: { args: NoArgs; result: readonly MeetingDto[] };
   readonly get_meeting: { args: { readonly id: string }; result: MeetingDto };
   readonly delete_meeting: { args: { readonly id: string }; result: void };
@@ -143,7 +153,6 @@ export interface CommandSignatures {
   };
   readonly cancel_summarization: { args: NoArgs; result: void };
   readonly models_status: { args: NoArgs; result: ModelsStatusDto };
-  readonly download_command: { args: NoArgs; result: string };
   readonly export_meeting: {
     args: { readonly meetingId: string; readonly format: ExportFormatDto; readonly dest: string };
     result: void;

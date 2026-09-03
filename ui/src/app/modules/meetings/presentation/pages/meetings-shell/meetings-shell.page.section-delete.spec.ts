@@ -116,6 +116,8 @@ describe('MeetingsShellPage — section delete + undo', () => {
   const undoLastSpeakerOp = vi.fn(noop);
 
   const facadeStub = {
+    activeRecording: signal(null),
+    resumeActiveRecording: vi.fn(async () => undefined),
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
