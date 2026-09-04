@@ -12,8 +12,32 @@ import { AudioPlayerComponent } from './audio-player.component';
  * quiet time readout: no aria-live announcement storm and a static slider
  * label. Split per concern to stay under the lint max-lines limit.
  */
+
+/** Port/facade view of one playable chunk (see adapter spec for the wire DTO). */
+interface AudioChunkView {
+  readonly url: string;
+  readonly startSec: number;
+  readonly durationSec: number;
+}
+
+const LEGACY_CHUNKS: readonly AudioChunkView[] = [
+  { url: 'tauri://audio.wav', startSec: 0, durationSec: 0 },
+];
+
+const PART_ONE: AudioChunkView = {
+  url: 'asset://localhost/audio.wav',
+  startSec: 0,
+  durationSec: 60,
+};
+const PART_TWO: AudioChunkView = {
+  url: 'asset://localhost/audio.part-0002.wav',
+  startSec: 60,
+  durationSec: 40,
+};
+
 class MockMeetingsFacade {
   getAudioUrl = vi.fn().mockResolvedValue(null);
+  getAudioChunks = vi.fn().mockResolvedValue(LEGACY_CHUNKS);
 }
 
 describe('AudioPlayerComponent scrubbing', () => {
@@ -29,6 +53,7 @@ describe('AudioPlayerComponent scrubbing', () => {
   const renderWithAudio = async (): Promise<ComponentFixture<AudioPlayerComponent>> => {
     const facade = TestBed.inject(MeetingsFacade) as unknown as MockMeetingsFacade;
     facade.getAudioUrl = vi.fn().mockResolvedValue('tauri://audio.wav');
+    facade.getAudioChunks = vi.fn().mockResolvedValue(LEGACY_CHUNKS);
 
     const fixture = TestBed.createComponent(AudioPlayerComponent);
     fixture.componentRef.setInput('meetingId', toMeetingId('m1'));
@@ -164,5 +189,121 @@ describe('AudioPlayerComponent scrubbing', () => {
     fixture.detectChanges();
     expect(slider.getAttribute('aria-label')).toBe('Seek');
     expect(slider.getAttribute('aria-valuenow')).toBe('25');
+  });
+
+  describe('multipart scrubbing (RED: global seek across chunked WAV)', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const flush = async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(0);
+    };
+
+    const renderWithChunks = async (
+      chunks: readonly AudioChunkView[],
+    ): Promise<ComponentFixture<AudioPlayerComponent>> => {
+      const facade = TestBed.inject(MeetingsFacade) as unknown as MockMeetingsFacade;
+      facade.getAudioUrl = vi.fn().mockResolvedValue(null);
+      facade.getAudioChunks = vi.fn().mockResolvedValue(chunks);
+
+      const fixture = TestBed.createComponent(AudioPlayerComponent);
+      fixture.componentRef.setInput('meetingId', toMeetingId('m1'));
+      fixture.componentRef.setInput('hasAudio', true);
+      fixture.detectChanges();
+
+      await flush();
+      fixture.detectChanges();
+      return fixture;
+    };
+
+    const dragTo = async (
+      fixture: ComponentFixture<AudioPlayerComponent>,
+      percent: string,
+    ): Promise<void> => {
+      const slider = fixture.nativeElement.querySelector('.seek-slider') as HTMLInputElement;
+      slider.dispatchEvent(new Event('pointerdown'));
+      slider.value = percent;
+      slider.dispatchEvent(new Event('pointerup'));
+      await flush();
+      fixture.detectChanges();
+    };
+
+    it('maps a global seek into the second part to its local offset', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      // 70% of the 100 s logical timeline = 70 s global → part 2, +10 s.
+      await dragTo(fixture, '70');
+
+      expect(component.currentTime()).toBe(70);
+      expect(component.url()).toBe(PART_TWO.url);
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      expect(audio.currentTime).toBe(10);
+    });
+
+    it('seeks within the active first part without swapping the source', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      await dragTo(fixture, '25');
+
+      expect(component.currentTime()).toBe(25);
+      expect(component.url()).toBe(PART_ONE.url);
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      expect(audio.currentTime).toBe(25);
+    });
+
+    it('treats a seek to a chunk boundary as the start of the next part', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      await dragTo(fixture, '60');
+
+      expect(component.currentTime()).toBe(60);
+      expect(component.url()).toBe(PART_TWO.url);
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      expect(audio.currentTime).toBe(0);
+    });
+
+    it('seeks backward from the second part into the first', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+      audio.dispatchEvent(new Event('play'));
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+      expect(component.url()).toBe(PART_TWO.url);
+
+      await dragTo(fixture, '10');
+
+      expect(component.currentTime()).toBe(10);
+      expect(component.url()).toBe(PART_ONE.url);
+      expect(audio.currentTime).toBe(10);
+    });
+
+    it('keeps playback running when a seek crosses into the next part', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      const playSpy = vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+      audio.dispatchEvent(new Event('play'));
+      fixture.detectChanges();
+
+      await dragTo(fixture, '80');
+
+      expect(component.url()).toBe(PART_TWO.url);
+      expect(audio.currentTime).toBe(20);
+      expect(component.playing()).toBe(true);
+      expect(playSpy).toHaveBeenCalled();
+    });
   });
 });

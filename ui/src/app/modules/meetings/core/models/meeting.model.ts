@@ -55,7 +55,19 @@ export const withTranscript = (meeting: Meeting, transcript: Transcript): Meetin
 
 export const withSummary = (meeting: Meeting, summary: Summary): Meeting => ({
   ...meeting,
-  summaries: [...meeting.summaries, summary],
+  summaries: [
+    ...meeting.summaries.filter(
+      (existing) => !(existing.template === summary.template && existing.language === summary.language),
+    ),
+    summary,
+  ],
+});
+
+export const withoutSummary = (meeting: Meeting, template: string, language: string): Meeting => ({
+  ...meeting,
+  summaries: meeting.summaries.filter(
+    (existing) => !(existing.template === template && existing.language === language),
+  ),
 });
 
 export const withDuration = (meeting: Meeting, durationSec: number): Meeting => ({

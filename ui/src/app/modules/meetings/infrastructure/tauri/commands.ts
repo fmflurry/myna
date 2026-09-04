@@ -53,6 +53,9 @@ export const COMMAND_NAMES = [
   'set_meeting_folder',
   'set_meeting_placement',
   'edit_summary',
+  'delete_summary',
+  'get_summary_guidelines',
+  'set_summary_guidelines',
   'rename_speaker',
   'remove_speaker',
   'set_segment_speaker',
@@ -63,6 +66,7 @@ export const COMMAND_NAMES = [
   'start_diarization_download',
   'cancel_model_download',
   'get_meeting_audio_path',
+  'get_meeting_audio_chunks',
   'update_consent',
   'set_update_consent',
   'check_for_update',
@@ -112,6 +116,28 @@ export interface UpdateCheckDto {
 }
 
 /**
+ * Mirrors the Rust `SummarizeInstructionsDto` (`#[serde(rename_all =
+ * "camelCase")]`, `app/src-tauri/src/dto.rs`) — the optional inbound
+ * `summarize_meeting` argument. `specific` is the per-request focus text;
+ * `includeGeneral` decides whether the persisted general guidelines join
+ * the prompt.
+ */
+export interface SummarizeInstructionsDto {
+  readonly specific?: string;
+  readonly includeGeneral: boolean;
+}
+
+/**
+ * Mirrors the Rust `StopAcknowledgement` — `cancel_recording` resolves
+ * IMMEDIATELY with this once the command is accepted. `stop_recording`
+ * instead resolves with the finalized `MeetingDto` (duration + transcript +
+ * track flags); see `stop_recording` below.
+ */
+export interface StopAcknowledgementDto {
+  readonly accepted: true;
+}
+
+/**
  * Ties each {@link CommandName} to its exact invoke argument shape and
  * return DTO. Tauri auto-converts `#[tauri::command]` snake_case parameter
  * names to camelCase for the JS-facing `invoke` call (e.g. `meeting_id` ->
@@ -133,7 +159,7 @@ export interface CommandSignatures {
     result: MeetingDto;
   };
   readonly stop_recording: { args: NoArgs; result: MeetingDto };
-  readonly cancel_recording: { args: NoArgs; result: void };
+  readonly cancel_recording: { args: NoArgs; result: StopAcknowledgementDto };
   readonly recording_state: { args: NoArgs; result: RecordingStatePayloadDto };
   /**
    * Reads the active recording's durability journal. Returns `null` when
@@ -164,9 +190,18 @@ export interface CommandSignatures {
   readonly list_templates: { args: NoArgs; result: readonly TemplateDto[] };
   readonly list_summary_languages: { args: NoArgs; result: readonly SummaryLanguageDto[] };
   readonly summarize_meeting: {
-    args: { readonly meetingId: string; readonly template: string; readonly language?: string };
+    args: {
+      readonly meetingId: string;
+      readonly template: string;
+      readonly language?: string;
+      readonly instructions?: SummarizeInstructionsDto;
+    };
     result: SummaryDto;
   };
+  /** Reads the persisted free-text general summary guidelines (empty = none). */
+  readonly get_summary_guidelines: { args: NoArgs; result: string };
+  /** Replaces the persisted general summary guidelines; empty string clears. */
+  readonly set_summary_guidelines: { args: { readonly guidelines: string }; result: void };
   readonly cancel_summarization: { args: NoArgs; result: void };
   readonly models_status: { args: NoArgs; result: ModelsStatusDto };
   readonly export_meeting: {
@@ -223,6 +258,10 @@ export interface CommandSignatures {
     };
     result: SummaryDto;
   };
+  readonly delete_summary: {
+    args: { readonly meetingId: string; readonly template: string; readonly language: string };
+    result: void;
+  };
   readonly rename_speaker: {
     args: { readonly meetingId: string; readonly label: string; readonly name: string };
     result: MeetingDto;
@@ -264,6 +303,16 @@ export interface CommandSignatures {
   readonly start_diarization_download: { args: NoArgs; result: void };
   readonly cancel_model_download: { args: NoArgs; result: void };
   readonly get_meeting_audio_path: { args: { readonly id: string }; result: string | null };
+  /**
+   * Ordered playable chunks of a segmented WAV recording — the Rust
+   * `get_meeting_audio_chunks` result (`#[serde(rename_all = "camelCase")]`):
+   * one `path` plus its global-timeline offsets. Legacy single-file meetings
+   * return exactly one chunk; no audio returns an empty array.
+   */
+  readonly get_meeting_audio_chunks: {
+    args: { readonly id: string };
+    result: readonly { readonly path: string; readonly startSec: number; readonly durationSec: number }[];
+  };
   readonly update_consent: { args: NoArgs; result: UpdateConsentDto };
   readonly set_update_consent: {
     args: { readonly consent: UpdateConsentDto };

@@ -80,6 +80,7 @@ fn summarize_pipeline_renders_every_template_and_honors_cancellation() {
         duration: "15m".to_string(),
         title: "Sprint Planning".to_string(),
         language: resolve(None).1.to_string(),
+        instructions: None,
     };
     let opts = SummaryOptions {
         max_tokens: MAX_TOKENS,

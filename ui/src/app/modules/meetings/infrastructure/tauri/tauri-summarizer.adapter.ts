@@ -6,6 +6,7 @@ import { toMeetingId } from '../../core/models/meeting.model';
 import type { MeetingId } from '../../core/models/meeting.model';
 import type { SummaryLanguage } from '../../core/models/summary-language.model';
 import type { Summary } from '../../core/models/summary.model';
+import type { SummaryInstructionsDraft } from '../../core/models/summary-instructions.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import { SummarizerPort } from '../../core/ports/summarizer.port';
 import type { SummaryToken } from '../../core/ports/summarizer.port';
@@ -15,7 +16,12 @@ import { invokeCommand, onEvent } from './ipc';
 /** `SummarizerPort` implementation backed by the Tauri IPC command surface. */
 @Injectable()
 export class TauriSummarizerAdapter extends SummarizerPort {
-  override async summarize(id: MeetingId, template: SummaryTemplate, language?: string): Promise<Summary> {
+  override async summarize(
+    id: MeetingId,
+    template: SummaryTemplate,
+    language?: string,
+    instructions?: SummaryInstructionsDraft,
+  ): Promise<Summary> {
     const dto = await invokeCommand('summarize_meeting', {
       meetingId: id,
       template: template.name,
@@ -24,6 +30,16 @@ export class TauriSummarizerAdapter extends SummarizerPort {
       // spread rather than set to `undefined` — the Rust side then falls
       // back to `en` on its own.
       ...(language !== undefined ? { language } : {}),
+      // Same idiom for instructions: an unset draft is omitted entirely so
+      // the Rust side applies the persisted general guidelines by default.
+      ...(instructions !== undefined
+        ? {
+            instructions: {
+              specific: instructions.text,
+              includeGeneral: instructions.includeGeneral,
+            },
+          }
+        : {}),
     });
     return mapSummaryDtoToDomain(dto);
   }
@@ -67,5 +83,17 @@ export class TauriSummarizerAdapter extends SummarizerPort {
   override async editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<Summary> {
     const dto = await invokeCommand('edit_summary', { meetingId: id, template, language, markdown });
     return mapSummaryDtoToDomain(dto);
+  }
+
+  override async deleteSummary(id: MeetingId, template: string, language: string): Promise<void> {
+    await invokeCommand('delete_summary', { meetingId: id, template, language });
+  }
+
+  override async getGuidelines(): Promise<string> {
+    return invokeCommand('get_summary_guidelines', {});
+  }
+
+  override async setGuidelines(text: string): Promise<void> {
+    await invokeCommand('set_summary_guidelines', { guidelines: text });
   }
 }

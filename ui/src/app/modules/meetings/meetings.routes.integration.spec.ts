@@ -1,10 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { routes } from '../../app.routes';
 import { MeetingsFacade } from './application/facades/meetings.facade';
+import { FINAL_BATCH_MS } from './application/stores/meetings-store-wiring.support';
 import { toMeetingId } from './core/models/meeting.model';
 import type { TauriInternalsStub } from './infrastructure/tauri/testing/tauri-internals.stub';
 import {
@@ -187,25 +188,37 @@ describe('meetings routing integration', () => {
   );
 
   it('keeps appending post-boot finals to the replayed journal', async () => {
-    const harness = await RouterTestingHarness.create('/meetings');
-    await flushMicrotasks();
-    harness.fixture.detectChanges();
-    await flushMicrotasks();
-    harness.fixture.detectChanges();
+    // Fake timers BEFORE the harness builds the route injector (which
+    // constructs the store and subscribes its finals batch window): the
+    // `bufferTime(FINAL_BATCH_MS)` flush timer must live on the fake clock.
+    // `flushMicrotasks()` cannot be used here — its real `setTimeout(0)`
+    // would never fire — so `advanceTimersByTimeAsync(0)` serves as the
+    // macrotask hop that drains the `listen()` promise chains.
+    vi.useFakeTimers();
+    try {
+      const harness = await RouterTestingHarness.create('/meetings');
+      await vi.advanceTimersByTimeAsync(0);
+      harness.fixture.detectChanges();
+      await vi.advanceTimersByTimeAsync(0);
+      harness.fixture.detectChanges();
 
-    // A final the backend decodes AFTER boot appends through the live event
-    // stream — resume restores the past, events own the future.
-    tauri.emit('transcript://final', {
-      meetingId: 'm1',
-      segment: { start_sec: 10, end_sec: 13, text: 'Decoded after reload.', speaker: 'me' },
-    });
-    harness.fixture.detectChanges();
+      // A final the backend decodes AFTER boot appends through the live event
+      // stream — resume restores the past, events own the future.
+      tauri.emit('transcript://final', {
+        meetingId: 'm1',
+        segment: { start_sec: 10, end_sec: 13, text: 'Decoded after reload.', speaker: 'me' },
+      });
+      await vi.advanceTimersByTimeAsync(FINAL_BATCH_MS);
+      harness.fixture.detectChanges();
 
-    expect(transcriptTexts(harness.routeNativeElement!)).toEqual([
-      'Welcome everyone.',
-      'Thanks for joining.',
-      'Decoded after reload.',
-    ]);
+      expect(transcriptTexts(harness.routeNativeElement!)).toEqual([
+        'Welcome everyone.',
+        'Thanks for joining.',
+        'Decoded after reload.',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never offers playback of the un-finalized recording', async () => {

@@ -85,6 +85,26 @@ pub trait MeetingStore {
         template: &str,
         language: &str,
     ) -> Result<Summary, AppError>;
+
+    /// Deletes a previously saved summary's markdown for a
+    /// meeting/template/language triple (`{template}__{language}.md`) and
+    /// removes its entry from the meeting's summary list. Returns
+    /// [`AppError::NotFound`] when the meeting or the summary does not
+    /// exist.
+    ///
+    /// Provided with a placeholder default so the filesystem backend can
+    /// land separately (see `fs_store` follow-up); backends must override.
+    fn delete_summary(
+        &self,
+        id: MeetingId,
+        template: &str,
+        language: &str,
+    ) -> Result<(), AppError> {
+        let _ = (id, template, language);
+        Err(AppError::Store(
+            "delete_summary not implemented".to_string(),
+        ))
+    }
 }
 
 /// Persistence port for folders.

@@ -144,6 +144,23 @@ impl Meeting {
         }
     }
 
+    /// Returns a copy of this meeting with the summary matching the
+    /// `(template, language)` pair removed. Every other summary is left
+    /// untouched; when no entry matches, the copy is identical.
+    pub fn without_summary(&self, template: &str, language: &str) -> Self {
+        Self {
+            summaries: self
+                .summaries
+                .iter()
+                .filter(|existing| {
+                    !(existing.template == template && existing.language == language)
+                })
+                .cloned()
+                .collect(),
+            ..self.clone()
+        }
+    }
+
     /// Returns a copy of this meeting with `duration_sec` replaced.
     pub fn with_duration(&self, duration_sec: f32) -> Self {
         Self {

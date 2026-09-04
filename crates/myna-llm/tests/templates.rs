@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use myna_llm::{list_templates, LlmError, RenderContext, Template};
+use myna_llm::{list_templates, LlmError, RenderContext, SummaryInstructions, Template};
 
 const BUILTIN_TEMPLATE_NAMES: [&str; 4] =
     ["action-items", "decisions", "key-points", "meeting-notes"];
@@ -50,6 +50,7 @@ fn every_builtin_template_renders_without_leftover_placeholders() {
         duration: "30 minutes".to_string(),
         title: "Weekly Sync".to_string(),
         language: "French".to_string(),
+        instructions: None,
     };
     assert_eq!(templates.len(), BUILTIN_TEMPLATE_NAMES.len());
 
@@ -82,6 +83,7 @@ fn template_without_language_placeholder_gets_directive_appended() {
         duration: "".to_string(),
         title: "".to_string(),
         language: "French".to_string(),
+        instructions: None,
     };
 
     // Act
@@ -107,6 +109,7 @@ fn template_with_language_placeholder_is_not_double_directed() {
         duration: "".to_string(),
         title: "".to_string(),
         language: "French".to_string(),
+        instructions: None,
     };
 
     // Act
@@ -136,6 +139,7 @@ fn renders_with_each_supported_language_produces_the_correct_directive() {
             duration: "".to_string(),
             title: "".to_string(),
             language: label.to_string(),
+            instructions: None,
         };
 
         // Act
@@ -376,5 +380,173 @@ fn every_builtin_template_carries_its_expected_label_and_emoji() {
             .unwrap_or_else(|| panic!("builtin template '{name}' should be present"));
         assert_eq!(template.label.as_deref(), Some(label));
         assert_eq!(template.emoji.as_deref(), Some(emoji));
+    }
+}
+
+/// A template whose prompt ends in a trailing generation cue, mirroring
+/// the built-ins ("Key Points:" etc.).
+fn cue_terminated_template() -> Template {
+    Template {
+        name: "cue-terminated".to_string(),
+        description: "prompt ending in a generation cue".to_string(),
+        prompt:
+            "Summarize the transcript in {language}.\n\nTranscript:\n{transcript}\n\nKey Points:"
+                .to_string(),
+        section_schema: None,
+        label: None,
+        emoji: None,
+    }
+}
+
+#[test]
+fn render_without_instructions_is_byte_identical_to_the_template_only_prompt() {
+    // Arrange: the exact pre-change render for this prompt/ctx pair,
+    // written out literally so a regression in the None path is caught.
+    let template = cue_terminated_template();
+    let expected = "Summarize the transcript in French.\n\nTranscript:\nship it\n\nKey Points:";
+    let without = RenderContext {
+        transcript: "ship it".to_string(),
+        duration: "".to_string(),
+        title: "".to_string(),
+        language: "French".to_string(),
+        instructions: None,
+    };
+    let all_empty = RenderContext {
+        instructions: Some(SummaryInstructions::new(
+            Some("   ".to_string()),
+            Some(String::new()),
+        )),
+        ..without.clone()
+    };
+
+    // Act / Assert: absent and present-but-all-empty both render exactly
+    // the template-only prompt.
+    assert_eq!(template.render(&without), expected);
+    assert_eq!(template.render(&all_empty), expected);
+}
+
+#[test]
+fn render_appends_language_directive_to_template_portion_when_instructions_present() {
+    // Arrange: prompt without a {language} placeholder — the fallback
+    // directive must stay attached to the template portion (after the
+    // instructions block), not float to the end of the whole prompt.
+    let template = Template {
+        name: "no-language-placeholder".to_string(),
+        description: "prompt without a {language} placeholder".to_string(),
+        prompt: "Summarize {transcript}.".to_string(),
+        section_schema: None,
+        label: None,
+        emoji: None,
+    };
+    let ctx = RenderContext {
+        transcript: "ship it".to_string(),
+        duration: "".to_string(),
+        title: "".to_string(),
+        language: "French".to_string(),
+        instructions: Some(SummaryInstructions::new(
+            Some("Be concise.".to_string()),
+            None,
+        )),
+    };
+
+    // Act
+    let rendered = template.render(&ctx);
+
+    // Assert
+    assert_eq!(
+        rendered,
+        "General guidelines for this summary:\nBe concise.\n\n---\n\n\
+         Summarize ship it.\n\nWrite your entire response in French."
+    );
+}
+
+#[test]
+fn render_with_instructions_places_block_first_and_keeps_trailing_cue_last() {
+    // Arrange
+    let template = cue_terminated_template();
+    let ctx = RenderContext {
+        transcript: "ship it".to_string(),
+        duration: "".to_string(),
+        title: "".to_string(),
+        language: "French".to_string(),
+        instructions: Some(SummaryInstructions::new(
+            Some("Always name owners.".to_string()),
+            Some("Focus on the budget discussion.".to_string()),
+        )),
+    };
+
+    // Act
+    let rendered = template.render(&ctx);
+
+    // Assert: block lands before the template text, separated by the
+    // `---` line, and the template's trailing cue remains the final line.
+    assert!(rendered.starts_with("General guidelines for this summary:\nAlways name owners.\n\n"));
+    assert!(rendered.contains("Focus on the budget discussion.\n\n---\n\n"));
+    assert!(rendered
+        .ends_with("Summarize the transcript in French.\n\nTranscript:\nship it\n\nKey Points:"));
+    assert_eq!(
+        rendered.lines().last().expect("non-empty render"),
+        "Key Points:"
+    );
+}
+
+#[test]
+fn render_does_not_substitute_placeholder_like_braces_in_instruction_text() {
+    // Arrange: instruction prose that *looks* like a placeholder must
+    // survive verbatim — substitution only ever touches the template's
+    // own prompt, and validation never sees instruction text at all.
+    let template = cue_terminated_template();
+    let ctx = RenderContext {
+        transcript: "ship it".to_string(),
+        duration: "".to_string(),
+        title: "".to_string(),
+        language: "French".to_string(),
+        instructions: Some(SummaryInstructions::new(
+            Some("Quote {transcript} and {anything} literally.".to_string()),
+            None,
+        )),
+    };
+
+    // Act
+    let rendered = template.render(&ctx);
+
+    // Assert: the instruction's braces are intact, while the template's
+    // own {transcript} was substituted exactly once.
+    assert!(rendered.contains("Quote {transcript} and {anything} literally."));
+    assert_eq!(rendered.matches("ship it").count(), 1);
+}
+
+#[test]
+fn every_builtin_template_renders_with_instructions_without_leftover_placeholders() {
+    // Arrange
+    let dir = templates_dir();
+    let templates = list_templates(&dir).expect("list_templates should succeed");
+    let ctx = RenderContext {
+        transcript: "Alice: let's ship it. Bob: agreed, I'll own the rollout.".to_string(),
+        duration: "30 minutes".to_string(),
+        title: "Weekly Sync".to_string(),
+        language: "French".to_string(),
+        instructions: Some(SummaryInstructions::new(
+            Some("Always list open questions with owners.".to_string()),
+            Some("Focus on the rollout discussion.".to_string()),
+        )),
+    };
+    assert_eq!(templates.len(), BUILTIN_TEMPLATE_NAMES.len());
+
+    // Act
+    let rendered: Vec<String> = templates.iter().map(|t| t.render(&ctx)).collect();
+
+    // Assert
+    for (template, output) in templates.iter().zip(rendered.iter()) {
+        assert!(
+            !has_leftover_placeholder(output),
+            "template '{}' left an unsubstituted placeholder with instructions: {output}",
+            template.name
+        );
+        assert!(
+            output.starts_with("General guidelines for this summary:"),
+            "template '{}' should lead with the instructions block",
+            template.name
+        );
     }
 }

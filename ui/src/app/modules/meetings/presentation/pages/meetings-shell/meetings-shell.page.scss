@@ -118,9 +118,25 @@ app-update-banner {
   display: flex;
 }
 
+app-sidebar-splitter {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sidebar-slot,
+.content-slot {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+app-meeting-sidebar,
 app-meeting-detail-pane {
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .modal-backdrop {
@@ -139,4 +155,34 @@ app-meeting-detail-pane {
   width: 100%;
   max-height: 80vh;
   overflow-y: auto;
+}
+
+/*
+ * Narrow-window fallback: below ~900px the shell auto-collapses the sidebar
+ * to its rail (see `createSidebarNarrowControls`), so the detail pane keeps
+ * its full width. Composes with the detail pane's NARROW_BREAKPOINT_PX=1200
+ * single-column switch — between 900 and 1200 the detail pane is already
+ * single-column while the sidebar stays usable beside it. The `overflow-x`
+ * pin guarantees neither breakpoint can ever produce horizontal scroll.
+ */
+@media (max-width: 900px) {
+  .workspace {
+    overflow-x: clip;
+  }
+
+  .sidebar-slot,
+  .content-slot {
+    min-width: 0;
+  }
+}
+
+/* Reduced motion: layout chrome never animates width. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace,
+  .sidebar-slot,
+  .content-slot,
+  app-sidebar-splitter {
+    transition: none !important;
+    animation: none !important;
+  }
 }

@@ -41,8 +41,11 @@
       <app-capture-source-picker
         [captureSource]="captureSource()"
         [systemAudioStatus]="systemAudioStatus()"
+        [selectedDeviceName]="selectedDevice()?.name ?? null"
+        [devices]="devices()"
         [disabled]="disabled()"
         (sourceSelected)="onSourceSelected($event)"
+        (fallbackMicSelected)="deviceChanged.emit($event)"
         (permissionRequested)="permissionRequested.emit()"
       />
     </div>

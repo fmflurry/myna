@@ -1,5 +1,10 @@
 <div class="live-transcript" #scrollContainer (scroll)="onScroll($event)">
-  @for (segment of finalizedSegments(); track trackBySegment($index, segment)) {
+  @if (canShowEarlier()) {
+    <button class="page-control" type="button" aria-label="Show earlier transcript" (click)="showEarlier()">
+      Show earlier transcript
+    </button>
+  }
+  @for (segment of visibleFinalizedSegments(); track trackBySegment($index, segment)) {
     <p class="final">
       <span class="timestamp">{{ formatTimestamp(segment.startSec) }}</span>
       @if (hasSpeakerLabel(segment.speaker)) {
@@ -24,5 +29,10 @@
   }
   @if (isEmpty()) {
     <p class="empty">Listening&hellip;</p>
+  }
+  @if (canShowNewer()) {
+    <button class="page-control" type="button" aria-label="Show newer transcript" (click)="showNewer()">
+      Show newer transcript
+    </button>
   }
 </div>

@@ -137,4 +137,59 @@ describe('SettingsComponent', () => {
 
     expect(emitted.length).toBe(1);
   });
+
+  it('seeds the guidelines textarea from the input', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('guidelines', 'Be concise.');
+    fixture.detectChanges();
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.guidelines-input');
+    expect(textarea.value).toBe('Be concise.');
+  });
+
+  it('keeps "Save guidelines" disabled while the textarea matches the saved value', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('guidelines', 'Be concise.');
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement.querySelector('.save-guidelines') as HTMLButtonElement).disabled).toBe(true);
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.guidelines-input');
+    textarea.value = 'Be concise. Use bullets.';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement.querySelector('.save-guidelines') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('emits the trimmed value when "Save guidelines" is clicked', () => {
+    const fixture = createFixture();
+    const emitted: string[] = [];
+    fixture.componentInstance.guidelinesChanged.subscribe((text) => emitted.push(text));
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.guidelines-input');
+    textarea.value = '  Focus on decisions.  ';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('.save-guidelines').click();
+
+    expect(emitted).toEqual(['Focus on decisions.']);
+  });
+
+  it('saves on blur, and never re-emits an unchanged value', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('guidelines', 'Be concise.');
+    fixture.detectChanges();
+    const emitted: string[] = [];
+    fixture.componentInstance.guidelinesChanged.subscribe((text) => emitted.push(text));
+
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.guidelines-input');
+    textarea.dispatchEvent(new Event('blur'));
+    expect(emitted).toEqual([]);
+
+    textarea.value = 'Be concise. In French.';
+    textarea.dispatchEvent(new Event('input'));
+    textarea.dispatchEvent(new Event('blur'));
+    expect(emitted).toEqual(['Be concise. In French.']);
+  });
 });

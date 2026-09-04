@@ -7,11 +7,13 @@
 
 mod engine;
 mod error;
+mod instructions;
 mod language;
 mod template;
 
 pub use engine::{init_ggml_env, Summarizer, SummaryOptions};
 pub use error::LlmError;
+pub use instructions::{SummaryInstructions, MAX_INSTRUCTION_CHARS};
 pub use language::{
     label_for, resolve, SummaryLanguage, DEFAULT_SUMMARY_LANGUAGE, SUMMARY_LANGUAGES,
 };

@@ -18,6 +18,7 @@ pub mod session;
 pub mod session_manifest;
 pub mod state;
 pub mod store;
+pub mod summary_prefs;
 pub mod update_prefs;
 
 use std::sync::Arc;
@@ -110,6 +111,9 @@ pub fn run() {
             commands::summary::cancel_summarization,
             commands::summary::get_summary,
             commands::summary::edit_summary,
+            commands::summary::delete_summary,
+            commands::summary::get_summary_guidelines,
+            commands::summary::set_summary_guidelines,
             commands::models::models_status,
             commands::models::start_model_download,
             commands::models::start_diarization_download,

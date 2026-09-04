@@ -54,12 +54,16 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
 
   const noop = async (): Promise<void> => undefined;
   const setSplitRatio = vi.fn((ratio: number) => void ratio);
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const setSidebarWidth = vi.fn((width: number) => void width);
+  const setSidebarCollapsed = vi.fn((collapsed: boolean) => void collapsed);
   const folders = signal<readonly never[]>([]);
   const expandedFolders = signal<ReadonlySet<never>>(new Set());
 
@@ -71,9 +75,10 @@ describe('MeetingsShellPage — split-workspace layout forwarding', () => {
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed,
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed, setSidebarWidth, setSidebarCollapsed,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
     startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
     deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),
@@ -91,6 +96,8 @@ modelDownload: signal(undefined),
   beforeEach(() => {
     setSplitRatio.mockClear();
     setTranscriptCollapsed.mockClear();
+    setSidebarWidth.mockClear();
+    setSidebarCollapsed.mockClear();
     const routeParamMap = new BehaviorSubject<ParamMap>(convertToParamMap({}));
     TestBed.configureTestingModule({
       providers: [
@@ -110,7 +117,7 @@ modelDownload: signal(undefined),
   it('forwards a split-ratio change from the detail pane to the facade', () => {
     const fixture = createFixture();
 
-    fixture.componentInstance.onSplitRatioChanged(0.55);
+    fixture.componentInstance.layoutControls.onSplitRatioChanged(0.55);
 
     expect(setSplitRatio).toHaveBeenCalledWith(0.55);
   });
@@ -118,7 +125,7 @@ modelDownload: signal(undefined),
   it('forwards a transcript-collapsed change from the detail pane to the facade', () => {
     const fixture = createFixture();
 
-    fixture.componentInstance.onTranscriptCollapsedChanged(true);
+    fixture.componentInstance.layoutControls.onTranscriptCollapsedChanged(true);
 
     expect(setTranscriptCollapsed).toHaveBeenCalledWith(true);
   });

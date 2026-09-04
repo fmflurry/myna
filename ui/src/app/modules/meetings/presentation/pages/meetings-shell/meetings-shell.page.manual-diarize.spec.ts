@@ -75,6 +75,8 @@ describe('MeetingsShellPage — manual-only diarization (ADR 0009)', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
   const folders = signal<readonly never[]>([]);
@@ -123,17 +125,19 @@ describe('MeetingsShellPage — manual-only diarization (ADR 0009)', () => {
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress, folders, expandedFolders,
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress, folders, expandedFolders,
     diarizeMeeting, stopRecording,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
+    getAudioUrl: vi.fn().mockResolvedValue(null),
     startRecording: vi.fn(noop), cancelRecording: vi.fn(noop), clearSelection: vi.fn(),
     deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),
     cancelSummarization: vi.fn(noop), exportMeeting: vi.fn(noop), selectDevice: vi.fn(),
     selectCaptureSource: vi.fn(), selectAudioSource: vi.fn(), selectSummaryLanguage: vi.fn(),
     requestSystemAudioPermission: vi.fn(noop), editTranscriptSegment: vi.fn(noop),
-    setSplitRatio: vi.fn(), setTranscriptCollapsed: vi.fn(), setMeetingArchived: vi.fn(noop),
+    setSplitRatio: vi.fn(), setTranscriptCollapsed: vi.fn(), setSidebarWidth: vi.fn(), setSidebarCollapsed: vi.fn(), setMeetingArchived: vi.fn(noop),
     loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
     deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
     speakerHistory: signal([]),

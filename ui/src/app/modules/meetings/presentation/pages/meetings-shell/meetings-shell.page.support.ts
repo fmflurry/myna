@@ -9,8 +9,12 @@ import { describeTranscriptOp, type TranscriptOp } from '../../../application/st
 import type { SystemAudioStatus } from '../../../core/models/capture-source.model';
 import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
+import type { SummaryInstructionsDraft } from '../../../core/models/summary-instructions.model';
 import type { UpdateConsent } from '../../../core/models/update.model';
+import type { SummaryDraftChange } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
+import { closeSidebarOnEscape } from './meetings-shell.page.sidebar-narrow.support';
+export { createSidebarNarrowControls } from './meetings-shell.page.sidebar-narrow.support';
 
 /**
  * Shown to the capture-source-picker before `checkSystemAudio()` has
@@ -96,6 +100,25 @@ export function runErrorRetry(facade: MeetingsFacade): void {
 }
 
 /**
+ * Single-flight summarize: one click issues one `summarizeMeeting`. The
+ * pane's Regenerate path used to emit on both outputs, firing the shell
+ * handler twice per click; the second call hit Rust's `summary_busy` guard
+ * (state.rs) and surfaced a BUSY error. Re-entrant calls while a generation
+ * is already in flight are dropped up front.
+ */
+export function runSummarize(facade: MeetingsFacade, templateName: string): void {
+  if (facade.summarizing()) {
+    return;
+  }
+  const meeting = facade.selectedMeeting();
+  const template = facade.templates().find((candidate) => candidate.name === templateName);
+  if (!meeting || !template) {
+    return;
+  }
+  void facade.summarizeMeeting(meeting.id, template);
+}
+
+/**
  * Label for the transcript toolbar's Undo button — the standing
  * `TRANSCRIPT_UNDO` slot rendered via `describeTranscriptOp`, or `null` when
  * nothing structural is undoable (button hidden).
@@ -113,9 +136,22 @@ export function describeLatestSpeakerUndo(history: readonly SpeakerOp[]): string
   return op === undefined ? null : describeSpeakerOp(op);
 }
 
-/** Loads the persisted consent on every launch; a `'granted'` result immediately runs a throttled, non-blocking check. */
+/**
+ * Loads the persisted consent on every launch; a `'granted'` result immediately
+ * runs a throttled, non-blocking check. The consent read is this path's only
+ * fallible step, and the call site's `void` would drop a rejection with zero
+ * diagnostics — a transient `update_consent` IPC failure then reads in the
+ * shipped app exactly like "the launch check never runs at all". So the
+ * failure is caught and logged here; the store keeps `'unset'`, and no check
+ * fires without a confirmed `'granted'` (consent is never inferred).
+ */
 export async function loadUpdatesOnLaunch(facade: MeetingsFacade): Promise<void> {
-  await facade.updates.loadConsent();
+  try {
+    await facade.updates.loadConsent();
+  } catch (caught) {
+    console.error('[update] launch consent read failed; skipping the launch update check', caught);
+    return;
+  }
   if (facade.updates.consent() === 'granted') {
     void facade.updates.checkForUpdate(false);
   }
@@ -206,6 +242,10 @@ export interface SettingsControls {
   readonly closeSettings: () => void;
   readonly onBackdropActivate: (event: MouseEvent) => void;
   readonly onBackdropKeydown: (event: KeyboardEvent) => void;
+  /** Persisted general guidelines (`facade.summaryGuidelines()`); seeds the Settings textarea. */
+  readonly guidelines: Signal<string>;
+  /** Settings save-on-blur / Save click; the store slot updates only once the facade write succeeds. */
+  readonly onGuidelinesChanged: (text: string) => void;
 }
 
 /**
@@ -250,6 +290,85 @@ export function createSettingsControls(
         event.preventDefault();
         closeSettings();
       }
+    },
+    guidelines: facade.summaryGuidelines,
+    onGuidelinesChanged: (text) => {
+      void facade.setSummaryGuidelines(text);
+    },
+  };
+}
+
+/**
+ * Per-request summary-instructions wiring, grouped so `MeetingsShellPage`
+ * stays under the 400-line `max-lines` cap. `drafts` is keyed by template
+ * name for the SELECTED meeting (the pane owns the active tab); every facade
+ * read happens inside a `computed`, so store slot writes re-derive it
+ * reactively. `onDraftChanged` persists through the synchronous
+ * `facade.setSummaryInstructionDraft` — a no-op when nothing is selected.
+ */
+export interface SummaryInstructionControls {
+  readonly drafts: Signal<ReadonlyMap<string, SummaryInstructionsDraft>>;
+  readonly onDraftChanged: (event: SummaryDraftChange) => void;
+}
+
+/** Builds {@link SummaryInstructionControls} bound to `facade`. */
+export function createSummaryInstructionControls(facade: MeetingsFacade): SummaryInstructionControls {
+  return {
+    drafts: computed(() => {
+      const meeting = facade.selectedMeeting();
+      const drafts = new Map<string, SummaryInstructionsDraft>();
+      if (meeting === undefined) {
+        return drafts;
+      }
+      for (const template of facade.templates()) {
+        drafts.set(template.name, facade.summaryInstructionDraft(meeting.id, template.name));
+      }
+      return drafts;
+    }),
+    onDraftChanged: (event) => {
+      const meeting = facade.selectedMeeting();
+      if (meeting !== undefined) {
+        facade.setSummaryInstructionDraft(meeting.id, event.template, event.draft);
+      }
+    },
+  };
+}
+
+/**
+ * Split/detail + sidebar layout wiring, grouped so `MeetingsShellPage`
+ * stays under the 400-line `max-lines` cap. Owns every layout `facade`
+ * call — the splitter and the detail pane below the shell stay dumb.
+ */
+export interface LayoutControls {
+  readonly onSplitRatioChanged: (ratio: number) => void;
+  readonly onTranscriptCollapsedChanged: (collapsed: boolean) => void;
+  readonly onSidebarWidthChanged: (width: number) => void;
+  readonly onSidebarCollapsedChanged: (collapsed: boolean) => void;
+  /** Cmd/Ctrl+B toggles the sidebar (ignored inside editable fields); Escape collapses it, but only in the narrow fallback — see `closeSidebarOnEscape`. */
+  readonly onWindowKeydown: (event: KeyboardEvent) => void;
+}
+
+/** Builds {@link LayoutControls} bound to `facade`. */
+export function createLayoutControls(facade: MeetingsFacade): LayoutControls {
+  return {
+    onSplitRatioChanged: (ratio) => facade.setSplitRatio(ratio),
+    onTranscriptCollapsedChanged: (collapsed) => facade.setTranscriptCollapsed(collapsed),
+    onSidebarWidthChanged: (width) => facade.setSidebarWidth(width),
+    onSidebarCollapsedChanged: (collapsed) => facade.setSidebarCollapsed(collapsed),
+    onWindowKeydown: (event) => {
+      if (event.key === 'Escape') {
+        closeSidebarOnEscape(facade, event);
+        return;
+      }
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'b') {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      event.preventDefault();
+      facade.setSidebarCollapsed(!facade.sidebarCollapsed());
     },
   };
 }

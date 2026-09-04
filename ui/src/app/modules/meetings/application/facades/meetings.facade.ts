@@ -4,8 +4,10 @@ import type { Observable } from 'rxjs';
 import type { CaptureSource } from '../../core/models/capture-source.model';
 import type { FolderId } from '../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
+import type { SummaryInstructionsDraft } from '../../core/models/summary-instructions.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import { AudioRepositoryPort } from '../../core/ports/audio-repository.port';
+import type { AudioChunk } from '../../core/ports/audio-repository.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
 import { MenuPort } from '../../core/ports/menu.port';
@@ -19,10 +21,12 @@ import { CheckSystemAudioUseCase } from '../use-cases/check-system-audio.usecase
 import { CreateFolderUseCase } from '../use-cases/create-folder.usecase';
 import { DeleteFolderUseCase } from '../use-cases/delete-folder.usecase';
 import { DeleteMeetingUseCase } from '../use-cases/delete-meeting.usecase';
+import { DeleteSummaryUseCase } from '../use-cases/delete-summary.usecase';
 import { DiarizeMeetingUseCase } from '../use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from '../use-cases/edit-summary.usecase';
 import { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from '../use-cases/get-app-version.usecase';
+import { GetSummaryGuidelinesUseCase } from '../use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
 import { ImportAudioUseCase } from '../use-cases/import-audio.usecase';
 import { ListAudioSourcesUseCase } from '../use-cases/list-audio-sources.usecase';
@@ -37,22 +41,26 @@ import { RenameMeetingUseCase } from '../use-cases/rename-meeting.usecase';
 import { RetranscribeMeetingUseCase } from '../use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from '../use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from '../use-cases/set-meeting-folder.usecase';
+import { SetSummaryGuidelinesUseCase } from '../use-cases/set-summary-guidelines.usecase';
 import { StartRecordingUseCase } from '../use-cases/start-recording.usecase';
 import { StopRecordingUseCase } from '../use-cases/stop-recording.usecase';
 import { SummarizeMeetingUseCase } from '../use-cases/summarize-meeting.usecase';
 import { MeetingsStore } from '../stores/meetings.store';
 import { DevicesFacade } from './devices.facade';
 import {
-  EXPORT_EXTENSIONS,
   runCancelImport,
+  runCancelSummarization,
+  runDeleteSummary,
   runDiarizeMeeting,
   runEditSummary,
+  runExportMeeting,
   runGuarded,
   runImportAudio,
+  runLoadSummary,
   runPlaceMeeting,
   runRetranscribeMeeting,
+  runSetSummaryGuidelines,
   runSummarizeMeeting,
-  toErrorInfo,
 } from './meetings-facade.support';
 import {
   runCancelRecording,
@@ -87,6 +95,7 @@ export class MeetingsFacade {
   private readonly listMeetingsUseCase = inject(ListMeetingsUseCase);
   private readonly openMeetingUseCase = inject(OpenMeetingUseCase);
   private readonly deleteMeetingUseCase = inject(DeleteMeetingUseCase);
+  private readonly deleteSummaryUseCase = inject(DeleteSummaryUseCase);
   private readonly renameMeetingUseCase = inject(RenameMeetingUseCase);
   private readonly setMeetingArchivedUseCase = inject(SetMeetingArchivedUseCase);
   private readonly editSummaryUseCase = inject(EditSummaryUseCase);
@@ -98,6 +107,8 @@ export class MeetingsFacade {
   private readonly exportMeetingUseCase = inject(ExportMeetingUseCase);
   private readonly checkSystemAudioUseCase = inject(CheckSystemAudioUseCase);
   private readonly listSummaryLanguagesUseCase = inject(ListSummaryLanguagesUseCase);
+  private readonly getSummaryGuidelinesUseCase = inject(GetSummaryGuidelinesUseCase);
+  private readonly setSummaryGuidelinesUseCase = inject(SetSummaryGuidelinesUseCase);
   private readonly getSummaryUseCase = inject(GetSummaryUseCase);
   private readonly getAppVersionUseCase = inject(GetAppVersionUseCase);
   private readonly importAudioUseCase = inject(ImportAudioUseCase);
@@ -137,10 +148,15 @@ export class MeetingsFacade {
   readonly summarizing = this.store.summarizing;
   readonly summarizingKey = this.store.summarizingKey;
   readonly startingRecording = this.store.startingRecording;
+  /** Fine-grained phase of the in-flight stop (`recording://stop-progress`); `null` outside a stop. */
+  readonly stopPhase = this.store.stopPhase;
+  /** Latest `recording://health` event; `null` while the recording stays healthy. */
+  readonly recordingHealth = this.store.recordingHealth;
   readonly systemAudioStatus = this.store.systemAudioStatus;
   readonly captureSource = this.store.captureSource;
   readonly summaryLanguages = this.store.summaryLanguages;
   readonly selectedSummaryLanguage = this.store.selectedSummaryLanguage;
+  readonly summaryGuidelines = this.store.summaryGuidelines;
   readonly summaryCache = this.store.summaryCache;
   readonly appVersion = this.store.appVersion;
   readonly audioSources = this.store.audioSources;
@@ -148,6 +164,8 @@ export class MeetingsFacade {
   readonly effectiveSystemSource = this.store.effectiveSystemSource;
   readonly splitRatio = this.store.splitRatio;
   readonly transcriptCollapsed = this.store.transcriptCollapsed;
+  readonly sidebarWidth = this.store.sidebarWidth;
+  readonly sidebarCollapsed = this.store.sidebarCollapsed;
   readonly importing = this.store.importing;
   readonly importProgress = this.store.importProgress;
   readonly folders = this.store.folders;
@@ -226,25 +244,18 @@ export class MeetingsFacade {
     this.transcriptEditingFacade.editTranscriptSegment(id, index, text);
 
   /** Persists an edited summary's markdown; never optimistic — see `runEditSummary`. */
-  async editSummary(id: MeetingId, template: string, language: string, markdown: string): Promise<void> {
-    await runEditSummary(this.store, this.editSummaryUseCase, id, template, language, markdown);
-  }
+  editSummary = (id: MeetingId, template: string, language: string, markdown: string): Promise<void> =>
+    runEditSummary(this.store, this.editSummaryUseCase, id, template, language, markdown);
+
+  /** Deletes a persisted summary; never optimistic — see `runDeleteSummary`. */
+  deleteSummary = (id: MeetingId, template: string, language: string): Promise<void> =>
+    runDeleteSummary(this.store, this.deleteSummaryUseCase, id, template, language);
 
   /** Generates a summary for one (meeting, template, language) triple; see `runSummarizeMeeting`. */
-  async summarizeMeeting(id: MeetingId, template: SummaryTemplate): Promise<void> {
-    await runSummarizeMeeting(this.store, this.summarizeMeetingUseCase, id, template);
-  }
+  summarizeMeeting = (id: MeetingId, template: SummaryTemplate): Promise<void> =>
+    runSummarizeMeeting(this.store, this.summarizeMeetingUseCase, id, template);
 
-  async cancelSummarization(): Promise<void> {
-    try {
-      await this.cancelSummarizationUseCase.cancel();
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    } finally {
-      this.store.setSummarizingKey(null);
-    }
-  }
+  cancelSummarization = (): Promise<void> => runCancelSummarization(this.store, this.cancelSummarizationUseCase);
 
   loadTemplates = (): Promise<void> =>
     this.guarded(async () => this.store.setTemplates(await this.listTemplatesUseCase.list()), 'loadTemplates');
@@ -276,23 +287,11 @@ export class MeetingsFacade {
     this.transcriptEditingFacade.mergeTranscriptSegmentUp(id, index, expectedText);
 
   /** Orchestrates the save dialog then the export; a `null` (cancelled) dialog result is a silent no-op. */
-  async exportMeeting(id: MeetingId, format: MeetingExportFormat, suggestedName: string): Promise<void> {
-    try {
-      const dest = await this.fileDialog.save(suggestedName, EXPORT_EXTENSIONS[format]);
-      if (dest === null) {
-        return;
-      }
-      await this.exportMeetingUseCase.export(id, format, dest);
-      this.store.clearError();
-    } catch (caught) {
-      this.store.setError(toErrorInfo(caught));
-    }
-  }
+  exportMeeting = (id: MeetingId, format: MeetingExportFormat, suggestedName: string): Promise<void> =>
+    runExportMeeting(this.store, this.fileDialog, this.exportMeetingUseCase, id, format, suggestedName);
 
   /** Imports a `.wav` file as a new meeting; see `runImportAudio` for the full orchestration. */
-  async importAudio(): Promise<void> {
-    await runImportAudio(this.store, this.fileDialog, this.importAudioUseCase);
-  }
+  importAudio = (): Promise<void> => runImportAudio(this.store, this.fileDialog, this.importAudioUseCase);
 
   /** Re-transcribes an existing meeting, optionally replacing its audio; see `runRetranscribeMeeting`. */
   async retranscribeMeeting(id: MeetingId, replaceAudio: boolean): Promise<void> {
@@ -314,17 +313,13 @@ export class MeetingsFacade {
   requestSystemAudioPermission = (): Promise<void> =>
     this.guarded(async () => this.store.setSystemAudioStatus(await this.checkSystemAudioUseCase.request()), 'requestSystemAudioPermission');
 
-  selectCaptureSource(source: CaptureSource): void {
-    this.store.setCaptureSource(source);
-  }
+  selectCaptureSource(source: CaptureSource): void { this.store.setCaptureSource(source); }
 
   loadAudioSources = (): Promise<void> =>
     this.guarded(async () => this.store.setAudioSources(await this.listAudioSourcesUseCase.list()), 'loadAudioSources');
 
   /** Selects the system-audio source the NEXT recording will use; persisted by the store. */
-  selectAudioSource(id: string): void {
-    this.store.setSelectedAudioSource(id);
-  }
+  selectAudioSource(id: string): void { this.store.setSelectedAudioSource(id); }
 
   loadSummaryLanguages = (): Promise<void> =>
     this.guarded(async () => this.store.setSummaryLanguages(await this.listSummaryLanguagesUseCase.list()), 'loadSummaryLanguages');
@@ -334,36 +329,43 @@ export class MeetingsFacade {
     this.store.setSelectedSummaryLanguage(code);
   }
 
+  /** Fetches the server-side general guidelines into the store slot; mirrors `loadSummaryLanguages`. */
+  loadSummaryGuidelines = (): Promise<void> =>
+    this.guarded(async () => this.store.setSummaryGuidelines(await this.getSummaryGuidelinesUseCase.get()), 'loadSummaryGuidelines');
+
+  /** Persists general guidelines server-side; the slot updates ONLY once the port write succeeds — never optimistic. */
+  setSummaryGuidelines = (text: string): Promise<void> =>
+    runSetSummaryGuidelines(this.store, this.setSummaryGuidelinesUseCase, text);
+
+  /** Reads the (meeting, template) focus draft; defaults to empty text with general guidelines included. */
+  summaryInstructionDraft = (id: MeetingId, template: string): SummaryInstructionsDraft => this.store.summaryInstructionDraft(id, template);
+
+  /** Persists the (meeting, template) focus draft via the store; synchronous, mirrors `selectSummaryLanguage`. */
+  setSummaryInstructionDraft = (id: MeetingId, template: string, draft: SummaryInstructionsDraft): void =>
+    this.store.setSummaryInstructionDraft(id, template, draft);
+
   /** Fetches and caches a persisted summary for one (meeting, template, language) triple; a no-op once cached, so tab switches never re-hit IPC. */
-  async loadSummary(id: MeetingId, template: string, language: string): Promise<void> {
-    if (this.store.getSummaryCacheEntry(id, template, language)) {
-      return;
-    }
-    this.store.setSummaryCacheLoading(id, template, language);
-    try {
-      const summary = await this.getSummaryUseCase.get(id, template, language);
-      this.store.setSummaryCacheResult(id, template, language, summary);
-      this.store.clearError();
-    } catch (caught) {
-      // Drop the loading marker so the next tab visit retries instead of getting stuck.
-      this.store.clearSummaryCacheEntry(id, template, language);
-      this.store.setError(toErrorInfo(caught));
-    }
-  }
+  loadSummary = (id: MeetingId, template: string, language: string): Promise<void> =>
+    runLoadSummary(this.store, this.getSummaryUseCase, id, template, language);
 
   loadAppVersion = (): Promise<void> =>
     this.guarded(async () => this.store.setAppVersion(await this.getAppVersionUseCase.version()), 'loadAppVersion');
 
   /** Persists the transcript/summary split ratio for the NEXT session too, via the store. */
-  setSplitRatio(ratio: number): void {
-    this.store.setSplitRatio(ratio);
-  }
+  setSplitRatio(ratio: number): void { this.store.setSplitRatio(ratio); }
 
   /** Persists whether the transcript column is collapsed for the NEXT session too, via the store. */
-  setTranscriptCollapsed(collapsed: boolean): void {
-    this.store.setTranscriptCollapsed(collapsed);
-  }
+  setTranscriptCollapsed(collapsed: boolean): void { this.store.setTranscriptCollapsed(collapsed); }
+
+  /** Persists the sidebar width for the NEXT session too, via the store. */
+  setSidebarWidth(width: number): void { this.store.setSidebarWidth(width); }
+
+  /** Persists whether the sidebar is collapsed for the NEXT session too, via the store. */
+  setSidebarCollapsed(collapsed: boolean): void { this.store.setSidebarCollapsed(collapsed); }
   getAudioUrl = (meetingId: MeetingId): Promise<string | null> => this.audioRepository.getAudioUrl(meetingId);
+  /** Ordered playable chunks for seamless multipart WAV playback; empty = no audio. */
+  getAudioChunks = (meetingId: MeetingId): Promise<readonly AudioChunk[]> =>
+    this.audioRepository.getAudioChunks(meetingId);
 
   loadFolders = (): Promise<void> =>
     this.guarded(async () => this.store.setFolders(await this.listFoldersUseCase.execute()), 'loadFolders');

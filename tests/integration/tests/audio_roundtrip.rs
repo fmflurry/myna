@@ -4,8 +4,8 @@
 //! Every test here runs unconditionally — none of it touches a model, so
 //! there is nothing to skip.
 
-use myna_audio::{rms, RecordingSpec, Resampler, WavRecorder};
-use myna_stt::read_wav_to_f32;
+use myna_audio::{rms, RecordingSpec, Resampler, SegmentedWavRecorder, WavRecorder};
+use myna_stt::{read_wav_parts_to_f32, read_wav_to_f32};
 
 /// Number of frames of a synthesized 48 kHz test clip.
 const INPUT_FRAMES_48K: usize = 48_000;
@@ -75,6 +75,37 @@ fn wav_recorder_roundtrip_produces_16khz_mono_pcm_matching_frame_count() {
     assert_eq!(stats.frames, RECORDED_FRAME_COUNT as u64);
     assert_eq!(sample_rate, TARGET_SAMPLE_RATE_HZ);
     assert_eq!(read_back.len(), RECORDED_FRAME_COUNT);
+}
+
+#[test]
+fn segmented_wav_readback_concatenates_parts_in_recording_order() {
+    // Arrange: two samples fit per four-byte part. Deliberately varying values
+    // make reversed or lexicographic-but-wrong part ordering observable.
+    let temp_dir = tempfile::tempdir().expect("temp dir creates");
+    let wav_path = temp_dir.path().join("roundtrip.wav");
+    let spec = RecordingSpec {
+        sample_rate: TARGET_SAMPLE_RATE_HZ,
+        channels: 1,
+    };
+    let samples = [-0.8, -0.4, -0.1, 0.2, 0.5, 0.9, -0.6];
+    let mut recorder =
+        SegmentedWavRecorder::create(&wav_path, spec, 4).expect("segmented recorder creates");
+    recorder.write(&samples).expect("write rotates into parts");
+    recorder.finalize().expect("parts finalize");
+
+    // Act
+    let (read_back, sample_rate) =
+        read_wav_parts_to_f32(&wav_path).expect("base WAV and numbered parts read");
+
+    // Assert
+    assert_eq!(sample_rate, TARGET_SAMPLE_RATE_HZ);
+    assert_eq!(read_back.len(), samples.len());
+    for (actual, expected) in read_back.iter().zip(samples) {
+        assert!(
+            (actual - expected).abs() <= 1.0 / i16::MAX as f32,
+            "expected chronological sample {expected}, got {actual}"
+        );
+    }
 }
 
 #[test]

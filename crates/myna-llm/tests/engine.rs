@@ -66,6 +66,7 @@ fn transcript_exceeding_n_batch_no_longer_aborts_and_produces_non_empty_summary(
         duration: "35:00".to_string(),
         title: "Regression check".to_string(),
         language: "English".to_string(),
+        instructions: None,
     };
     let opts = SummaryOptions {
         max_tokens: 24,
@@ -106,6 +107,7 @@ fn transcript_exceeding_n_ctx_falls_back_to_map_reduce_and_produces_non_empty_su
         duration: "35:00".to_string(),
         title: "Map-reduce regression check".to_string(),
         language: "English".to_string(),
+        instructions: None,
     };
     let opts = SummaryOptions {
         n_ctx: 4096,
@@ -137,6 +139,7 @@ fn cancellation_mid_map_reduce_still_stops_the_operation() {
         duration: "35:00".to_string(),
         title: "Cancellation regression check".to_string(),
         language: "English".to_string(),
+        instructions: None,
     };
     let opts = SummaryOptions {
         n_ctx: 4096,

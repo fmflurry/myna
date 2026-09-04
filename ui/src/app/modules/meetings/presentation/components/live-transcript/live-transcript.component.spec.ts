@@ -197,6 +197,111 @@ describe('LiveTranscriptComponent', () => {
     expect(fixture.nativeElement.querySelector('.partial .text').textContent).toBe('still speaking');
   });
 
+  it('keeps the complete input transcript intact while bounding the live DOM to the newest 250 finalized rows', () => {
+    const completeTranscript = Array.from({ length: 300 }, (_, index) =>
+      transcriptSegment({ startSec: index, endSec: index + 1, text: `Sentence ${index}` }),
+    );
+    const fixture = createFixture(completeTranscript);
+
+    // The component must page its view, never truncate or mutate the caller's
+    // complete transcript: persisted export and later paging still need row 0.
+    expect(completeTranscript.length).toBe(300);
+    expect(completeTranscript[0]?.text).toBe('Sentence 0');
+    const rows: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
+    expect(rows.length).toBe(250);
+    expect(rows[0]?.textContent).toBe('Sentence 50');
+    expect(rows.at(-1)?.textContent).toBe('Sentence 299');
+  });
+
+  it('pages earlier and newer through fixed 250-row windows without changing the full transcript input', () => {
+    const completeTranscript = Array.from({ length: 501 }, (_, index) =>
+      transcriptSegment({ startSec: index, endSec: index + 1, text: `Sentence ${index}` }),
+    );
+    const fixture = createFixture(completeTranscript);
+    const earlier: HTMLButtonElement | null = fixture.nativeElement.querySelector('[aria-label="Show earlier transcript"]');
+    const newerPinned: HTMLButtonElement | null =
+      fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]');
+
+    expect(earlier).not.toBeNull();
+    expect(newerPinned).toBeNull();
+    earlier?.click();
+    fixture.detectChanges();
+    const newer: HTMLButtonElement | null =
+      fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]');
+    expect(newer).not.toBeNull();
+    let rows: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
+    expect(rows.length).toBe(250);
+    expect(rows[0]?.textContent).toBe('Sentence 1');
+    expect(rows.at(-1)?.textContent).toBe('Sentence 250');
+
+    newer?.click();
+    fixture.detectChanges();
+    rows = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
+    expect(rows.length).toBe(250);
+    expect(rows[0]?.textContent).toBe('Sentence 251');
+    expect(rows.at(-1)?.textContent).toBe('Sentence 500');
+    expect(completeTranscript.length).toBe(501);
+  });
+
+  it('follows new arrivals only while pinned to the tail, preserving an older page selected by the user', () => {
+    const initialTranscript = Array.from({ length: 300 }, (_, index) =>
+      transcriptSegment({ startSec: index, endSec: index + 1, text: `Sentence ${index}` }),
+    );
+    const fixture = createFixture(initialTranscript);
+    const earlier: HTMLButtonElement | null = fixture.nativeElement.querySelector('[aria-label="Show earlier transcript"]');
+    earlier?.click();
+    fixture.detectChanges();
+
+    fixture.componentRef.setInput('finalizedSegments', [
+      ...initialTranscript,
+      transcriptSegment({ startSec: 300, endSec: 301, text: 'New arrival' }),
+    ]);
+    fixture.detectChanges();
+    let rows: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
+    expect(rows[0]?.textContent).toBe('Sentence 0');
+    expect(rows.at(-1)?.textContent).toBe('Sentence 249');
+
+    const newer: HTMLButtonElement | null = fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]');
+    newer?.click();
+    fixture.detectChanges();
+    fixture.componentRef.setInput('finalizedSegments', [
+      ...initialTranscript,
+      transcriptSegment({ startSec: 300, endSec: 301, text: 'New arrival' }),
+      transcriptSegment({ startSec: 301, endSec: 302, text: 'Tail arrival' }),
+    ]);
+    fixture.detectChanges();
+    rows = Array.from(fixture.nativeElement.querySelectorAll('.final .text'));
+    expect(rows.at(-1)?.textContent).toBe('Tail arrival');
+  });
+
+  it('hides the newer button while pinned to the bottom', () => {
+    const fixture = createFixture([
+      transcriptSegment({ startSec: 0, endSec: 1, text: 'One' }),
+      transcriptSegment({ startSec: 1, endSec: 2, text: 'Two' }),
+    ]);
+
+    expect(fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]')).toBeNull();
+  });
+
+  it('shows the newer button after paging earlier and hides it again after returning newer', () => {
+    const completeTranscript = Array.from({ length: 501 }, (_, index) =>
+      transcriptSegment({ startSec: index, endSec: index + 1, text: `Sentence ${index}` }),
+    );
+    const fixture = createFixture(completeTranscript);
+
+    expect(fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]')).toBeNull();
+
+    const earlier: HTMLButtonElement | null = fixture.nativeElement.querySelector('[aria-label="Show earlier transcript"]');
+    earlier?.click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]')).not.toBeNull();
+
+    const newer: HTMLButtonElement | null = fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]');
+    newer?.click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="Show newer transcript"]')).toBeNull();
+  });
+
   /**
    * Phase 5 render-cost bound: partials arrive at streaming rate, so a burst
    * of updates landing inside ONE frame must produce at most ONE `scrollHeight`

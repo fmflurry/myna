@@ -106,6 +106,7 @@ fn summarizes_a_french_transcript_and_produces_non_empty_output() {
         duration: "".to_string(),
         title: "".to_string(),
         language: label.to_string(),
+        instructions: None,
     };
     let rendered = template.render(&ctx);
     let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");
@@ -143,6 +144,7 @@ fn summarizes_an_english_transcript_and_produces_non_empty_output() {
         duration: "".to_string(),
         title: "".to_string(),
         language: label.to_string(),
+        instructions: None,
     };
     let rendered = template.render(&ctx);
     let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");

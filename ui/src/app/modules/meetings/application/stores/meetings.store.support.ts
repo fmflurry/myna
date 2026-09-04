@@ -1,7 +1,7 @@
 import { defer, retry, timer } from 'rxjs';
 
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
-import { createIngestPlaceholder } from '../../core/models/meeting.model';
+import { createIngestPlaceholder, withoutSummary } from '../../core/models/meeting.model';
 import type { Summary } from '../../core/models/summary.model';
 import type { AudioImportPort } from '../../core/ports/audio-import.port';
 import type { MeetingsErrorCode } from '../../core/models/recording-state.model';
@@ -100,6 +100,33 @@ export function applySummaryContentUpdate(
         : ref,
     );
     store.setSelectedMeeting({ ...selected, summaries });
+  }
+}
+
+/**
+ * Removes a deleted summary from BOTH read paths the detail pane uses:
+ * the summary-cache entry for the (meeting, template, language) triple,
+ * AND the matching `summaries` ref on the meeting record. Deliberately
+ * avoids `setSelectedMeeting` — that would clear the speaker/transcript
+ * undo histories and touch instruction drafts, neither of which a summary
+ * delete owns. `updateMeeting` mirrors onto `SELECTED_MEETING` without
+ * clearing undo state.
+ */
+export function applySummaryRemoval(
+  store: MeetingsStore,
+  meetingId: MeetingId,
+  template: string,
+  language: string,
+): void {
+  store.clearSummaryCacheEntry(meetingId, template, language);
+  const selected = store.selectedMeeting();
+  if (selected?.id === meetingId) {
+    store.updateMeeting(withoutSummary(selected, template, language));
+    return;
+  }
+  const existing = store.meetings().find((meeting) => meeting.id === meetingId);
+  if (existing) {
+    store.updateMeeting(withoutSummary(existing, template, language));
   }
 }
 

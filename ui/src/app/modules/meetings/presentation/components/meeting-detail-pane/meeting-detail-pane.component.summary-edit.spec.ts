@@ -58,10 +58,13 @@ describe('MeetingDetailPaneComponent — summary edit re-emit', () => {
     return fixture;
   };
 
-  const editSummaryInPanel = (fixture: ReturnType<typeof createFixture>): void => {
-    const panel = fixture.nativeElement.querySelector('app-summary-panel');
-    panel.querySelector('.edit').click();
+  const editSummaryViaToolbar = (fixture: ReturnType<typeof createFixture>): void => {
+    const editButton: HTMLButtonElement = fixture.nativeElement.querySelector(
+      '.pane-toolbar-summary .edit-summary',
+    );
+    editButton.click();
     fixture.detectChanges();
+    const panel = fixture.nativeElement.querySelector('app-summary-panel');
     const textarea: HTMLTextAreaElement = panel.querySelector('.summary-input');
     textarea.value = '# Edited';
     textarea.dispatchEvent(new Event('input'));
@@ -76,11 +79,22 @@ describe('MeetingDetailPaneComponent — summary edit re-emit', () => {
     const edits: unknown[] = [];
     fixture.componentInstance.summaryEdited.subscribe((edit) => edits.push(edit));
 
-    editSummaryInPanel(fixture);
+    editSummaryViaToolbar(fixture);
 
     expect(edits).toEqual([
       { meetingId: 'm1', template: 'key-points', language: 'en', markdown: '# Edited' },
     ]);
+  });
+
+  it('groups Regenerate, Edit and Delete in the single summary toolbar row', () => {
+    const fixture = createFixture();
+    fixture.componentInstance.selectTab('key-points');
+    fixture.detectChanges();
+
+    const toolbar = fixture.nativeElement.querySelector('.pane-toolbar-summary');
+    expect(toolbar.querySelector('.regenerate-button')).toBeTruthy();
+    expect(toolbar.querySelector('.edit-summary')).toBeTruthy();
+    expect(toolbar.querySelector('.delete-summary')).toBeTruthy();
   });
 
   it('re-emits identically through the wide split-workspace layout', () => {
@@ -90,7 +104,7 @@ describe('MeetingDetailPaneComponent — summary edit re-emit', () => {
     fixture.componentInstance.summaryEdited.subscribe((edit) => edits.push(edit));
 
     expect(fixture.nativeElement.querySelector('app-split-workspace')).toBeTruthy();
-    editSummaryInPanel(fixture);
+    editSummaryViaToolbar(fixture);
 
     expect(edits).toEqual([
       { meetingId: 'm1', template: 'key-points', language: 'en', markdown: '# Edited' },
@@ -104,6 +118,6 @@ describe('MeetingDetailPaneComponent — summary edit re-emit', () => {
     fixture.componentRef.setInput('summarizingKey', { template: 'key-points', language: 'en' });
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('app-summary-panel .edit')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.pane-toolbar-summary .edit-summary')).toBeNull();
   });
 });

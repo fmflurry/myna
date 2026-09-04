@@ -6,11 +6,16 @@ import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import type { FileDialogFilter, FileDialogPort } from '../../core/ports/file-dialog.port';
 import type { MeetingExportFormat } from '../../core/ports/meeting-repository.port';
 import type { CancelImportUseCase } from '../use-cases/cancel-import.usecase';
+import type { CancelSummarizationUseCase } from '../use-cases/cancel-summarization.usecase';
 import type { DiarizeMeetingUseCase } from '../use-cases/diarize-meeting.usecase';
+import type { DeleteSummaryUseCase } from '../use-cases/delete-summary.usecase';
 import type { EditSummaryUseCase } from '../use-cases/edit-summary.usecase';
+import type { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
+import type { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
 import type { ImportAudioUseCase } from '../use-cases/import-audio.usecase';
 import type { PlaceMeetingUseCase } from '../use-cases/place-meeting.usecase';
 import type { RetranscribeMeetingUseCase } from '../use-cases/retranscribe-meeting.usecase';
+import type { SetSummaryGuidelinesUseCase } from '../use-cases/set-summary-guidelines.usecase';
 import type { SummarizeMeetingUseCase } from '../use-cases/summarize-meeting.usecase';
 import type { MeetingsErrorInfo, MeetingsStore } from '../stores/meetings.store';
 import { clearIngestPlaceholderIfSelected } from '../stores/meetings.store.support';
@@ -204,9 +209,10 @@ export async function runCancelImport(store: MeetingsStore, cancelImportUseCase:
 
 /**
  * Generates a summary for one (meeting, template, language) triple. The
- * language is captured once, up front, so switching the summary language
- * mid-generation never rewrites which tab this belongs to. Lands the result
- * in the same cache `loadSummary` reads from, so tab switches never re-fetch
+ * language AND the (meeting, template) instruction draft are captured once,
+ * up front, so switching either mid-generation never rewrites which tab this
+ * belongs to or what the in-flight run sees. Lands the
+ * result in the same cache `loadSummary` reads from, so tab switches never re-fetch
  * it. `setSummarizingKey(null)` runs on success, failure, AND cancellation
  * alike, so no tab is ever left stuck "generating".
  */
@@ -217,10 +223,15 @@ export async function runSummarizeMeeting(
   template: SummaryTemplate,
 ): Promise<void> {
   const language = store.selectedSummaryLanguage();
+  // Read AT CALL TIME: edits made after generation starts must not leak into
+  // this run. The default draft ({text:'', includeGeneral:true}) is a real
+  // value, not `undefined` — the Rust side treats empty text + includeGeneral
+  // as "general guidelines only".
+  const instructions = store.summaryInstructionDraft(id, template.name);
   try {
     store.resetSummaryStream();
     store.setSummarizingKey({ template: template.name, language });
-    const summary = await summarizeMeetingUseCase.summarize(id, template, language);
+    const summary = await summarizeMeetingUseCase.summarize(id, template, language, instructions);
     const current = store.selectedMeeting();
     if (current && current.id === id) {
       store.setSelectedMeeting(withSummary(current, summary));
@@ -260,6 +271,29 @@ export async function runEditSummary(
 }
 
 /**
+ * Deletes a persisted summary; never optimistic, mirroring
+ * `runEditSummary` — on success only the summary cache entry is cleared
+ * and the selected meeting's matching `summaries` ref is stripped (see
+ * `applySummaryRemoval`, which never touches undo/drafts). A failure
+ * mutates nothing.
+ */
+export async function runDeleteSummary(
+  store: MeetingsStore,
+  deleteSummaryUseCase: DeleteSummaryUseCase,
+  id: MeetingId,
+  template: string,
+  language: string,
+): Promise<void> {
+  try {
+    await deleteSummaryUseCase.delete(id, template, language);
+    store.removeSummary(id, template, language);
+    store.clearError();
+  } catch (caught) {
+    store.setError(toErrorInfo(caught));
+  }
+}
+
+/**
  * Places a meeting — container (folder/unfiled/archived) AND ordering — via
  * a single `set_meeting_placement` write. Never optimistic: on success, a
  * full `reloadMeetings` (rather than mirroring the returned `Meeting`) is
@@ -285,4 +319,70 @@ export async function runPlaceMeeting(
   } catch (caught) {
     store.setError(toErrorInfo(caught));
   }
+}
+
+/**
+ * Fetches and caches a persisted summary for one (meeting, template, language)
+ * triple; a no-op once cached, so tab switches never re-hit IPC. Drops the
+ * loading marker on failure so the next tab visit retries instead of sticking.
+ */
+export async function runLoadSummary(store: MeetingsStore, getSummaryUseCase: GetSummaryUseCase, id: MeetingId, template: string, language: string): Promise<void> {
+  if (store.getSummaryCacheEntry(id, template, language)) {
+    return;
+  }
+  store.setSummaryCacheLoading(id, template, language);
+  try {
+    const summary = await getSummaryUseCase.get(id, template, language);
+    store.setSummaryCacheResult(id, template, language, summary);
+    store.clearError();
+  } catch (caught) {
+    store.clearSummaryCacheEntry(id, template, language);
+    store.setError(toErrorInfo(caught));
+  }
+}
+
+/** Cancels an in-flight summarization; clears the error slot on success and ALWAYS releases `summarizingKey`. */
+export async function runCancelSummarization(store: MeetingsStore, cancelSummarizationUseCase: CancelSummarizationUseCase): Promise<void> {
+  try {
+    await cancelSummarizationUseCase.cancel();
+    store.clearError();
+  } catch (caught) {
+    store.setError(toErrorInfo(caught));
+  } finally {
+    store.setSummarizingKey(null);
+  }
+}
+
+/** Orchestrates the save dialog then the export; a `null` (cancelled) dialog result is a silent no-op. */
+export async function runExportMeeting(
+  store: MeetingsStore,
+  fileDialog: FileDialogPort,
+  exportMeetingUseCase: ExportMeetingUseCase,
+  id: MeetingId,
+  format: MeetingExportFormat,
+  suggestedName: string,
+): Promise<void> {
+  try {
+    const dest = await fileDialog.save(suggestedName, EXPORT_EXTENSIONS[format]);
+    if (dest === null) {
+      return;
+    }
+    await exportMeetingUseCase.export(id, format, dest);
+    store.clearError();
+  } catch (caught) {
+    store.setError(toErrorInfo(caught));
+  }
+}
+
+/**
+ * Persists the general guidelines through the port and updates the store slot
+ * ONLY once the write succeeds — never optimistic: a rejected save leaves the
+ * guidelines currently on screen untouched. Guarded, so failure lands in the
+ * shared ERROR slot with this source.
+ */
+export async function runSetSummaryGuidelines(store: MeetingsStore, setSummaryGuidelinesUseCase: SetSummaryGuidelinesUseCase, text: string): Promise<void> {
+  await runGuarded(store, async () => {
+    await setSummaryGuidelinesUseCase.set(text);
+    store.setSummaryGuidelines(text);
+  }, 'setSummaryGuidelines');
 }

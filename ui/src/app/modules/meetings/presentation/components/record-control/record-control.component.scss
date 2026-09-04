@@ -97,3 +97,36 @@
   background: var(--color-border);
   color: var(--color-text);
 }
+
+/* Stop-phase watchdog escalation: reassurance, never an escape hatch. */
+.stalled {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--color-warning, #b45309);
+  font-style: italic;
+}
+
+/* Latest `recording://health` event; severity tints the chip. */
+.recording-health {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+
+  &.warning {
+    color: var(--color-warning, #b45309);
+  }
+
+  &.error {
+    color: var(--color-danger);
+    font-weight: 600;
+  }
+
+  &.fatal {
+    color: var(--color-danger-contrast);
+    background: var(--color-danger);
+    font-weight: 600;
+  }
+}

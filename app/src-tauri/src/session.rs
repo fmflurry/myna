@@ -190,6 +190,48 @@ pub fn resolve_capture_source(
     }
 }
 
+/// Pure decision: routes a Bluetooth/HFP microphone selection away from
+/// opening the BT input.
+///
+/// Opening a Bluetooth mic for capture flips most headsets (e.g. AirPods)
+/// from A2DP music quality to SCO call quality, so live output goes quiet
+/// even while the recorded tracks look loud; the system-audio tap alone
+/// never touches the input side. When `requested` uses the microphone
+/// ([`CaptureSource::Microphone`] / [`CaptureSource::Mixed`]) and
+/// `mic_device_name` matches the [`myna_audio::is_bluetooth_input`]
+/// heuristic:
+/// - with `has_non_bt_mic`, keeps `requested` — the caller swaps the mic
+///   device for the fallback instead, so the source (and the mic track's
+///   presence per ADR 0008) is unchanged;
+/// - otherwise degrades to [`CaptureSource::System`] (tap-only, no mic
+///   stream — the mic track stays absent per ADR 0008, never silent) when
+///   system audio is [`SystemAudioStatus::Available`] / `Unknown`;
+/// - otherwise keeps `requested`: with no fallback mic and no tap there is
+///   nothing better than the BT mic itself.
+///
+/// Never runs on the realtime callback — evaluated once in
+/// `start_recording` before the session starts.
+pub fn resolve_bt_safe_source(
+    requested: CaptureSource,
+    system_audio: SystemAudioStatus,
+    mic_device_name: Option<&str>,
+    has_non_bt_mic: bool,
+) -> CaptureSource {
+    if !matches!(requested, CaptureSource::Microphone | CaptureSource::Mixed) {
+        return requested;
+    }
+    let is_bt = matches!(mic_device_name, Some(name) if myna_audio::is_bluetooth_input(name));
+    if !is_bt || has_non_bt_mic {
+        return requested;
+    }
+    match system_audio {
+        SystemAudioStatus::Available | SystemAudioStatus::Unknown => CaptureSource::System,
+        SystemAudioStatus::PermissionDenied { .. } | SystemAudioStatus::Unavailable { .. } => {
+            requested
+        }
+    }
+}
+
 /// Pure decision: resolves the effective system-audio source id for a new
 /// recording, from what was `requested` and the sources currently known to
 /// be `available` (as reported by `myna_audio::list_system_audio_sources`).

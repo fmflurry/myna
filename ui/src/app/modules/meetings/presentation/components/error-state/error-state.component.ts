@@ -8,7 +8,7 @@ import type { MeetingsErrorCode } from '../../../core/models/recording-state.mod
  * must not be pattern-matched to decide what the UI shows.
  */
 const ERROR_MESSAGES: Readonly<Record<MeetingsErrorCode, string>> = {
-  BUSY: 'A recording is already in progress.',
+  BUSY: 'Another operation is already in progress.',
   NOT_RECORDING: 'There is no active recording to stop.',
   NOT_FOUND: 'That meeting could not be found. It may have been deleted.',
   IO: 'A file could not be read or written on disk.',

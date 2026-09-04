@@ -244,24 +244,75 @@
           [disabled]="summarizing()"
           (languageSelected)="onSummaryLanguageSelected($event)"
         />
+        @if (existingSummary()) {
+          <button
+            type="button"
+            class="regenerate-button"
+            [disabled]="regenerateDisabled()"
+            [attr.aria-disabled]="regenerateDisabled()"
+            [attr.aria-busy]="summarizing()"
+            [attr.aria-expanded]="regenerateDialogOpen()"
+            [title]="generatingElsewhereLabel() ? 'Generating ' + generatingElsewhereLabel() + '…' : 'Regenerate this summary from the current transcript'"
+            (click)="regenerateSummary()"
+          >
+            Regenerate
+          </button>
+          @if (!isGeneratingActiveTab() && !summaryLoading()) {
+            <button
+              type="button"
+              class="edit-summary"
+              title="Edit this summary"
+              aria-label="Edit this summary"
+              (click)="summaryPanel()?.beginEdit()"
+            >
+              Edit
+            </button>
+          }
+          <button
+            type="button"
+            class="delete-summary"
+            [disabled]="regenerateDisabled()"
+            [attr.aria-disabled]="regenerateDisabled()"
+            title="Delete this summary"
+            aria-label="Delete this summary"
+            (click)="deleteSummary()"
+          >
+            Delete
+          </button>
+          @if (generatingElsewhereLabel(); as busyLabel) {
+            <p class="hint busy-hint">Generating {{ busyLabel }}&hellip;</p>
+          }
+        }
       </div>
     }
-    @if (existingSummary(); as summary) {
+    @if (isGeneratingActiveTab()) {
       <app-summary-panel
+        [markdown]="summaryStream()"
+        [generating]="true"
+        (cancelClicked)="cancelSummaryRequested.emit()"
+      />
+    } @else if (existingSummary(); as summary) {
+      <app-summary-panel
+        #summaryPanel
         [markdown]="summary.markdown"
         [generating]="false"
         [stale]="summary.stale"
         [editable]="!isGeneratingActiveTab() && !summaryLoading()"
         (summaryEdited)="onSummaryEdited($event)"
       />
+      @if (regenerateDialogOpen()) {
+        <app-regenerate-instructions-dialog
+          [draft]="activeSummaryDraft()"
+          [guidelinesPreview]="guidelinesPreview()"
+          [hint]="regenerateHint()"
+          [confirmDisabled]="regenerateDisabled()"
+          (draftChanged)="onSummaryDraftChanged($event)"
+          (confirmed)="confirmRegenerate()"
+          (cancelled)="cancelRegenerate()"
+        />
+      }
     } @else if (summaryLoading()) {
       <app-summary-panel [markdown]="''" [generating]="false" [loading]="true" />
-    } @else if (isGeneratingActiveTab()) {
-      <app-summary-panel
-        [markdown]="summaryStream()"
-        [generating]="true"
-        (cancelClicked)="cancelSummaryRequested.emit()"
-      />
     } @else {
       <div class="generate">
         <p class="headline">No {{ activeTemplateLabel() }} summary yet.</p>
@@ -278,7 +329,30 @@
           </button>
           <p class="hint busy-hint">Generating {{ busyLabel }}&hellip;</p>
         } @else {
-          <button type="button" class="generate-button" (click)="generateSummary()">Generate</button>
+          <button
+            type="button"
+            class="generate-button"
+            [attr.aria-expanded]="generateDialogOpen()"
+            (click)="generateSummary()"
+          >
+            Generate
+          </button>
+        }
+        @if (generateDialogOpen()) {
+          <app-regenerate-instructions-dialog
+            [draft]="activeSummaryDraft()"
+            [guidelinesPreview]="guidelinesPreview()"
+            [hint]="regenerateHint()"
+            [confirmDisabled]="regenerateDisabled()"
+            [templateLabel]="activeTemplateLabel()"
+            dialogTitlePrefix="Generate summary"
+            description="Adjust the instructions below, then confirm to generate this summary."
+            confirmLabel="Generate"
+            focusReturnSelector=".generate-button"
+            (draftChanged)="onSummaryDraftChanged($event)"
+            (confirmed)="confirmGenerate()"
+            (cancelled)="cancelGenerate()"
+          />
         }
       </div>
     }

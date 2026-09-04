@@ -161,17 +161,17 @@ describe('MeetingDetailPaneComponent', () => {
     expect(transcriptTab?.textContent?.trim()).toBe('📄 Transcript');
   });
 
-  it('emits summarizeRequested with the active tab name', () => {
+  it('Generate emits summarizeRequested once via confirm dialog', () => {
     const fixture = createFixture();
     fixture.componentRef.setInput('meeting', meeting);
-    fixture.detectChanges();
     const emitted: string[] = [];
     fixture.componentInstance.summarizeRequested.subscribe((name) => emitted.push(name));
-
     fixture.componentInstance.selectTab('key-points');
     fixture.detectChanges();
-    fixture.nativeElement.querySelector('.generate button').click();
-
+    fixture.nativeElement.querySelector('.generate-button').click();
+    fixture.detectChanges();
+    expect(emitted).toEqual([]);
+    (fixture.nativeElement.querySelector('app-regenerate-instructions-dialog .confirm') as HTMLButtonElement).click();
     expect(emitted).toEqual(['key-points']);
   });
 

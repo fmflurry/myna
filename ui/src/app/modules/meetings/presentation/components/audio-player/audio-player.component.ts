@@ -1,5 +1,6 @@
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   DestroyRef,
   ElementRef,
@@ -13,6 +14,7 @@ import {
 } from '@angular/core';
 
 import type { MeetingId } from '../../../core/models/meeting.model';
+import type { AudioChunk } from '../../../core/ports/audio-repository.port';
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
@@ -26,6 +28,22 @@ export function formatTime(seconds: number): string {
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
+
+/** Legacy single-file meeting as one whole-file chunk: element-driven duration, global == local. */
+const legacyChunk = (url: string): AudioChunk => ({ url, startSec: 0, durationSec: 0 });
+
+/**
+ * Fallback timeline when the chunks request failed or resolved empty: a
+ * resolved legacy URL is one whole-file chunk; otherwise a FAILED chunks
+ * request is the load error (null) and a successful empty one is "no audio"
+ * ([]). Lives as a free function so the caller's closure-mutated settlement
+ * state is read at call time rather than frozen by control-flow narrowing.
+ */
+const fallbackChunks = (
+  chunksFailed: boolean,
+  legacyUrl: string | null,
+): readonly AudioChunk[] | null =>
+  legacyUrl !== null ? [legacyChunk(legacyUrl)] : chunksFailed ? null : [];
 
 @Component({
   selector: 'app-audio-player',
@@ -43,12 +61,28 @@ export class AudioPlayerComponent {
 
   private readonly facade = inject(MeetingsFacade);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly cdr = inject(ChangeDetectorRef);
 
   @ViewChild('audioElement', { static: false }) audioRef?: ElementRef<HTMLAudioElement>;
 
-  // Monotonic token for in-flight getAudioUrl loads: a response is only
-  // allowed to land if it still belongs to the newest request.
+  // Monotonic token for in-flight audio loads: a response is only allowed to
+  // land if it still belongs to the newest request (rapid meeting switch).
   private loadSeq = 0;
+
+  /**
+   * Ordered chunks of the CURRENT meeting. Exactly one chunk for legacy
+   * single-file audio, empty before load / on no audio. Playback presents
+   * them as ONE logical timeline: `url()` is the active chunk, the total
+   * duration is the sum, and positions map global <-> (chunk, local).
+   */
+  private chunks: readonly AudioChunk[] = [];
+  private activeIndex = 0;
+  /**
+   * User intent to keep playing. Survives the native `pause` that fires
+   * just before `ended` at natural media end, so a chunk advance can
+   * resume seamlessly on the next part.
+   */
+  private resumeIntent = false;
 
   private readonly _url = signal<string | null>(null);
   private readonly _loading = signal<boolean>(false);
@@ -92,10 +126,12 @@ export class AudioPlayerComponent {
       // synchronously before the swap.
       this.audioRef?.nativeElement?.pause();
       if (!id || !hasAudioValue) {
+        this.chunks = [];
+        this.activeIndex = 0;
         this._url.set(null);
         return;
       }
-      this.loadAudioUrl(id);
+      this.loadAudio(id);
     });
     // Component torn down while still on the player branch: same guard.
     this.destroyRef.onDestroy(() => {
@@ -103,27 +139,119 @@ export class AudioPlayerComponent {
     });
   }
 
-  private async loadAudioUrl(meetingId: MeetingId): Promise<void> {
+  /**
+   * Loads the meeting's playable chunks through `getAudioChunks` and applies
+   * them as one timeline, falling back to the legacy single-URL API when the
+   * chunks API is unavailable (older facades) or fails / returns nothing the
+   * backend can still serve as `audio.wav` (pre-multipart recordings).
+   *
+   * The legacy URL request is fired FIRST and its settlement tracked via a
+   * `.then` callback rather than an extra `await`: the chunks response
+   * (usually the slower of the two) then decides synchronously, keeping the
+   * whole load at one microtask hop per response — the sequencing the
+   * pre-multipart specs pin. Stale responses from a superseded load are
+   * dropped via `loadSeq`.
+   */
+  private async loadAudio(meetingId: MeetingId): Promise<void> {
     const seq = ++this.loadSeq;
     this._loading.set(true);
     this._error.set(null);
-    try {
-      const url = await this.facade.getAudioUrl(meetingId);
-      // A newer load has started while this one was in flight (rapid meeting
-      // switch) — this response is stale and must not overwrite the newest url.
+    const legacyPromise = this.facade.getAudioUrl(meetingId);
+    let chunks: readonly AudioChunk[] | null = null;
+    if (typeof this.facade.getAudioChunks === 'function') {
+      let legacyState: 'pending' | 'resolved' | 'rejected' = 'pending';
+      let legacyUrl: string | null = null;
+      legacyPromise.then(
+        (url) => {
+          legacyState = 'resolved';
+          legacyUrl = url;
+        },
+        () => {
+          legacyState = 'rejected';
+        },
+      );
+      try {
+        chunks = await this.facade.getAudioChunks(meetingId);
+      } catch {
+        // Chunks unavailable (e.g. backend predating the command) — the
+        // legacy URL below decides whether that is a fallback or an error.
+        chunks = null;
+      }
+      // A newer load has started while this one was in flight — stale.
       if (seq !== this.loadSeq) return;
-      this._url.set(url);
-      this._playing.set(false);
-      this._currentTime.set(0);
-      this._duration.set(0);
-    } catch {
-      if (seq !== this.loadSeq) return;
+      if (chunks === null || chunks.length === 0) {
+        if (legacyState === 'pending') {
+          await legacyPromise.catch(() => undefined);
+          if (seq !== this.loadSeq) return;
+        }
+        chunks = fallbackChunks(chunks === null, legacyUrl);
+      }
+    } else {
+      try {
+        const url = await legacyPromise;
+        if (seq !== this.loadSeq) return;
+        chunks = url !== null ? [legacyChunk(url)] : [];
+      } catch {
+        if (seq !== this.loadSeq) return;
+        chunks = null;
+      }
+    }
+    if (chunks === null) {
       this._url.set(null);
       this._error.set('Failed to load audio');
-    } finally {
-      if (seq === this.loadSeq) {
-        this._loading.set(false);
-      }
+    } else {
+      this.applyTimeline(chunks);
+    }
+    if (seq === this.loadSeq) {
+      this._loading.set(false);
+    }
+  }
+
+  /** Installs a freshly loaded timeline and rewinds every playback signal. */
+  private applyTimeline(chunks: readonly AudioChunk[]): void {
+    this.chunks = chunks;
+    this.activeIndex = 0;
+    this.resumeIntent = false;
+    this._url.set(chunks[0]?.url ?? null);
+    this._playing.set(false);
+    this._currentTime.set(0);
+    // Multipart total comes from the chunk metadata; a single legacy chunk
+    // carries 0 and learns its duration from `durationchange` instead.
+    this._duration.set(chunks.reduce((total, chunk) => total + chunk.durationSec, 0));
+  }
+
+  private activeStartSec(): number {
+    return this.chunks[this.activeIndex]?.startSec ?? 0;
+  }
+
+  /** Chunk containing a global timestamp; a boundary lands on the NEXT chunk. */
+  private chunkIndexFor(globalSec: number): number {
+    const index = this.chunks.findIndex(
+      (chunk) => globalSec < chunk.startSec + chunk.durationSec,
+    );
+    return index >= 0 ? index : Math.max(0, this.chunks.length - 1);
+  }
+
+  /**
+   * Swaps the single <audio> element onto `index` at `localSec`, optionally
+   * resuming playback — one element, one src swap per part, never JS-side
+   * buffering. The [src] binding is flushed before the element is touched so
+   * the seek/play act on the NEW source.
+   */
+  private activateChunk(index: number, localSec: number, resumePlay: boolean): void {
+    const chunk = this.chunks[index];
+    if (!chunk) return;
+    this.activeIndex = index;
+    this._url.set(chunk.url);
+    this._currentTime.set(chunk.startSec + localSec);
+    const element = this.audioRef?.nativeElement;
+    if (!element) return;
+    this.cdr.detectChanges();
+    element.currentTime = localSec;
+    if (resumePlay) {
+      element.play().catch(() => {
+        this._error.set('Playback failed');
+      });
     }
   }
 
@@ -134,15 +262,30 @@ export class AudioPlayerComponent {
 
   onPlay(): void {
     this._playing.set(true);
+    this.resumeIntent = true;
     this.playRequested.emit();
   }
 
   onPause(): void {
+    // Natural end-of-media fires `pause` (element.ended === true) right
+    // before `ended`; only a real user pause clears the resume intent.
+    if (!this.audioRef?.nativeElement.ended) {
+      this.resumeIntent = false;
+    }
     this._playing.set(false);
     this.pauseRequested.emit();
   }
 
-  onEnded(): void {
+  onEnded(event: Event): void {
+    // A late `ended` from the destroyed element of a previous meeting must
+    // never advance or rewind the CURRENT timeline.
+    if (event.target !== this.audioRef?.nativeElement) return;
+    const next = this.activeIndex + 1;
+    if (this.chunks.length > 1 && next < this.chunks.length) {
+      this.activateChunk(next, 0, this.resumeIntent);
+      return;
+    }
+    this.resumeIntent = false;
     this._playing.set(false);
     this._currentTime.set(0);
   }
@@ -151,7 +294,7 @@ export class AudioPlayerComponent {
     if (this._scrubbing()) return;
     const element = this.audioRef?.nativeElement;
     if (element) {
-      this._currentTime.set(element.currentTime);
+      this._currentTime.set(this.activeStartSec() + element.currentTime);
     }
   }
 
@@ -178,7 +321,10 @@ export class AudioPlayerComponent {
   onDurationChange(): void {
     const element = this.audioRef?.nativeElement;
     if (!element) return;
-    // duration is NaN until metadata has loaded.
+    // Multipart: the logical total is the sum of chunk metadata and must
+    // never shrink when a part's chunk-local duration lands. duration is NaN
+    // until metadata has loaded.
+    if (this.chunks.length > 1) return;
     this._duration.set(Number.isFinite(element.duration) ? element.duration : 0);
   }
 
@@ -209,9 +355,16 @@ export class AudioPlayerComponent {
 
     const input = event.target as HTMLInputElement;
     const percent = parseFloat(input.value);
-    const newTime = (percent / 100) * this._duration();
-    element.currentTime = newTime;
-    this._currentTime.set(newTime);
+    const globalTime = (percent / 100) * this._duration();
+    const index = this.chunkIndexFor(globalTime);
+    const chunk = this.chunks[index];
+    const localSec = chunk ? Math.max(0, globalTime - chunk.startSec) : globalTime;
+    if (index !== this.activeIndex) {
+      this.activateChunk(index, localSec, this.resumeIntent && this._playing());
+      return;
+    }
+    element.currentTime = localSec;
+    this._currentTime.set(this.activeStartSec() + localSec);
   }
 
   // volume/muted/playbackRate reach the element purely through the

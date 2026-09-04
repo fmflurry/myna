@@ -38,4 +38,25 @@
       </select>
     </label>
   </section>
+
+  <section class="summary-guidelines" aria-label="General summary guidelines">
+    <h3>General guidelines</h3>
+    <label class="guidelines-helper" for="general-guidelines-input"
+      >Free-text instructions added to every generated summary, unless a per-request draft turns them off.</label
+    >
+    <textarea
+      id="general-guidelines-input"
+      class="guidelines-input"
+      aria-label="General summary guidelines"
+      rows="4"
+      [value]="guidelinesValue()"
+      (input)="onGuidelinesInput($event)"
+      (blur)="saveGuidelines()"
+    ></textarea>
+    <div class="guidelines-actions">
+      <button type="button" class="save-guidelines" [disabled]="!guidelinesDirty()" (click)="saveGuidelines()">
+        Save guidelines
+      </button>
+    </div>
+  </section>
 </section>

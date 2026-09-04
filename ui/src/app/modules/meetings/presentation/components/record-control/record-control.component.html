@@ -22,8 +22,13 @@
   } @else if (recordingState() === 'stopping') {
     <span class="finalizing" role="status" aria-live="polite" aria-busy="true">
       <span class="spinner" aria-hidden="true"></span>
-      Finalizing recording&hellip;
+      {{ stopPhaseLabel() }}
     </span>
+    @if (stalled()) {
+      <span class="stalled" role="status" aria-live="polite">
+        Still finalizing; your recording remains recoverable&hellip;
+      </span>
+    }
   } @else {
     <span class="live-indicator" aria-hidden="true"></span>
     <span class="timer">{{ elapsedLabel() }}</span>
@@ -36,6 +41,17 @@
       >Mic only</span>
     }
     <app-level-meter [level]="level()" />
+  }
+
+  @if (recordingHealth(); as health) {
+    <span
+      class="recording-health"
+      [class.warning]="health.severity === 'warning'"
+      [class.error]="health.severity === 'error'"
+      [class.fatal]="health.severity === 'fatal'"
+      [attr.role]="health.severity === 'warning' ? 'status' : 'alert'"
+      [attr.aria-live]="health.severity === 'warning' ? 'polite' : 'assertive'"
+    >{{ health.message }}</span>
   }
 
   <app-record-button

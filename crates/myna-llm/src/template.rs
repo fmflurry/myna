@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::LlmError;
+use crate::instructions::SummaryInstructions;
 
 /// The `{language}` placeholder token, factored out so [`PLACEHOLDERS`] and
 /// [`Template::render`]'s presence check can't drift apart.
@@ -72,7 +73,7 @@ pub struct Template {
 }
 
 /// Values substituted into a template's placeholders when rendering.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RenderContext {
     pub transcript: String,
     pub duration: String,
@@ -80,6 +81,12 @@ pub struct RenderContext {
     /// Display label of the requested output language (e.g. `"French"`),
     /// resolved via [`crate::resolve`] before rendering.
     pub language: String,
+    /// User-authored instructions prepended to the rendered template text
+    /// (see [`crate::SummaryInstructions::compose`]). `None` — or a value
+    /// whose parts are all empty — leaves the prompt byte-identical to a
+    /// template-only render.
+    #[serde(default)]
+    pub instructions: Option<SummaryInstructions>,
 }
 
 impl Template {
@@ -147,16 +154,22 @@ impl Template {
         Ok(())
     }
 
-    /// Substitute the known placeholders in `prompt` with values from `ctx`.
-    /// A placeholder with no corresponding context field renders as an
-    /// empty string (via `RenderContext`'s `Default`); unknown `{...}`
-    /// tokens are left in place verbatim.
+    /// Substitute the known placeholders in `prompt` with values from `ctx`,
+    /// then prepend `ctx.instructions`' composed block (when any) ahead of
+    /// the rendered template text. A placeholder with no corresponding
+    /// context field renders as an empty string (via `RenderContext`'s
+    /// `Default`); unknown `{...}` tokens are left in place verbatim.
+    /// Instruction text is never placeholder-substituted — its braces are
+    /// inert user prose.
     ///
     /// Backward compatibility: if `prompt` does not reference
     /// [`LANGUAGE_PLACEHOLDER`] at all, a directive sentence naming
     /// `ctx.language` is appended to the rendered output, so templates
     /// written before this placeholder existed still produce output in the
-    /// requested language.
+    /// requested language. The directive stays attached to the template
+    /// portion (instructions block first, then template + directive), and
+    /// when `compose()` yields `None` the output is byte-identical to a
+    /// template-only render.
     pub fn render(&self, ctx: &RenderContext) -> String {
         let rendered = self
             .prompt
@@ -165,13 +178,22 @@ impl Template {
             .replace("{title}", &ctx.title)
             .replace(LANGUAGE_PLACEHOLDER, &ctx.language);
 
-        if self.prompt.contains(LANGUAGE_PLACEHOLDER) {
+        let template_portion = if self.prompt.contains(LANGUAGE_PLACEHOLDER) {
             rendered
         } else {
             format!(
                 "{rendered}\n\nWrite your entire response in {}.",
                 ctx.language
             )
+        };
+
+        match ctx
+            .instructions
+            .as_ref()
+            .and_then(SummaryInstructions::compose)
+        {
+            Some(block) => format!("{block}{template_portion}"),
+            None => template_portion,
         }
     }
 }

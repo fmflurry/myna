@@ -8,6 +8,11 @@ import type { RecordingState } from '../../../core/models/recording-state.model'
 import { CaptureSettingsComponent } from '../capture-settings/capture-settings.component';
 import { RecordControlComponent } from './record-control.component';
 
+// The stop-phase UI contract (`stopPhase` / `recordingHealth` inputs, the
+// 10 s stall watchdog, health severity rendering) is specified in
+// `record-control.component.stop-phase.spec.ts`, split out to keep this file
+// under the project's max-lines limit.
+
 describe('RecordControlComponent', () => {
   const createFixture = (recordingState: RecordingState = 'idle') => {
     const fixture = TestBed.createComponent(RecordControlComponent);

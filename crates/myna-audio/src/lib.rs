@@ -14,6 +14,8 @@ mod level;
 mod mixer;
 mod recorder;
 mod resample;
+mod segmented_recorder;
+mod supervisor;
 mod system;
 #[cfg(target_os = "macos")]
 mod system_macos;
@@ -25,8 +27,8 @@ pub use capture::{
     CaptureSource, RateLimitedQuery, TrackBlock,
 };
 pub use device::{
-    default_input_device, default_output_device, list_input_devices, list_output_devices,
-    DeviceInfo,
+    default_input_device, default_output_device, find_non_bluetooth_mic, is_bluetooth_input,
+    list_input_devices, list_output_devices, DeviceInfo,
 };
 pub use error::AudioError;
 pub use level::{rms, rms_dbfs, SILENCE_FLOOR_DBFS};
@@ -37,6 +39,11 @@ pub use mixer::{
 };
 pub use recorder::{repair_wav_sizes, RecordingSpec, RecordingStats, WavRecorder};
 pub use resample::{downmix_to_mono, Resampler, TARGET_SAMPLE_RATE};
+pub use segmented_recorder::{SegmentedRecordingStats, SegmentedWavRecorder, MAX_PCM_DATA_BYTES};
+pub use supervisor::{
+    SupervisorCancellation, SupervisorShutdown, SystemAudioAttachment, SystemAudioSupervisor,
+    SystemAudioSupervisorConfig, SystemAudioSupervisorHooks, SystemAudioSupervisorStatus,
+};
 pub use system::{
     list_system_audio_sources, request_system_audio_permission, system_audio_status,
     SystemAudioSource, SystemAudioStatus, ALL_OUTPUT_SOURCE_ID,

@@ -1,5 +1,5 @@
 import { syncToStore } from 'flurryx';
-import { auditTime, filter, tap, type Observable } from 'rxjs';
+import { auditTime, bufferTime, distinct, filter, tap, type Observable } from 'rxjs';
 
 import { speakerRole, type TranscriptSegment } from '../../core/models/transcript.model';
 import type { RecorderPort } from '../../core/ports/recorder.port';
@@ -7,6 +7,7 @@ import type { SummarizerPort } from '../../core/ports/summarizer.port';
 import type { TranscriberPort, TranscriptPartial } from '../../core/ports/transcriber.port';
 import { DEFAULT_SUMMARY_LANGUAGE_CODE } from '../../core/models/summary-language.model';
 import { readStoredExpandedFolders } from './expanded-folders-preferences.util';
+import { readStoredSidebarCollapsed, readStoredSidebarWidth } from './sidebar-layout-preferences.util';
 import { readStoredSplitRatio, readStoredTranscriptCollapsed } from './split-layout-preferences.util';
 import {
   AUDIO_SOURCE_PREFERENCE_KEY,
@@ -47,6 +48,12 @@ const partialsFor = (
  * provisional.
  */
 export const PARTIAL_UI_AUDIT_MS = 100;
+
+/** Maximum time finalized events wait before one chronological store merge. */
+export const FINAL_BATCH_MS = 50;
+
+/** Maximum finalized events merged in one store update. */
+export const FINAL_BATCH_SIZE = 32;
 
 /**
  * Binary-search insertion index for `startSec` within `segments`, which is
@@ -142,10 +149,12 @@ export function wireRecorderAndTranscriberEvents(
       // restored-snapshot slot, so the boot-only `ACTIVE_RECORDING` elapsed
       // baseline can never leak into the NEXT recording's timer. The event
       // stream carries no elapsed clock (`elapsedSec` is null on events by
-      // contract), so only the idle transition is acted on here.
+      // contract), so only the idle transition is acted on here. A finished
+      // stop also retires its phase label for the same leak reason.
       tap((state) => {
         if (state === 'idle') {
           slots.update('ACTIVE_RECORDING', { data: null, status: 'Success', isLoading: false });
+          slots.update('STOP_PHASE', { data: null, status: 'Success', isLoading: false });
         }
       }),
       syncToStore(slots, 'RECORDING_STATE', { completeOnFirstEmission: false }),
@@ -162,6 +171,37 @@ export function wireRecorderAndTranscriberEvents(
     .pipe(syncToStore(slots, 'LEVEL', { completeOnFirstEmission: false }))
     .subscribe();
 
+  recorder
+    .stopProgressChanges()
+    .pipe(syncToStore(slots, 'STOP_PHASE', { completeOnFirstEmission: false }))
+    .subscribe();
+
+  recorder
+    .healthChanges()
+    .pipe(syncToStore(slots, 'RECORDING_HEALTH', { completeOnFirstEmission: false }))
+    .subscribe();
+
+  // `recording://completed` is the ONLY event allowed to end 'stopping': the
+  // stop command itself resolves with an acknowledgement, never a meeting.
+  // Landing the durable row means upserting it (the in-flight row from
+  // start shares its id, so this is exactly-once, never a duplicate),
+  // selecting it, retiring the stop-phase slots, and taking the state
+  // machine to idle. Mirrors `MeetingsStore.setSelectedMeeting`'s history
+  // clear: the finalized meeting replaces the selection, so any captured
+  // speaker-op inverse now targets a stale row.
+  recorder.completedMeetings().subscribe((meeting) => {
+    const rest = (slots.get('MEETINGS')().data ?? []).filter(
+      (existing) => existing.id !== meeting.id,
+    );
+    slots.update('MEETINGS', { data: [meeting, ...rest], status: 'Success', isLoading: false });
+    slots.update('SELECTED_MEETING', { data: meeting, status: 'Success', isLoading: false });
+    slots.update('SPEAKER_HISTORY', { data: [], status: 'Success', isLoading: false });
+    slots.update('TRANSCRIPT_UNDO', { data: null, status: 'Success', isLoading: false });
+    slots.update('STOP_PHASE', { data: null, status: 'Success', isLoading: false });
+    slots.update('ACTIVE_RECORDING', { data: null, status: 'Success', isLoading: false });
+    slots.update('RECORDING_STATE', { data: 'idle', status: 'Success', isLoading: false });
+  });
+
   const partials = transcriber.partials();
 
   partialsFor(partials, 'me')
@@ -176,20 +216,34 @@ export function wireRecorderAndTranscriberEvents(
       slots.update('PARTIAL_TEXT_OTHERS', { data: partial.text, status: 'Success', isLoading: false });
     });
 
-  transcriber.finals().subscribe((final) => {
-    const current = slots.get('FINALIZED_SEGMENTS')().data ?? [];
-    // Merge (dedupe + chronological insert), NOT append: after a mid-meeting
-    // reload the journal seed and this stream overlap, and a final arriving
-    // here may already be in the store from the seed. Going through the same
-    // merge as the seed path suppresses double-renders in both orderings.
-    slots.update('FINALIZED_SEGMENTS', {
-      data: mergeFinalizedSegments(current, [final.segment]),
-      status: 'Success',
-      isLoading: false,
+  transcriber
+    .finals()
+    .pipe(
+      tap(() => {
+        // A final immediately supersedes either streaming partial, even while
+        // its durable transcript insertion waits for the short batch window.
+        slots.update('PARTIAL_TEXT_ME', { data: '', status: 'Success', isLoading: false });
+        slots.update('PARTIAL_TEXT_OTHERS', { data: '', status: 'Success', isLoading: false });
+      }),
+      // Dedupe before applying the size limit so 32 distinct final segments
+      // flush immediately even when the transport repeats one in the burst.
+      distinct((final) => segmentIdentityKey(final.segment)),
+      bufferTime(FINAL_BATCH_MS, undefined, FINAL_BATCH_SIZE),
+      filter((finals) => finals.length > 0),
+    )
+    .subscribe((finals) => {
+      const current = slots.get('FINALIZED_SEGMENTS')().data ?? [];
+      // One stable merge dedupes the batch and preserves equal-start arrival
+      // order while making a single finalized-segment slot update.
+      slots.update('FINALIZED_SEGMENTS', {
+        data: mergeFinalizedSegments(
+          current,
+          finals.map((final) => final.segment),
+        ),
+        status: 'Success',
+        isLoading: false,
+      });
     });
-    slots.update('PARTIAL_TEXT_ME', { data: '', status: 'Success', isLoading: false });
-    slots.update('PARTIAL_TEXT_OTHERS', { data: '', status: 'Success', isLoading: false });
-  });
 
   summarizer.tokens().subscribe((token) => {
     // No `language` on the wire; `Busy`-guarded concurrency means template alone disambiguates.
@@ -240,6 +294,9 @@ export function seedPersistedPreferences(slots: MeetingsSlots, preferences: Pref
 
   slots.update('SPLIT_RATIO', { data: readStoredSplitRatio(preferences), status: 'Success', isLoading: false });
   slots.update('TRANSCRIPT_COLLAPSED', { data: readStoredTranscriptCollapsed(preferences), status: 'Success', isLoading: false });
+
+  slots.update('SIDEBAR_WIDTH', { data: readStoredSidebarWidth(preferences), status: 'Success', isLoading: false });
+  slots.update('SIDEBAR_COLLAPSED', { data: readStoredSidebarCollapsed(preferences), status: 'Success', isLoading: false });
 
   slots.update('EXPANDED_FOLDERS', { data: readStoredExpandedFolders(preferences), status: 'Success', isLoading: false });
 }

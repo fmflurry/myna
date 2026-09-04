@@ -96,4 +96,37 @@ describe('MeetingsStore import progress selects the ingesting meeting', () => {
 
     expect(store.selectedMeeting()).toEqual(meeting);
   });
+
+  // Import-flag state, moved from `meetings.store.spec.ts` to keep that file
+  // under the project's max-lines limit — same import-progress domain.
+
+  it('starts not importing with no import progress', () => {
+    expect(store.importing()).toBe(false);
+    expect(store.importProgress()).toBeNull();
+  });
+
+  it('reflects setImporting', () => {
+    store.setImporting(true);
+    expect(store.importing()).toBe(true);
+
+    store.setImporting(false);
+    expect(store.importing()).toBe(false);
+  });
+
+  it('reflects a pushed import://progress event onto importProgress', () => {
+    const meetingId = toMeetingId('m-1');
+    audioImport.emitProgress({ meetingId, phase: 'transcribing', processedSec: 12, totalSec: 60 });
+
+    expect(store.importProgress()).toEqual({ meetingId, phase: 'transcribing', processedSec: 12, totalSec: 60 });
+  });
+
+  it('resetImport clears both importing and importProgress', () => {
+    store.setImporting(true);
+    audioImport.emitProgress({ meetingId: toMeetingId('m-1'), phase: 'converting', processedSec: 1, totalSec: 10 });
+
+    store.resetImport();
+
+    expect(store.importing()).toBe(false);
+    expect(store.importProgress()).toBeNull();
+  });
 });

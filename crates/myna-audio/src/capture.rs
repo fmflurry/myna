@@ -24,12 +24,23 @@ use crate::mixer::{
     SYSTEM_STALL_TIMEOUT, TARGET_FILL_SAMPLES,
 };
 use crate::resample::{downmix_to_mono, Resampler, TARGET_SAMPLE_RATE};
+use crate::supervisor::{
+    SupervisorCancellation, SystemAudioAttachment, SystemAudioSupervisor,
+    SystemAudioSupervisorConfig, SystemAudioSupervisorHooks, SystemAudioSupervisorStatus,
+};
 use crate::system::{
     start_system_audio_capture, SystemAudioBlock, SystemAudioHandle, SystemAudioSource,
 };
 
 /// How long the poll loop in [`capture`] sleeps between checks of `stop`.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Upper bound the [`crate::supervisor`] applies to a single system-audio
+/// attach or teardown step in [`capture_mixed`] — generous enough for a
+/// healthy Core Audio tap teardown (milliseconds), short enough that Stop
+/// can never hang on a wedged rebuild thread the way the old detached
+/// rebuild-flag spin could.
+const SYSTEM_REBUILD_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Relative resample-ratio headroom given to the system-audio resampler in
 /// [`capture_mixed`], so [`DriftController`]'s adjustments (bounded to
@@ -140,6 +151,19 @@ pub fn capture_sources(
     on_system_source: impl FnMut(SystemAudioSource) + Send + 'static,
     on_native_rate: impl FnOnce(u32) + Send + 'static,
 ) -> Result<(), AudioError> {
+    // Debug-only: effective capture source at capture start. The mic paths
+    // below log the resolved input route; the system/mixed paths log the
+    // tap's `actual_rate` once attached — together they answer Blocker Q1.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-audio: capture start (source {:?}, device '{}', system_source {:?})",
+        request.source,
+        request
+            .device
+            .map(|d| d.name.as_str())
+            .unwrap_or("<default>"),
+        request.system_source.unwrap_or("<all>")
+    );
     match request.source {
         CaptureSource::Microphone => {
             let device = resolve_request_device(request.device)?;
@@ -305,6 +329,24 @@ fn capture_microphone_with_playback(
     )
 }
 
+/// Debug-only snapshot of the host's default output device name, for the
+/// A2DP→SCO profile-switch investigation: opening a Bluetooth input can move
+/// the default output, so [`open_microphone_stream`] logs this before/after
+/// `play()`. Never fails capture — degrades to a placeholder string.
+///
+/// Device names are already shown in the input picker, so no new PII.
+#[cfg(debug_assertions)]
+fn debug_default_output_name() -> String {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let host = cpal::default_host();
+    match host.default_output_device() {
+        Some(device) => device
+            .name()
+            .unwrap_or_else(|_| "<unnamed output>".to_string()),
+        None => "<none>".to_string(),
+    }
+}
+
 /// Shared, lockable handle to a microphone [`Pipeline`]. Named to keep
 /// [`open_microphone_stream`]'s return type from tripping
 /// `clippy::type_complexity`.
@@ -336,6 +378,21 @@ where
     let source_rate = supported.sample_rate().0;
     let stream_config: StreamConfig = supported.into();
 
+    // Debug-only route snapshot for the A2DP→SCO hypothesis: resolved
+    // input name + default input config + default output BEFORE `play()`.
+    // Follows the tap-failure `eprintln!` pattern below — no behavior
+    // change, device names already appear in the picker.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-audio: opening microphone '{}' (rate {} Hz, channels {}, format {:?}); \
+         default output before play: '{}'",
+        device.name,
+        source_rate,
+        source_channels,
+        sample_format,
+        debug_default_output_name()
+    );
+
     // Reported strictly before the stream is started (`.play()` below), so
     // this can never race the first callback — the caller's rate-stamped
     // resource (e.g. a WAV header) is always safe to build the moment this
@@ -355,6 +412,18 @@ where
     stream
         .play()
         .map_err(|err| AudioError::Stream(err.to_string()))?;
+
+    // Debug-only: default output AFTER `play()` — diffing this against the
+    // "before play" line above proves or rules out the A2DP→SCO
+    // profile-switch hypothesis on a manual AirPods run.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-audio: microphone '{}' playing (native {} Hz); \
+         default output after play: '{}'",
+        device.name,
+        source_rate,
+        debug_default_output_name()
+    );
 
     Ok((stream, pipeline))
 }
@@ -422,6 +491,13 @@ fn capture_system_only(
             .unwrap_or_default();
             deliver_system_only_block(&sink_for_callback, mono.as_deref(), &stereo);
         })?;
+    // Debug-only: tap's effective source + actual rate at capture start.
+    // Logged BEFORE `on_system_source` moves `effective_source`.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-audio: system-audio tap attached (source {:?}, actual_rate {} Hz)",
+        effective_source, actual_rate
+    );
     on_system_source(effective_source);
     // Reported once, here, before either resampler is finalized below — the
     // raw callback above only ever buffers into a `Pending` `DeferredResampler`
@@ -640,13 +716,6 @@ where
         BoxedSampleSink,
     ) -> Result<(), AudioError>,
 {
-    let MixedCaptureParams {
-        device,
-        config,
-        system_source,
-        stop,
-    } = params;
-
     let targets = SystemAudioAttachTargets {
         ring: Arc::new(SampleRing::new(SYSTEM_RING_CAPACITY, TARGET_FILL_SAMPLES)),
         resampler: Arc::new(Mutex::new(DeferredResampler::pending())),
@@ -656,7 +725,7 @@ where
         last_nonzero_activity: Arc::new(Mutex::new(Instant::now())),
     };
 
-    let attached = match attach(system_source, &targets) {
+    let attached = match attach(params.system_source, &targets) {
         Ok(attached) => attached,
         Err(err) => {
             // A meeting recorder that captures mic-only beats one that
@@ -681,6 +750,12 @@ where
             );
             #[cfg(not(debug_assertions))]
             let _ = &err;
+            let MixedCaptureParams {
+                device,
+                config,
+                stop,
+                ..
+            } = params;
             return mic_only(
                 device,
                 config,
@@ -696,6 +771,14 @@ where
             );
         }
     };
+    // Debug-only: mixed-path tap route at capture start (device + tap rate).
+    // Logged BEFORE `on_system_source` moves `attached.effective_source`.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-audio: mixed capture start (device '{}', tap actual_rate {} Hz, \
+         effective source {:?})",
+        params.device.name, attached.actual_rate, attached.effective_source
+    );
     on_system_source(attached.effective_source);
     // Reported once, here, before the microphone stream (and therefore
     // `MixState::handle_mic_block`, the only place a `TrackBlock` is ever
@@ -707,9 +790,52 @@ where
     // never goes stale mid-recording.
     on_native_rate(attached.actual_rate);
 
-    let system_source_owned = system_source.map(str::to_string);
-    let handle = Arc::new(Mutex::new(Some(attached.handle)));
-    let rebuilding = Arc::new(AtomicBool::new(false));
+    run_attached_mixed_capture(
+        params,
+        targets,
+        attached.handle,
+        attached.actual_rate,
+        on_samples,
+    )
+}
+
+/// The mixed-capture happy path once the system-audio tap has attached:
+/// wires the [`crate::supervisor`] (which owns every HAL query and
+/// stall-recovery rebuild off the realtime callback), drives the mixer from
+/// the mic stream, and performs the bounded stop/teardown sequence.
+///
+/// Split out of [`capture_mixed_inner`] purely for function size; the
+/// ordering here is the RAII teardown contract: mic stream dropped →
+/// supervisor cancelled (bounded) → system handle stopped → ring drained →
+/// mic resampler tail flushed.
+fn run_attached_mixed_capture<F>(
+    params: MixedCaptureParams<'_>,
+    targets: SystemAudioAttachTargets,
+    attached_handle: SystemAudioHandle,
+    actual_rate: u32,
+    on_samples: F,
+) -> Result<(), AudioError>
+where
+    F: FnMut(&TrackBlock<'_>) + Send + 'static,
+{
+    let MixedCaptureParams {
+        device,
+        config,
+        system_source,
+        stop,
+    } = params;
+    let handle = Arc::new(Mutex::new(Some(attached_handle)));
+    let stall_signal = Arc::new(AtomicBool::new(false));
+    // All HAL querying and stall-recovery rebuild orchestration lives on
+    // the supervisor's own threads (see `crate::supervisor`); the mic
+    // callback only ever makes non-blocking requests against it.
+    let supervisor = Arc::new(start_system_audio_supervisor(
+        &targets,
+        &handle,
+        &stall_signal,
+        system_source.map(str::to_string),
+        actual_rate,
+    ));
 
     let mixer = Arc::new(Mutex::new(MixState {
         ring: Arc::clone(&targets.ring),
@@ -718,15 +844,14 @@ where
         playback_resampler: Arc::clone(&targets.playback_resampler),
         last_activity: Arc::clone(&targets.last_activity),
         last_nonzero_activity: Arc::clone(&targets.last_nonzero_activity),
-        handle: Arc::clone(&handle),
-        rebuilding: Arc::clone(&rebuilding),
-        system_source: system_source_owned,
+        supervisor: Arc::clone(&supervisor),
+        stall_signal,
+        silence_notified: false,
         drift: DriftController::new(TARGET_FILL_SAMPLES),
         last_adjustment: 0.0,
         stalled: false,
-        rendering_query: RateLimitedQuery::new(RENDERING_QUERY_MIN_INTERVAL),
-        native_mic_buffer: NativeMicBuffer::new(attached.actual_rate),
-        native_rate: attached.actual_rate,
+        native_mic_buffer: NativeMicBuffer::new(actual_rate),
+        native_rate: actual_rate,
         playback_scratch: Vec::new(),
         on_samples,
     }));
@@ -760,11 +885,18 @@ where
     }
 
     drop(stream);
-    // A stall-recovery rebuild may be mid-flight (see `MixState::trigger_rebuild`);
-    // wait for it to finish so the handle it installs isn't stopped out from
-    // under it, and so the handle taken below is always the current one.
-    while rebuilding.load(Ordering::Acquire) {
-        std::thread::sleep(POLL_INTERVAL);
+    // A stall-recovery rebuild may be mid-flight; cancel the supervisor and
+    // wait — bounded by its deadline, never an unbounded spin on a detached
+    // thread's flag (see `crate::supervisor`) — so the rebuild's result is
+    // either cooperatively disposed of or installed-and-stopped before the
+    // handle below is taken, and Stop cannot hang.
+    let shutdown = supervisor.cancel_and_wait();
+    if !shutdown.completed_within(SYSTEM_REBUILD_DEADLINE) {
+        eprintln!(
+            "myna-audio: system-audio supervisor shutdown exceeded its deadline \
+             ({:?}); continuing teardown",
+            shutdown.elapsed()
+        );
     }
     stop_system_audio_handle(&handle)?;
     // Drain any system audio still buffered before flushing the mic
@@ -790,7 +922,7 @@ struct AttachedSystemAudio {
     /// [`crate::capture::MixState`] keeps using the rate from the *first*
     /// successful attach for the rest of the recording, so
     /// `TrackBlock::playback`'s rate never changes mid-recording — a later
-    /// stall-recovery rebuild ([`MixState::trigger_rebuild`]) that
+    /// stall-recovery rebuild ([`RebuildWiring::attach`]) that
     /// negotiates a DIFFERENT rate is rejected outright rather than
     /// assumed compatible; see [`rebuild_rate_is_acceptable`].
     actual_rate: u32,
@@ -806,14 +938,14 @@ struct AttachedSystemAudio {
 /// would otherwise feed audio at the new rate into a ring and resampler
 /// every downstream consumer still assumes is at the pinned rate, producing
 /// a silent, undetectable pitch/speed shift for the rest of the recording.
-/// [`MixState::trigger_rebuild`] calls this and rejects (stops, does not
+/// [`RebuildWiring::attach`] calls this and rejects (stops, does not
 /// install) an incompatible rebuild rather than risk that.
 fn rebuild_rate_is_acceptable(pinned_rate: u32, rebuilt_rate: u32) -> bool {
     pinned_rate == rebuilt_rate
 }
 
 /// Shared system-audio state [`attach_system_audio_to_ring`] (re)populates
-/// and [`MixState::trigger_rebuild`] re-attaches into — grouped into one
+/// and [`RebuildWiring::attach`] re-attaches into — grouped into one
 /// struct so [`capture_mixed_inner`]'s `Attach` type parameter stays within
 /// clippy's `too_many_arguments` limit.
 struct SystemAudioAttachTargets {
@@ -861,7 +993,7 @@ fn playback_ring_get_or_init(
 /// `targets.playback_resampler` — resetting both resamplers to a fresh,
 /// `Pending` state first, since any state left over from a previous attach
 /// (e.g. a stall-recovery rebuild) is stale. Shared by `capture_mixed`'s
-/// initial start and [`MixState::trigger_rebuild`]'s teardown-and-recreate.
+/// initial start and [`RebuildWiring::attach`]'s teardown-and-recreate.
 ///
 /// Resets `last_activity` and `last_nonzero_activity` to "now" once the
 /// resamplers are finalized, so a rebuild doesn't immediately look stalled
@@ -977,6 +1109,209 @@ fn stop_system_audio_handle(
     }
 }
 
+/// The supervisor's `query_hal` hook state: the rate-limited, cached
+/// rendering-output read plus the activity timestamps needed to evaluate the
+/// full [`is_system_audio_stalled`] policy — all read and decided on the
+/// supervisor's worker thread, never the mic realtime callback.
+struct HalQuery {
+    handle: Arc<Mutex<Option<SystemAudioHandle>>>,
+    last_activity: Arc<Mutex<Instant>>,
+    last_nonzero_activity: Arc<Mutex<Instant>>,
+    /// Set (never cleared here) when the silence-while-rendering stall
+    /// condition is confirmed; [`MixState::update_stall_state`] folds it
+    /// into the stall edge and clears it once callbacks resume.
+    stall_signal: Arc<AtomicBool>,
+    /// See [`RENDERING_QUERY_MIN_INTERVAL`] for why the HAL round-trip is
+    /// never performed more than once per second.
+    rendering_query: Mutex<RateLimitedQuery>,
+}
+
+impl HalQuery {
+    /// Whether any currently-tapped process reports an active output
+    /// session, refreshing the cache only once per
+    /// [`RENDERING_QUERY_MIN_INTERVAL`] — and only once silence has actually
+    /// persisted past [`SYSTEM_RENDERING_SILENCE_TIMEOUT`], so a healthy
+    /// stream never triggers a HAL round-trip at all. Records the full
+    /// stall verdict into `stall_signal` as a side effect.
+    fn rendering_state(&self) -> bool {
+        let now = Instant::now();
+        let since_last_callback = self
+            .last_activity
+            .lock()
+            .map(|last| now.duration_since(*last))
+            .unwrap_or(Duration::ZERO);
+        let since_last_nonzero = self
+            .last_nonzero_activity
+            .lock()
+            .map(|last| now.duration_since(*last))
+            .unwrap_or(Duration::ZERO);
+        if since_last_nonzero <= SYSTEM_RENDERING_SILENCE_TIMEOUT {
+            return false;
+        }
+        let Ok(mut query) = self.rendering_query.lock() else {
+            return false;
+        };
+        let handle = Arc::clone(&self.handle);
+        let is_rendering = query.get(now, move || {
+            handle
+                .lock()
+                .ok()
+                .and_then(|guard| {
+                    guard
+                        .as_ref()
+                        .map(SystemAudioHandle::is_any_tapped_process_rendering_output)
+                })
+                .unwrap_or(false)
+        });
+        if is_system_audio_stalled(since_last_callback, since_last_nonzero, is_rendering) {
+            self.stall_signal.store(true, Ordering::Release);
+        }
+        is_rendering
+    }
+}
+
+/// The supervisor's `rebuild` hook state: everything a stall-recovery
+/// teardown-and-recreate needs, mirroring the old `RebuildWiring::attach`
+/// body exactly (same ring clears, same rate-pinning rejection policy).
+struct RebuildWiring {
+    targets: SystemAudioAttachTargets,
+    handle: Arc<Mutex<Option<SystemAudioHandle>>>,
+    /// Owned copy of the id [`crate::capture_sources`] was asked to capture
+    /// — the rebuild re-resolves and restarts capture from the supervisor's
+    /// thread, which can't borrow the `&str` the original call was given.
+    system_source: Option<String>,
+    /// The rate pinned at the first successful attach; a rebuild negotiating
+    /// a different one is rejected (see [`rebuild_rate_is_acceptable`]).
+    pinned_native_rate: u32,
+}
+
+impl RebuildWiring {
+    /// Tears down and recreates the whole system-audio pipeline — tap,
+    /// aggregate device, and resampler — on the supervisor's rebuild thread,
+    /// and returns the attachment whose stop closure tears the handle back
+    /// down. The stop closure is idempotent (it *takes* the slot), so the
+    /// supervisor stopping an attachment both on replacement and on
+    /// cancellation cannot double-stop a handle.
+    ///
+    /// Rejects (stops immediately, never installs) a rebuild that negotiates
+    /// a DIFFERENT native rate than the pinned one — see
+    /// [`rebuild_rate_is_acceptable`]'s doc comment for why: `native_rate`
+    /// and the playback ring are never resized after the first attach, so
+    /// accepting a different rate would silently desync `playback`'s
+    /// pitch/speed for the rest of the recording. Rejecting degrades to
+    /// system-audio-silent for the remainder of the recording rather than
+    /// risk that — mic-only beats a corrupted recording, the same policy
+    /// `capture_mixed_inner`'s initial-attach-failure branch already applies.
+    fn attach(&self) -> SystemAudioAttachment {
+        let _ = stop_system_audio_handle(&self.handle);
+        self.targets.ring.clear_to(0);
+        if let Some(playback_ring) = self
+            .targets
+            .playback_ring_slot
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            playback_ring.clear_to(0);
+        }
+
+        match attach_system_audio_to_ring(self.system_source.as_deref(), &self.targets) {
+            Ok(attached) => {
+                if rebuild_rate_is_acceptable(self.pinned_native_rate, attached.actual_rate) {
+                    if let Ok(mut slot) = self.handle.lock() {
+                        *slot = Some(attached.handle);
+                    }
+                } else {
+                    // Debug-only: names the negotiated rates, not device
+                    // identities, but kept consistent with the other
+                    // capture-path diagnostics that may echo process info.
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "myna-audio: system-audio stall recovery reattached at a \
+                         different native rate ({} Hz; this recording is pinned at \
+                         {} Hz from the first attach) — rejecting the rebuild to \
+                         avoid an audible pitch/speed shift in `playback` for the \
+                         rest of the recording; continuing without system audio",
+                        attached.actual_rate, self.pinned_native_rate
+                    );
+                    #[cfg(not(debug_assertions))]
+                    let _ = &attached.actual_rate;
+                    let _ = attached.handle.stop();
+                }
+            }
+            Err(err) => {
+                // Debug-only: `err` can echo back the device/process
+                // identity Core Audio failed to tap.
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "myna-audio: system-audio stall recovery failed to rebuild the \
+                     tap: {err}; will retry on the next detected stall"
+                );
+                #[cfg(not(debug_assertions))]
+                let _ = &err;
+            }
+        }
+
+        let handle_for_stop = Arc::clone(&self.handle);
+        SystemAudioAttachment::new(move || {
+            let _ = stop_system_audio_handle(&handle_for_stop);
+        })
+    }
+}
+
+/// Builds and starts the [`SystemAudioSupervisor`] that owns `handle`'s
+/// rebuild lifecycle for one mixed-capture session.
+fn start_system_audio_supervisor(
+    targets: &SystemAudioAttachTargets,
+    handle: &Arc<Mutex<Option<SystemAudioHandle>>>,
+    stall_signal: &Arc<AtomicBool>,
+    system_source: Option<String>,
+    pinned_native_rate: u32,
+) -> SystemAudioSupervisor {
+    let query = HalQuery {
+        handle: Arc::clone(handle),
+        last_activity: Arc::clone(&targets.last_activity),
+        last_nonzero_activity: Arc::clone(&targets.last_nonzero_activity),
+        stall_signal: Arc::clone(stall_signal),
+        rendering_query: Mutex::new(RateLimitedQuery::new(RENDERING_QUERY_MIN_INTERVAL)),
+    };
+    let rebuild_wiring = RebuildWiring {
+        targets: SystemAudioAttachTargets {
+            ring: Arc::clone(&targets.ring),
+            resampler: Arc::clone(&targets.resampler),
+            playback_ring_slot: Arc::clone(&targets.playback_ring_slot),
+            playback_resampler: Arc::clone(&targets.playback_resampler),
+            last_activity: Arc::clone(&targets.last_activity),
+            last_nonzero_activity: Arc::clone(&targets.last_nonzero_activity),
+        },
+        handle: Arc::clone(handle),
+        system_source,
+        pinned_native_rate,
+    };
+    SystemAudioSupervisor::start(
+        SystemAudioSupervisorConfig {
+            deadline: SYSTEM_REBUILD_DEADLINE,
+        },
+        SystemAudioSupervisorHooks::new(
+            move || query.rendering_state(),
+            move |_cancellation: &SupervisorCancellation| rebuild_wiring.attach(),
+            |status| match status {
+                // Runs on the supervisor's worker thread — never the audio
+                // callback — so logging here is safe.
+                SystemAudioSupervisorStatus::AttachTimedOut => eprintln!(
+                    "myna-audio: system-audio rebuild did not complete within its \
+                     deadline; the result will still be honoured when it arrives"
+                ),
+                SystemAudioSupervisorStatus::TeardownTimedOut => eprintln!(
+                    "myna-audio: system-audio teardown did not complete within its \
+                     deadline; abandoning the straggling thread (cooperative \
+                     cancellation never kills threads)"
+                ),
+            },
+        ),
+    )
+}
+
 /// Pure decision extracted from [`MixState::update_stall_state`] so the
 /// stall policy is unit-testable without a real Core Audio device or HAL
 /// round-trip: given how long it's been since the last system-audio
@@ -1060,26 +1395,25 @@ struct MixState<F: FnMut(&TrackBlock<'_>) + Send + 'static> {
     playback_resampler: Arc<Mutex<DeferredResampler>>,
     last_activity: Arc<Mutex<Instant>>,
     last_nonzero_activity: Arc<Mutex<Instant>>,
-    /// The live system-audio handle, shared with any in-flight stall
-    /// recovery rebuild ([`Self::trigger_rebuild`]) so both sides always
-    /// see (and replace) the same handle.
-    handle: Arc<Mutex<Option<SystemAudioHandle>>>,
-    /// Guards against triggering more than one rebuild at a time while a
-    /// stall persists across many mic blocks.
-    rebuilding: Arc<AtomicBool>,
-    /// Owned copy of the id [`crate::capture_sources`] was asked to
-    /// capture — [`Self::trigger_rebuild`] needs to re-resolve and restart
-    /// capture from a spawned thread, which can't borrow the `&str` the
-    /// original call was given.
-    system_source: Option<String>,
+    /// Owns the live system-audio handle's rebuild lifecycle. The realtime
+    /// callback never queries the HAL or rebuilds anything itself — it only
+    /// makes non-blocking [`SystemAudioSupervisor::request_rebuild`] /
+    /// [`SystemAudioSupervisor::notify_audio_callback`] requests against
+    /// this (see [`crate::supervisor`]).
+    supervisor: Arc<SystemAudioSupervisor>,
+    /// Set by the supervisor's HAL-query hook (on the supervisor's worker
+    /// thread) once the silence-while-rendering stall condition is confirmed;
+    /// read cheaply here to fold that decision into the stall edge without
+    /// ever touching Core Audio from the callback.
+    stall_signal: Arc<AtomicBool>,
+    /// Whether the current silence episode has already been escalated to
+    /// the supervisor for a HAL check — keeps [`Self::handle_mic_block`]
+    /// from flooding the request channel (one notification per episode,
+    /// reset when activity resumes).
+    silence_notified: bool,
     drift: DriftController,
     last_adjustment: f64,
     stalled: bool,
-    /// Rate-limited, cached read of
-    /// [`SystemAudioHandle::is_any_tapped_process_rendering_output`] — see
-    /// [`RENDERING_QUERY_MIN_INTERVAL`] for why this is never queried more
-    /// than once per second.
-    rendering_query: RateLimitedQuery,
     /// Decouples the genuine native-rate mic mono `open_microphone_stream`'s
     /// callback hands off each call from `native_rate`'s ring-pull target
     /// for `playback` mixing. Sized once from the *first* successful
@@ -1151,17 +1485,22 @@ impl<F: FnMut(&TrackBlock<'_>) + Send + 'static> MixState<F> {
 
     /// Detects a stalled system-audio source two ways: no callback at all
     /// for [`SYSTEM_STALL_TIMEOUT`] (cheap, and still sufficient if the tap
-    /// dies outright), or — new for Core Audio process taps, which keep
-    /// their IOProc firing on schedule even while delivering only silence —
-    /// buffers that have been all-zero for [`SYSTEM_STALL_TIMEOUT`] *while*
-    /// [`SystemAudioHandle::is_any_tapped_process_rendering_output`] still
-    /// reports the tapped process(es) as actively rendering output. Buffer
-    /// content alone can't distinguish that second case from a genuinely
-    /// quiet room; the rendering-output check can.
+    /// dies outright), or — for Core Audio process taps, which keep their
+    /// IOProc firing on schedule even while delivering only silence —
+    /// buffers that have been all-zero for [`SYSTEM_RENDERING_SILENCE_TIMEOUT`]
+    /// *while* the tapped process(es) still report an active output session.
+    /// Buffer content alone can't distinguish that second case from a
+    /// genuinely quiet room; the rendering-output check can — but that check
+    /// is a HAL round-trip and must never run here (this is the mic's
+    /// realtime callback), so this function only *escalates* a long-silence
+    /// episode to the supervisor once per episode
+    /// ([`SystemAudioSupervisor::notify_audio_callback`], a non-blocking
+    /// request) and folds in the supervisor's verdict via `stall_signal`.
     ///
-    /// A rising edge into "stalled" triggers a full tap + aggregate
-    /// teardown and rebuild ([`Self::trigger_rebuild`]) — restarting only
-    /// the IOProc does not recover a stalled Core Audio tap.
+    /// A rising edge into "stalled" freezes drift and requests a full tap +
+    /// aggregate teardown and rebuild from the supervisor
+    /// ([`SystemAudioSupervisor::request_rebuild`]) — restarting only the
+    /// IOProc does not recover a stalled Core Audio tap.
     fn update_stall_state(&mut self) {
         let now = Instant::now();
         let since_last_callback = self
@@ -1175,18 +1514,26 @@ impl<F: FnMut(&TrackBlock<'_>) + Send + 'static> MixState<F> {
             .map(|last| now.duration_since(*last))
             .unwrap_or(Duration::ZERO);
 
-        // The rendering-output HAL query is only even considered once
-        // silence has persisted well past an ordinary conversational pause
-        // (`SYSTEM_RENDERING_SILENCE_TIMEOUT`), and even then it's
-        // rate-limited/cached via `rendering_query` — so it never runs on
-        // every mic realtime callback. See `is_system_audio_stalled`'s doc
-        // comment for the two-timeout policy this implements.
-        let is_rendering = since_last_nonzero > SYSTEM_RENDERING_SILENCE_TIMEOUT
-            && self
-                .rendering_query
-                .get(now, || Self::query_rendering_output(&self.handle));
-        let is_stalled =
-            is_system_audio_stalled(since_last_callback, since_last_nonzero, is_rendering);
+        // Fresh callbacks at all mean any earlier supervisor verdict of
+        // "stalled" is stale — clear it before reading it.
+        if since_last_callback <= SYSTEM_STALL_TIMEOUT {
+            self.stall_signal.store(false, Ordering::Release);
+        }
+        let hard_stalled = since_last_callback > SYSTEM_STALL_TIMEOUT;
+        let supervisor_stalled = self.stall_signal.load(Ordering::Acquire);
+        let is_stalled = hard_stalled || supervisor_stalled;
+
+        if !is_stalled
+            && since_last_nonzero > SYSTEM_RENDERING_SILENCE_TIMEOUT
+            && !self.silence_notified
+        {
+            // Silence has persisted past an ordinary conversational pause:
+            // let the supervisor's worker thread make the (rate-limited,
+            // cached — see `RENDERING_QUERY_MIN_INTERVAL`) rendering-output
+            // HAL query off the realtime path. One request per episode.
+            self.silence_notified = true;
+            self.supervisor.notify_audio_callback();
+        }
 
         if is_stalled == self.stalled {
             return;
@@ -1195,115 +1542,12 @@ impl<F: FnMut(&TrackBlock<'_>) + Send + 'static> MixState<F> {
 
         if is_stalled {
             self.drift.freeze();
-            eprintln!(
-                "myna-audio: system-audio source stalled (no callback for \
-                 {since_last_callback:?}, silent for {since_last_nonzero:?} while its \
-                 process reports rendering output: {is_rendering}); rebuilding \
-                 the system-audio tap"
-            );
-            self.trigger_rebuild();
+            self.supervisor.request_rebuild();
         } else {
             self.ring.clear_to(TARGET_FILL_SAMPLES);
+            self.silence_notified = false;
             self.drift.unfreeze();
         }
-    }
-
-    /// Reads whether any currently-tapped process reports an active output
-    /// session. A HAL property round-trip (potentially Mach IPC to
-    /// `coreaudiod`) — always go through `self.rendering_query` rather than
-    /// calling this directly, so real callers stay rate-limited.
-    fn query_rendering_output(handle: &Arc<Mutex<Option<SystemAudioHandle>>>) -> bool {
-        handle
-            .lock()
-            .ok()
-            .and_then(|guard| {
-                guard
-                    .as_ref()
-                    .map(SystemAudioHandle::is_any_tapped_process_rendering_output)
-            })
-            .unwrap_or(false)
-    }
-
-    /// Tears down and recreates the whole system-audio pipeline — tap,
-    /// aggregate device, and resampler — on a background thread, so the
-    /// realtime mic callback that calls this never blocks on it. Guarded by
-    /// `self.rebuilding` so a stall spanning many mic blocks only triggers
-    /// one rebuild attempt at a time; the mic thread's own
-    /// [`Self::update_stall_state`] naturally observes "unstalled" on a
-    /// later call once the rebuilt tap starts delivering fresh activity.
-    ///
-    /// Rejects (stops immediately, never installs) a rebuild that
-    /// negotiates a DIFFERENT native rate than the one pinned at the first
-    /// successful attach (`self.native_rate`) — see
-    /// [`rebuild_rate_is_acceptable`]'s doc comment for why: `native_rate`
-    /// and the playback ring are never resized after the first attach, so
-    /// accepting a different rate here would silently desync `playback`'s
-    /// pitch/speed for the rest of the recording. Rejecting degrades to
-    /// system-audio-silent for the remainder of the recording rather than
-    /// risk that — mic-only beats a corrupted recording, the same policy
-    /// `capture_mixed_inner`'s initial-attach-failure branch already
-    /// applies.
-    fn trigger_rebuild(&self) {
-        if self.rebuilding.swap(true, Ordering::AcqRel) {
-            return;
-        }
-
-        let targets = SystemAudioAttachTargets {
-            ring: Arc::clone(&self.ring),
-            resampler: Arc::clone(&self.resampler),
-            playback_ring_slot: Arc::clone(&self.playback_ring_slot),
-            playback_resampler: Arc::clone(&self.playback_resampler),
-            last_activity: Arc::clone(&self.last_activity),
-            last_nonzero_activity: Arc::clone(&self.last_nonzero_activity),
-        };
-        let handle_slot = Arc::clone(&self.handle);
-        let rebuilding = Arc::clone(&self.rebuilding);
-        let system_source = self.system_source.clone();
-        let pinned_native_rate = self.native_rate;
-
-        std::thread::spawn(move || {
-            if let Ok(mut slot) = handle_slot.lock() {
-                if let Some(old_handle) = slot.take() {
-                    let _ = old_handle.stop();
-                }
-            }
-            targets.ring.clear_to(0);
-            if let Some(playback_ring) = targets
-                .playback_ring_slot
-                .lock()
-                .ok()
-                .and_then(|guard| guard.clone())
-            {
-                playback_ring.clear_to(0);
-            }
-
-            match attach_system_audio_to_ring(system_source.as_deref(), &targets) {
-                Ok(attached) => {
-                    if rebuild_rate_is_acceptable(pinned_native_rate, attached.actual_rate) {
-                        if let Ok(mut slot) = handle_slot.lock() {
-                            *slot = Some(attached.handle);
-                        }
-                    } else {
-                        eprintln!(
-                            "myna-audio: system-audio stall recovery reattached at a \
-                             different native rate ({} Hz; this recording is pinned at \
-                             {} Hz from the first attach) — rejecting the rebuild to \
-                             avoid an audible pitch/speed shift in `playback` for the \
-                             rest of the recording; continuing without system audio",
-                            attached.actual_rate, pinned_native_rate
-                        );
-                        let _ = attached.handle.stop();
-                    }
-                }
-                Err(err) => {
-                    eprintln!(
-                        "myna-audio: system-audio stall recovery failed to rebuild the \
-                         tap: {err}; will retry on the next detected stall"
-                    );
-                }
-            }
-            rebuilding.store(false, Ordering::Release);
-        });
     }
 
     /// Flushes any system audio still buffered in the mono and playback
@@ -1703,7 +1947,7 @@ mod tests {
     /// `rebuild_rate_is_acceptable`'s doc comment. Constructing a real,
     /// mismatched rebuild end-to-end would require a real Core Audio tap
     /// (out of scope without hardware / `MYNA_LIVE_AUDIO_TESTS`); this
-    /// exercises the pure decision `MixState::trigger_rebuild` makes on the
+    /// exercises the pure decision `RebuildWiring::attach` makes on the
     /// background thread before installing (or rejecting) the rebuilt
     /// handle.
     #[test]
@@ -1741,13 +1985,21 @@ mod tests {
             playback_resampler: Arc::new(Mutex::new(DeferredResampler::pending())),
             last_activity: Arc::new(Mutex::new(Instant::now())),
             last_nonzero_activity: Arc::new(Mutex::new(Instant::now())),
-            handle: Arc::new(Mutex::new(None)),
-            rebuilding: Arc::new(AtomicBool::new(false)),
-            system_source: None,
+            supervisor: Arc::new(SystemAudioSupervisor::start(
+                SystemAudioSupervisorConfig {
+                    deadline: SYSTEM_REBUILD_DEADLINE,
+                },
+                SystemAudioSupervisorHooks::new(
+                    || false,
+                    |_| SystemAudioAttachment::new(|| {}),
+                    |_| {},
+                ),
+            )),
+            stall_signal: Arc::new(AtomicBool::new(false)),
+            silence_notified: false,
             drift: DriftController::new(TARGET_FILL_SAMPLES),
             last_adjustment: 0.0,
             stalled: false,
-            rendering_query: RateLimitedQuery::new(RENDERING_QUERY_MIN_INTERVAL),
             native_mic_buffer: NativeMicBuffer::new(native_rate),
             native_rate,
             playback_scratch: Vec::new(),

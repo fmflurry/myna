@@ -7,6 +7,11 @@ import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture
 import type { Meeting } from '../../core/models/meeting.model';
 import { toMeetingId } from '../../core/models/meeting.model';
 import type { MeetingId } from '../../core/models/meeting.model';
+import type {
+  RecordingHealthEvent,
+  StopAcknowledgement,
+  StopPhase,
+} from '../../core/models/recording-lifecycle.model';
 import type { RecordingState } from '../../core/models/recording-state.model';
 import { RecorderPort } from '../../core/ports/recorder.port';
 import type { RecordingSnapshot } from '../../core/ports/recorder.port';
@@ -23,6 +28,9 @@ export class InMemoryRecorderFake extends RecorderPort {
   private readonly stateSubject = new Subject<RecordingState>();
   private readonly levelSubject = new Subject<AudioLevel>();
   private readonly effectiveSystemSourceSubject = new Subject<AudioSource | null>();
+  private readonly stopProgressSubject = new Subject<StopPhase>();
+  private readonly completedSubject = new Subject<Meeting>();
+  private readonly healthSubject = new Subject<RecordingHealthEvent>();
 
   private currentState: RecordingState = 'idle';
   private currentMeeting: Meeting | undefined;
@@ -80,6 +88,12 @@ export class InMemoryRecorderFake extends RecorderPort {
     return this.audioSources.find((candidate) => candidate.id === systemSource) ?? fallback ?? null;
   }
 
+  /**
+   * Mirrors the stop-phase contract: the finalized row is published on the
+   * completed stream (the ONLY thing that ends 'stopping'), then the session
+   * reports idle. The returned meeting keeps the legacy port signature; the
+   * facade treats it as opaque.
+   */
   override async stop(): Promise<Meeting> {
     const meeting = this.currentMeeting;
     if (!meeting) {
@@ -88,15 +102,17 @@ export class InMemoryRecorderFake extends RecorderPort {
     this.currentState = 'idle';
     this.currentMeeting = undefined;
     this.fakeElapsedSec = null;
+    this.completedSubject.next(meeting);
     this.stateSubject.next(this.currentState);
     return meeting;
   }
 
-  override async cancel(): Promise<void> {
+  override async cancel(): Promise<StopAcknowledgement> {
     this.currentMeeting = undefined;
     this.currentState = 'idle';
     this.fakeElapsedSec = null;
     this.stateSubject.next(this.currentState);
+    return { accepted: true };
   }
 
   override async state(): Promise<RecordingSnapshot> {
@@ -120,6 +136,18 @@ export class InMemoryRecorderFake extends RecorderPort {
 
   override effectiveSystemSourceChanges(): Observable<AudioSource | null> {
     return this.effectiveSystemSourceSubject.asObservable();
+  }
+
+  override stopProgressChanges(): Observable<StopPhase> {
+    return this.stopProgressSubject.asObservable();
+  }
+
+  override completedMeetings(): Observable<Meeting> {
+    return this.completedSubject.asObservable();
+  }
+
+  override healthChanges(): Observable<RecordingHealthEvent> {
+    return this.healthSubject.asObservable();
   }
 
   override async listDevices(): Promise<readonly AudioDevice[]> {
@@ -161,6 +189,21 @@ export class InMemoryRecorderFake extends RecorderPort {
   /** Test helper: push a synthetic audio level onto the levels() stream. */
   emitLevel(level: AudioLevel): void {
     this.levelSubject.next(level);
+  }
+
+  /** Test helper: push a stop-phase onto the stopProgressChanges() stream, simulating a `recording://stop-progress` event. */
+  emitStopProgress(phase: StopPhase): void {
+    this.stopProgressSubject.next(phase);
+  }
+
+  /** Test helper: publish a finalized meeting on the completedMeetings() stream, simulating a `recording://completed` event. */
+  emitCompletedMeeting(meeting: Meeting): void {
+    this.completedSubject.next(meeting);
+  }
+
+  /** Test helper: push a health event onto the healthChanges() stream, simulating a `recording://health` event. */
+  emitHealth(event: RecordingHealthEvent): void {
+    this.healthSubject.next(event);
   }
 
   /**

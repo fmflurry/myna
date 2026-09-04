@@ -68,6 +68,8 @@ describe('MeetingsShellPage boot resume (ADR 0011)', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const folders = signal<readonly never[]>([]);
   const expandedFolders = signal<ReadonlySet<never>>(new Set());
@@ -92,12 +94,14 @@ describe('MeetingsShellPage boot resume (ADR 0011)', () => {
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress: signal(null),
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress: signal(null),
     folders, expandedFolders, speakerHistory: signal([]), transcriptUndo: signal(null),
+    setSidebarWidth: vi.fn(), setSidebarCollapsed: vi.fn(),
     modelDownload: signal(undefined),
     resumeActiveRecording: resumed,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
     loadAudioSources: vi.fn(noop), loadFolders: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
     startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
     clearSelection: vi.fn(noop), clearError: vi.fn(noop),

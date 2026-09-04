@@ -66,6 +66,8 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
 
@@ -75,6 +77,11 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const loadDevices = vi.fn(async () => undefined);
   const checkSystemAudio = vi.fn(async () => undefined);
   const loadSummaryLanguages = vi.fn(async () => undefined);
+  const loadSummaryGuidelines = vi.fn(async () => undefined);
+  const setSummaryGuidelines = vi.fn(async () => undefined);
+  const summaryGuidelines = signal("");
+  const summaryInstructionDraft = () => ({ text: "", includeGeneral: true });
+  const setSummaryInstructionDraft = vi.fn();
   const loadAppVersion = vi.fn(async () => undefined);
   const loadAudioSources = vi.fn(async () => undefined);
   const selectAudioSource = vi.fn((id: string) => {
@@ -127,6 +134,12 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => {
     void collapsed;
   });
+  const setSidebarWidth = vi.fn((width: number) => {
+    void width;
+  });
+  const setSidebarCollapsed = vi.fn((collapsed: boolean) => {
+    void collapsed;
+  });
   const folders = signal<readonly never[]>([]);
   const expandedFolders = signal<ReadonlySet<never>>(new Set());
   const loadFolders = vi.fn(async () => undefined);
@@ -170,16 +183,21 @@ describe('MeetingsShellPage discard-in-progress-recording routing', () => {
     effectiveSystemSource,
     splitRatio,
     transcriptCollapsed,
+    sidebarWidth,
+    sidebarCollapsed,
     importing,
     importProgress,
     setSplitRatio,
     setTranscriptCollapsed,
+    setSidebarWidth,
+    setSidebarCollapsed,
     loadMeetings,
     loadTemplates,
     checkModels,
     loadDevices,
     checkSystemAudio,
     loadSummaryLanguages,
+    loadSummaryGuidelines, setSummaryGuidelines, summaryGuidelines, summaryInstructionDraft, setSummaryInstructionDraft,
     loadAppVersion,
     loadAudioSources,
     loadSummary,

@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  HostListener,
   OnInit,
   computed,
   effect,
@@ -25,18 +26,12 @@ import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/me
 import { MeetingSidebarComponent } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { RecordControlComponent } from '../../components/record-control/record-control.component';
 import { SettingsComponent } from '../../components/settings/settings.component';
+import { SidebarSplitterComponent } from '../../components/sidebar-splitter/sidebar-splitter.component';
 import { UpdateBannerComponent } from '../../components/update-banner/update-banner.component';
 import { UpdateConsentDialogComponent } from '../../components/update-consent-dialog/update-consent-dialog.component';
-import type {
-  SpeakerRename,
-  TranscriptSectionDelete,
-  TranscriptSelectionSpeakerAssignment,
-  TranscriptSegmentEdit,
-  TranscriptSegmentGroupSpeakerReassign,
-  TranscriptSegmentSpeakerReassign,
-} from '../../components/transcript-view/transcript-view.component';
+import type { SpeakerRename, TranscriptSectionDelete, TranscriptSelectionSpeakerAssignment, TranscriptSegmentEdit, TranscriptSegmentGroupSpeakerReassign, TranscriptSegmentSpeakerReassign } from '../../components/transcript-view/transcript-view.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createSettingsControls, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createLayoutControls, createSettingsControls, createSidebarNarrowControls, createSummaryInstructionControls, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runSummarize } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -45,7 +40,7 @@ import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createSettingsControls, cre
  */
 @Component({
   selector: 'app-meetings-shell-page',
-  imports: [MeetingSidebarComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent, SettingsComponent, UpdateConsentDialogComponent, UpdateBannerComponent],
+  imports: [MeetingSidebarComponent, SidebarSplitterComponent, MeetingDetailPaneComponent, RecordControlComponent, AttributionComponent, SettingsComponent, UpdateConsentDialogComponent, UpdateBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './meetings-shell.page.html',
   styleUrl: './meetings-shell.page.scss',
@@ -64,10 +59,16 @@ export class MeetingsShellPage implements OnInit {
 
   protected readonly modelsReady = computed(() => this.facade.modelsStatus()?.allPresent === true);
   protected readonly systemAudioStatus = computed(() => this.facade.systemAudioStatus() ?? CHECKING_SYSTEM_AUDIO);
+  /** Stop-phase signals; `Partial` view because shell specs stub the facade with member subsets — a missing signal degrades to `null`, never throws. */
+  private readonly lifecycleSignals = this.facade as Partial<Pick<MeetingsFacade, 'stopPhase' | 'recordingHealth'>>;
+  protected readonly stopPhase = computed(() => this.lifecycleSignals.stopPhase?.() ?? null);
+  protected readonly recordingHealth = computed(() => this.lifecycleSignals.recordingHealth?.() ?? null);
 
   protected readonly updateHandlers = createUpdateHandlers(this.facade);
   /** Settings-modal surface: `showSettings()` + toggle/backdrop handlers; opens on native menu requests (see `createSettingsControls`). */
   protected readonly settings = createSettingsControls(this.facade, this.showAbout, this.destroyRef);
+  /** Per-request summary-instructions wiring: active-meeting drafts keyed by template + the change handler (see `createSummaryInstructionControls`). */
+  protected readonly summaryInstructions = createSummaryInstructionControls(this.facade);
   protected readonly elapsedSec = signal(0);
   protected readonly elapsedLabel = computed(() => formatMmSs(this.elapsedSec()));
 
@@ -122,6 +123,7 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.loadDevices();
     void this.facade.checkSystemAudio();
     void this.facade.loadSummaryLanguages();
+    void this.facade.loadSummaryGuidelines();
     void this.facade.loadAppVersion();
     void this.facade.loadAudioSources();
     void this.facade.loadFolders();
@@ -156,9 +158,7 @@ export class MeetingsShellPage implements OnInit {
   }
 
   onBackdropActivate(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      this.toggleAbout();
-    }
+    if (event.target === event.currentTarget) this.toggleAbout();
   }
 
   onBackdropKeydown(event: KeyboardEvent): void {
@@ -301,12 +301,7 @@ export class MeetingsShellPage implements OnInit {
   }
 
   summarize(templateName: string): void {
-    const meeting = this.facade.selectedMeeting();
-    const template = this.facade.templates().find((candidate) => candidate.name === templateName);
-    if (!meeting || !template) {
-      return;
-    }
-    void this.facade.summarizeMeeting(meeting.id, template);
+    runSummarize(this.facade, templateName);
   }
 
   cancelSummary(): void {
@@ -325,12 +320,16 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.editSummary(edit.meetingId, edit.template, edit.language, edit.markdown);
   }
 
-  onSplitRatioChanged(ratio: number): void {
-    this.facade.setSplitRatio(ratio);
+  onSummaryDeleted(request: SummaryLoadRequest): void {
+    void this.facade.deleteSummary(request.meetingId, request.template, request.language);
   }
 
-  onTranscriptCollapsedChanged(collapsed: boolean): void {
-    this.facade.setTranscriptCollapsed(collapsed);
+  readonly layoutControls = createLayoutControls(this.facade);
+  /** Narrow rail fallback + collapse/expand focus return — self-wiring (resize listener + effects); the template never reads it. */
+  protected readonly sidebarNarrow = createSidebarNarrowControls(this.facade, this.destroyRef);
+  @HostListener('window:keydown', ['$event'])
+  protected onWindowKeydown(event: KeyboardEvent): void {
+    this.layoutControls.onWindowKeydown(event);
   }
 
   exportMeeting(format: MeetingExportFormat): void {

@@ -39,14 +39,25 @@ export async function runStartRecording(
   }
 }
 
-/** Stops the recording and mirrors the finalized meeting into both read paths. */
+/**
+ * Stops the recording: `stop_recording` resolves with the finalized meeting
+ * (duration + transcript + track flags), so the facade mirrors it into both
+ * read paths the moment the stop settles — the sync Stop landing. The
+ * `recording://completed` event does not exist on the backend, so waiting
+ * for it would leave the start row (duration 0, no transcript) on screen.
+ * The completed stream stays subscribed as a best-effort mirror; its upsert
+ * filters by id, so a double landing is exactly-once, never a duplicate.
+ */
 export async function runStopRecording(store: MeetingsStore, stopRecordingUseCase: StopRecordingUseCase): Promise<void> {
+  store.setRecordingState('stopping');
   try {
     const meeting = await stopRecordingUseCase.stop();
     store.setSelectedMeeting(meeting);
     store.addMeeting(meeting);
-    // Stopping selects the finalized meeting — drop any speaker-op inverse
-    // captured against the previously selected meeting.
+    // Stopping switches the selection to the finalized row — any captured
+    // speaker-op inverse now targets the stale in-flight row; drop the undo
+    // stack. Redundant with `setSelectedMeeting`'s own clear, kept to mirror
+    // `runStartRecording`.
     store.setSpeakerHistory([]);
     store.clearError();
   } catch (caught) {

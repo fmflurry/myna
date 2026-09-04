@@ -38,12 +38,14 @@ import { CheckSystemAudioUseCase } from './application/use-cases/check-system-au
 import { CreateFolderUseCase } from './application/use-cases/create-folder.usecase';
 import { DeleteFolderUseCase } from './application/use-cases/delete-folder.usecase';
 import { DeleteMeetingUseCase } from './application/use-cases/delete-meeting.usecase';
+import { DeleteSummaryUseCase } from './application/use-cases/delete-summary.usecase';
 import { DeleteTranscriptSegmentUseCase } from './application/use-cases/delete-transcript-segment.usecase';
 import { DiarizeMeetingUseCase } from './application/use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from './application/use-cases/edit-summary.usecase';
 import { EditTranscriptSegmentUseCase } from './application/use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from './application/use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from './application/use-cases/get-app-version.usecase';
+import { GetSummaryGuidelinesUseCase } from './application/use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from './application/use-cases/get-summary.usecase';
 import { GetUpdateConsentUseCase } from './application/use-cases/get-update-consent.usecase';
 import { ImportAudioUseCase } from './application/use-cases/import-audio.usecase';
@@ -65,6 +67,7 @@ import { RestoreTranscriptSegmentsUseCase } from './application/use-cases/restor
 import { RetranscribeMeetingUseCase } from './application/use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from './application/use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from './application/use-cases/set-meeting-folder.usecase';
+import { SetSummaryGuidelinesUseCase } from './application/use-cases/set-summary-guidelines.usecase';
 import { SetSegmentSpeakerUseCase } from './application/use-cases/set-segment-speaker.usecase';
 import { SetUpdateConsentUseCase } from './application/use-cases/set-update-consent.usecase';
 import { StartRecordingUseCase } from './application/use-cases/start-recording.usecase';
@@ -114,6 +117,7 @@ export function provideMeetings(): EnvironmentProviders {
     SetMeetingArchivedUseCase,
     EditTranscriptSegmentUseCase,
     EditSummaryUseCase,
+    DeleteSummaryUseCase,
     SummarizeMeetingUseCase,
     ListTemplatesUseCase,
     CheckModelsUseCase,
@@ -123,6 +127,8 @@ export function provideMeetings(): EnvironmentProviders {
     ExportMeetingUseCase,
     CheckSystemAudioUseCase,
     ListSummaryLanguagesUseCase,
+    GetSummaryGuidelinesUseCase,
+    SetSummaryGuidelinesUseCase,
     GetSummaryUseCase,
     GetAppVersionUseCase,
     ImportAudioUseCase,

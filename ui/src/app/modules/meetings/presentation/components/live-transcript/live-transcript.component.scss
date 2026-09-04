@@ -65,6 +65,10 @@
   color: var(--color-text-muted);
 }
 
+.page-control {
+  align-self: flex-start;
+}
+
 /**
  * Fixed-size accent palette, keyed by `speakerAccentIndex()` (a stable
  * string hash of the speaker label mod palette size). An UNBOUNDED set of

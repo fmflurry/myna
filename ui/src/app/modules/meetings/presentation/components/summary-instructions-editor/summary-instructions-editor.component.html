@@ -1,0 +1,42 @@
+<div class="summary-instructions">
+  @if (!forceExpanded()) {
+    <button
+      type="button"
+      class="toggle"
+      [attr.aria-expanded]="expanded()"
+      (click)="toggleExpanded()"
+    >
+      {{ expanded() ? 'Instructions for this summary' : 'Add instructions for this summary' }}
+    </button>
+  }
+
+  @if (expanded()) {
+    <label class="instructions-field">
+      <span class="instructions-label">Instructions for this summary</span>
+      <textarea
+        class="instructions-input"
+        rows="3"
+        [value]="text()"
+        (input)="onTextInput($event)"
+        (blur)="onTextBlur()"
+      ></textarea>
+    </label>
+
+    <label class="include-general">
+      <input
+        type="checkbox"
+        [checked]="draft().includeGeneral"
+        (change)="onIncludeGeneralToggled($event)"
+      />
+      Apply general guidelines
+    </label>
+
+    @if (showGuidelinesHint()) {
+      <p class="guidelines-hint">General guidelines: {{ guidelinesPreview() }}</p>
+    }
+
+    @if (showRemove()) {
+      <button type="button" class="remove-instructions" (click)="clearInstructions()">Remove</button>
+    }
+  }
+</div>

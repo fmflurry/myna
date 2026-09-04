@@ -1,0 +1,69 @@
+/*
+ * Rendered inside the pane's centered `.generate` block; the editor itself
+ * left-aligns its content and caps its measure so the textarea never spans
+ * the whole column.
+ */
+.summary-instructions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: min(100%, 26rem);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+.toggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--color-text);
+}
+
+.instructions-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.instructions-label {
+  color: var(--color-text-muted);
+}
+
+.instructions-input {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.include-general {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.guidelines-hint {
+  margin: 0;
+  max-width: 100%;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

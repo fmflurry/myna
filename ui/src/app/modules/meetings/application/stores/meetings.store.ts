@@ -7,10 +7,13 @@ import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture
 import type { Folder, FolderId } from '../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { ModelsStatus } from '../../core/models/models-status.model';
+import type { RecordingHealthEvent, StopPhase } from '../../core/models/recording-lifecycle.model';
 import type { MeetingsErrorCode, RecordingState } from '../../core/models/recording-state.model';
+import { DEFAULT_SIDEBAR_WIDTH_PX } from '../../core/models/sidebar-layout.model';
 import { DEFAULT_SPLIT_RATIO } from '../../core/models/split-layout.model';
 import { DEFAULT_SUMMARY_LANGUAGE_CODE, type SummaryLanguage } from '../../core/models/summary-language.model';
 import type { Summary } from '../../core/models/summary.model';
+import type { SummaryInstructionsDraft } from '../../core/models/summary-instructions.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../core/models/transcript.model';
 import { AudioImportPort, type ImportProgress } from '../../core/ports/audio-import.port';
@@ -27,8 +30,8 @@ import {
   withoutFolderId,
   withToggledFolderId,
 } from './expanded-folders-preferences.util';
-import { storeSplitRatio, storeTranscriptCollapsed } from './split-layout-preferences.util';
-import { applySummaryContentUpdate, subscribeToAudioImportEvents } from './meetings.store.support';
+import { applySidebarCollapsed, applySidebarWidth, applySplitRatio, applyTranscriptCollapsed } from './meetings-store-layout.support';
+import { applySummaryContentUpdate, applySummaryRemoval, subscribeToAudioImportEvents } from './meetings.store.support';
 import { IDLE_MODEL_DOWNLOAD, type ActiveRecording, type MeetingsStoreConfig, type ModelDownloadState } from './meetings-store-config.model';
 import {
   AUDIO_SOURCE_PREFERENCE_KEY,
@@ -39,6 +42,7 @@ import {
   MIC_DEVICE_PREFERENCE_KEY,
   SUMMARY_LANGUAGE_PREFERENCE_KEY,
 } from './meetings-store-preferences.util';
+import { readSummaryInstructionDraft, storeSummaryInstructionDraft } from './summary-instructions-preferences.util';
 import { applySummaryCacheLoading, applySummaryCacheResult, readSummaryCacheEntry, removeSummaryCacheEntry } from './meetings-store-summary-cache.support';
 import { mergeFinalizedSegments, seedPersistedPreferences, wireRecorderAndTranscriberEvents } from './meetings-store-wiring.support';
 import { summaryCacheKey } from './summary-cache.model';
@@ -51,6 +55,7 @@ export type { SummarizingKey };
 export type { SummaryCacheEntry, SummaryCacheStatus };
 export { summaryCacheKey };
 export { SPLIT_RATIO_PREFERENCE_KEY, TRANSCRIPT_COLLAPSED_PREFERENCE_KEY } from './split-layout-preferences.util';
+export { SIDEBAR_COLLAPSED_PREFERENCE_KEY, SIDEBAR_WIDTH_PREFERENCE_KEY } from './sidebar-layout-preferences.util';
 export { EXPANDED_FOLDERS_PREFERENCE_KEY };
 export { PARTIAL_UI_AUDIT_MS } from './meetings-store-wiring.support';
 export { IDLE_MODEL_DOWNLOAD, type ActiveRecording, type ModelDownloadState } from './meetings-store-config.model';
@@ -115,6 +120,10 @@ export class MeetingsStore {
   readonly summarizing: Signal<boolean> = computed(() => this.summarizingKey() !== null);
   /** True while the STT model loads after a Record click, before `recordingState` leaves `'idle'`. */
   readonly startingRecording: Signal<boolean> = computed(() => this.slots.get('STARTING_RECORDING')().data ?? false);
+  /** Current `recording://stop-progress` phase of the in-flight stop; `null` outside a stop or once completed. */
+  readonly stopPhase: Signal<StopPhase | null> = computed(() => this.slots.get('STOP_PHASE')().data ?? null);
+  /** Latest `recording://health` event; `null` while the recording stays healthy. */
+  readonly recordingHealth: Signal<RecordingHealthEvent | null> = computed(() => this.slots.get('RECORDING_HEALTH')().data ?? null);
   readonly systemAudioStatus: Signal<SystemAudioStatus | undefined> = computed(() => this.slots.get('SYSTEM_AUDIO_STATUS')().data);
   /** The source the user has selected for the NEXT recording. Defaults to both mic and system audio. */
   readonly captureSource: Signal<CaptureSource> = computed(() => this.slots.get('CAPTURE_SOURCE')().data ?? DEFAULT_CAPTURE_SOURCE);
@@ -126,6 +135,8 @@ export class MeetingsStore {
    * preferences backend) — never re-read on every access.
    */
   readonly selectedSummaryLanguage: Signal<string> = computed(() => this.slots.get('SELECTED_SUMMARY_LANGUAGE')().data ?? DEFAULT_SUMMARY_LANGUAGE_CODE);
+  /** General summary guidelines; the server (via `SummarizerPort`) is the source of truth — this slot is a cache, never persisted. */
+  readonly summaryGuidelines: Signal<string> = computed(() => this.slots.get('SUMMARY_GUIDELINES')().data ?? '');
   /** Per-(meeting, template, language) load state for persisted summaries fetched via `get_summary`. */
   readonly summaryCache: Signal<ReadonlyMap<string, SummaryCacheEntry>> = computed(() => this.slots.get('SUMMARY_CACHE')().data ?? new Map());
   readonly appVersion: Signal<string | undefined> = computed(() => this.slots.get('APP_VERSION')().data);
@@ -138,6 +149,9 @@ export class MeetingsStore {
   readonly splitRatio: Signal<number> = computed(() => this.slots.get('SPLIT_RATIO')().data ?? DEFAULT_SPLIT_RATIO);
   /** Whether the transcript column is collapsed to its reopen rail. Seeded from `PreferencesPort`. */
   readonly transcriptCollapsed: Signal<boolean> = computed(() => this.slots.get('TRANSCRIPT_COLLAPSED')().data ?? false);
+  /** Width in pixels of the sidebar, and whether it is collapsed. Both seeded from `PreferencesPort`. */
+  readonly sidebarWidth: Signal<number> = computed(() => this.slots.get('SIDEBAR_WIDTH')().data ?? DEFAULT_SIDEBAR_WIDTH_PX);
+  readonly sidebarCollapsed: Signal<boolean> = computed(() => this.slots.get('SIDEBAR_COLLAPSED')().data ?? false);
   /** True while an audio import or re-transcribe is running. */
   readonly importing: Signal<boolean> = computed(() => this.slots.get('IMPORTING')().data ?? false);
   /** Latest `import://progress` event for the in-flight import/re-transcribe, or `null` once none is running. */
@@ -202,21 +216,13 @@ export class MeetingsStore {
     if (this.slots.get('SELECTED_MEETING')().data?.id === id) this.clearSelectedMeeting();
   }
 
-  setTemplates(templates: readonly SummaryTemplate[]): void {
-    this.slots.update('TEMPLATES', { data: templates, status: 'Success', isLoading: false });
-  }
+  setTemplates(templates: readonly SummaryTemplate[]): void { this.slots.update('TEMPLATES', { data: templates, status: 'Success', isLoading: false }); }
 
-  setModelsStatus(status: ModelsStatus): void {
-    this.slots.update('MODELS_STATUS', { data: status, status: 'Success', isLoading: false });
-  }
+  setModelsStatus(status: ModelsStatus): void { this.slots.update('MODELS_STATUS', { data: status, status: 'Success', isLoading: false }); }
 
-  setError(error: MeetingsErrorInfo): void {
-    this.slots.update('ERROR', { data: error, status: 'Error', isLoading: false });
-  }
+  setError(error: MeetingsErrorInfo): void { this.slots.update('ERROR', { data: error, status: 'Error', isLoading: false }); }
 
-  clearError(): void {
-    this.slots.clear('ERROR');
-  }
+  clearError(): void { this.slots.clear('ERROR'); }
 
   resetLiveTranscript(): void {
     this.slots.update('FINALIZED_SEGMENTS', { data: [], status: 'Success', isLoading: false });
@@ -238,9 +244,7 @@ export class MeetingsStore {
     this.slots.update('SUMMARY_STREAM', { data: '', status: 'Success', isLoading: false });
   }
 
-  setDevices(devices: readonly AudioDevice[]): void {
-    this.slots.update('DEVICES', { data: devices, status: 'Success', isLoading: false });
-  }
+  setDevices(devices: readonly AudioDevice[]): void { this.slots.update('DEVICES', { data: devices, status: 'Success', isLoading: false }); }
 
   /** Updates the selection AND persists it via `PreferencesPort`. Clearing to `null` persists the empty-string sentinel — NOT `null` — so `seedPersistedPreferences` distinguishes "explicitly cleared" from "never set". */
   setSelectedDevice(device: AudioDevice | null): void {
@@ -248,44 +252,28 @@ export class MeetingsStore {
     this.slots.update('SELECTED_DEVICE', { data: device, status: 'Success', isLoading: false });
   }
 
-  setOutputDevices(devices: readonly AudioDevice[]): void {
-    this.slots.update('OUTPUT_DEVICES', { data: devices, status: 'Success', isLoading: false });
-  }
+  setOutputDevices(devices: readonly AudioDevice[]): void { this.slots.update('OUTPUT_DEVICES', { data: devices, status: 'Success', isLoading: false }); }
 
-  setDefaultDevice(device: AudioDevice | null): void {
-    this.slots.update('DEFAULT_DEVICE', { data: device, status: 'Success', isLoading: false });
-  }
+  setDefaultDevice(device: AudioDevice | null): void { this.slots.update('DEFAULT_DEVICE', { data: device, status: 'Success', isLoading: false }); }
 
-  setDefaultOutputDevice(device: AudioDevice | null): void {
-    this.slots.update('DEFAULT_OUTPUT_DEVICE', { data: device, status: 'Success', isLoading: false });
-  }
+  setDefaultOutputDevice(device: AudioDevice | null): void { this.slots.update('DEFAULT_OUTPUT_DEVICE', { data: device, status: 'Success', isLoading: false }); }
 
   /** Overwrites the speaker-op undo stack; callers pass `[]` to clear (e.g. after a failed delete/merge, the surviving op is dropped). */
-  setSpeakerHistory(history: readonly SpeakerOp[]): void {
-    this.slots.update('SPEAKER_HISTORY', { data: history, status: 'Success', isLoading: false });
-  }
+  setSpeakerHistory(history: readonly SpeakerOp[]): void { this.slots.update('SPEAKER_HISTORY', { data: history, status: 'Success', isLoading: false }); }
 
   /** Sets (or clears, via `null`) the single-slot transcript structural-op inverse. */
-  setTranscriptUndo(op: TranscriptOp | null): void {
-    this.slots.update('TRANSCRIPT_UNDO', { data: op, status: 'Success', isLoading: false });
-  }
+  setTranscriptUndo(op: TranscriptOp | null): void { this.slots.update('TRANSCRIPT_UNDO', { data: op, status: 'Success', isLoading: false }); }
 
-  setModelDownload(state: ModelDownloadState): void {
-    this.slots.update('MODEL_DOWNLOAD', { data: state, status: 'Success', isLoading: false });
-  }
+  setModelDownload(state: ModelDownloadState): void { this.slots.update('MODEL_DOWNLOAD', { data: state, status: 'Success', isLoading: false }); }
 
   /** Records (or clears, via `null`) the identity of the (template, language) pair currently generating. */
   setSummarizingKey(key: SummarizingKey | null): void {
     this.slots.update('SUMMARIZING_KEY', { data: key, status: 'Success', isLoading: false });
   }
 
-  setStartingRecording(value: boolean): void {
-    this.slots.update('STARTING_RECORDING', { data: value, status: 'Success', isLoading: false });
-  }
+  setStartingRecording(value: boolean): void { this.slots.update('STARTING_RECORDING', { data: value, status: 'Success', isLoading: false }); }
 
-  setSystemAudioStatus(status: SystemAudioStatus): void {
-    this.slots.update('SYSTEM_AUDIO_STATUS', { data: status, status: 'Success', isLoading: false });
-  }
+  setSystemAudioStatus(status: SystemAudioStatus): void { this.slots.update('SYSTEM_AUDIO_STATUS', { data: status, status: 'Success', isLoading: false }); }
 
   /** Updates the selection AND persists it via `PreferencesPort`, so it survives a store rebuild. */
   setCaptureSource(source: CaptureSource): void {
@@ -318,6 +306,15 @@ export class MeetingsStore {
     this.slots.update('SELECTED_SUMMARY_LANGUAGE', { data: code, status: 'Success', isLoading: false });
   }
 
+  /** Applies server-fetched guidelines to the slot; nothing is persisted here — the port owns durability. */
+  setSummaryGuidelines(text: string): void { this.slots.update('SUMMARY_GUIDELINES', { data: text, status: 'Success', isLoading: false }); }
+
+  /** Reads the (meeting, template) focus draft: slot first, then a lazy `PreferencesPort` read — default when neither has it. */
+  summaryInstructionDraft(meetingId: MeetingId, template: string): SummaryInstructionsDraft { return readSummaryInstructionDraft(this.slots, this.preferences, meetingId, template); }
+
+  /** Updates the draft AND persists it via `PreferencesPort`, so it survives a store rebuild; mirrors `setSelectedSummaryLanguage`. */
+  setSummaryInstructionDraft(meetingId: MeetingId, template: string, draft: SummaryInstructionsDraft): void { storeSummaryInstructionDraft(this.slots, this.preferences, meetingId, template, draft); }
+
   getSummaryCacheEntry(meetingId: MeetingId, template: string, language: string): SummaryCacheEntry | undefined {
     return readSummaryCacheEntry(this.slots, meetingId, template, language);
   }
@@ -339,21 +336,25 @@ export class MeetingsStore {
     applySummaryContentUpdate(this, meetingId, template, language, summary);
   }
 
+  /** Clears the cache entry and strips the `summaries` ref for a deleted summary; never touches undo/drafts — see `applySummaryRemoval`. */
+  removeSummary = (meetingId: MeetingId, template: string, language: string): void =>
+    applySummaryRemoval(this, meetingId, template, language);
+
   setAppVersion(version: string): void {
     this.slots.update('APP_VERSION', { data: version, status: 'Success', isLoading: false });
   }
 
   /** Clamps, persists (via `PreferencesPort`), and applies a new transcript/summary split ratio. */
-  setSplitRatio(ratio: number): void {
-    const clamped = storeSplitRatio(this.preferences, ratio);
-    this.slots.update('SPLIT_RATIO', { data: clamped, status: 'Success', isLoading: false });
-  }
+  setSplitRatio(ratio: number): void { applySplitRatio(this.slots, this.preferences, ratio); }
 
   /** Persists (via `PreferencesPort`) and applies the transcript-collapsed flag. */
-  setTranscriptCollapsed(collapsed: boolean): void {
-    storeTranscriptCollapsed(this.preferences, collapsed);
-    this.slots.update('TRANSCRIPT_COLLAPSED', { data: collapsed, status: 'Success', isLoading: false });
-  }
+  setTranscriptCollapsed(collapsed: boolean): void { applyTranscriptCollapsed(this.slots, this.preferences, collapsed); }
+
+  /** Clamps, persists (via `PreferencesPort`), and applies a new sidebar width. */
+  setSidebarWidth(width: number): void { applySidebarWidth(this.slots, this.preferences, width); }
+
+  /** Persists (via `PreferencesPort`) and applies the sidebar-collapsed flag. */
+  setSidebarCollapsed(collapsed: boolean): void { applySidebarCollapsed(this.slots, this.preferences, collapsed); }
 
   setImporting(value: boolean): void {
     this.slots.update('IMPORTING', { data: value, status: 'Success', isLoading: false });

@@ -1,5 +1,7 @@
+// Scoped cap: orchestration component mounting dialog directly; prefer extracting over raising.
+/* eslint max-lines: ["error", 465] */
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostListener, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, input, output, signal, viewChild } from '@angular/core';
 
 import type {
   MeetingsErrorInfo,
@@ -16,13 +18,12 @@ import type { MeetingExportFormat } from '../../../core/ports/meeting-repository
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import { DEFAULT_SPLIT_RATIO } from '../../../core/models/split-layout.model';
 import type { SummaryLanguage } from '../../../core/models/summary-language.model';
+import type { SummaryInstructionsDraft } from '../../../core/models/summary-instructions.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
 import {
   TRANSCRIPT_TAB_LABEL,
-  formatMeetingHeadingDate,
   formatMeetingTitle,
-  formatMinutesLong,
   formatTemplateLabel,
 } from '../../utils/format-display.util';
 import { AudioPlayerComponent } from '../audio-player/audio-player.component';
@@ -30,6 +31,7 @@ import { EditableTitleComponent } from '../editable-title/editable-title.compone
 import { ErrorStateComponent } from '../error-state/error-state.component';
 import { LiveTranscriptComponent } from '../live-transcript/live-transcript.component';
 import { OnboardingPanelComponent } from '../onboarding-panel/onboarding-panel.component';
+import { RegenerateInstructionsDialogComponent } from '../regenerate-instructions-dialog/regenerate-instructions-dialog.component';
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
 import { SummaryLanguagePickerComponent } from '../summary-language-picker/summary-language-picker.component';
 import { SummaryPanelComponent } from '../summary-panel/summary-panel.component';
@@ -44,42 +46,43 @@ import type {
 import { TranscriptViewComponent } from '../transcript-view/transcript-view.component';
 import { WelcomePanelComponent } from '../welcome-panel/welcome-panel.component';
 import {
+  buildGuidelinesPreview,
+  buildRegenerateHint,
+  buildSummaryDelete,
+  buildSummaryDeleteMessage,
+  buildSummaryEdit,
+  computeActiveLanguageLabel,
+  computeActiveTemplateLabel,
   computeEffectiveCaptureLabel,
   computeGeneratingElsewhereLabel,
+  computeHeadingDate,
+  computeImportProgressLabel,
+  computeImportProgressPercent,
   computeIsGeneratingActiveTab,
+  computeMetaLine,
+  computeSpeakerNamesRegistry,
   computeSummarySelectionTab,
   computeWideActiveTemplate,
   diarizeDisabledReason,
   findExistingSummary,
+  findSummaryDraft,
   findUnloadedSummaryRequest,
   isDiarizeDisabled,
-  isSummaryLoading,
-  NARROW_BREAKPOINT_PX,
-  buildSummaryEdit,
-  computeImportProgressLabel,
-  computeImportProgressPercent,
+  isRegenerateDisabled,
   isReplaceAudioDisabled,
   isRetranscribeDisabled,
+  isSummaryLoading,
+  NARROW_BREAKPOINT_PX,
   sortTemplatesForDisplay,
 } from './meeting-detail-pane.component.support';
-import type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
-export type { SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
+import type { SummaryDraftChange, SummaryDelete, SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
+export type { SummaryDraftChange, SummaryDelete, SummaryEdit, SummaryLoadRequest } from './meeting-detail-pane.component.support';
 
 const TRANSCRIPT_TAB = 'transcript';
 
 const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json'];
 
-/** Frozen fallback registry so `speakerNamesRegistry` never allocates a fresh object per CD pass. */
-const EMPTY_SPEAKER_NAMES: Readonly<Record<string, string>> = Object.freeze({});
-
-/**
- * Right-hand detail pane: heading, a horizontal tab strip (Transcript + one
- * tab per summary template), and the active tab's content. Renders the
- * models-missing onboarding block in place of content instead of routing to
- * a separate page. Meta line shows only fields sourced from real data —
- * duration for a saved meeting, capture source for the in-progress
- * recording — never a fabricated speaker count or language.
- */
+/** Right-hand detail pane: heading, tabs, active content; drafts flow in as inputs and out as outputs. */
 @Component({
   selector: 'app-meeting-detail-pane',
   imports: [
@@ -89,6 +92,7 @@ const EMPTY_SPEAKER_NAMES: Readonly<Record<string, string>> = Object.freeze({});
     LiveTranscriptComponent,
     NgTemplateOutlet,
     OnboardingPanelComponent,
+    RegenerateInstructionsDialogComponent,
     SplitWorkspaceComponent,
     SummaryLanguagePickerComponent,
     SummaryPanelComponent,
@@ -116,12 +120,7 @@ export class MeetingDetailPaneComponent {
   readonly summarizingKey = input<SummarizingKey | null>(null);
   readonly error = input<MeetingsErrorInfo | undefined>(undefined);
   readonly captureSource = input.required<CaptureSource>();
-  /**
-   * The system-audio source the recorder actually attached, or `null` when
-   * none is (not requested, or the tap silently fell back to microphone
-   * only). Drives `metaLine` during a live recording so this meta line can
-   * never contradict the title-bar's own effective-source readout.
-   */
+  /** The attached system-audio source, or `null` when degraded to mic-only. */
   readonly effectiveSystemSource = input<AudioSource | null>(null);
   readonly summaryLanguages = input<readonly SummaryLanguage[]>([]);
   readonly selectedSummaryLanguage = input.required<string>();
@@ -149,6 +148,10 @@ export class MeetingDetailPaneComponent {
   readonly transcriptUndoLabel = input<string | null>(null);
   /** Speaker-undo button label (from `describeSpeakerOp` on the stack top); `null` hides the button. */
   readonly speakerUndoLabel = input<string | null>(null);
+  /** Persisted general summary guidelines; drives only the instructions editor's preview hint. */
+  readonly summaryGuidelines = input('');
+  /** Per-template focus drafts for the selected meeting, keyed by template name; the editor edits the ACTIVE tab's entry. */
+  readonly summaryInstructionDrafts = input<ReadonlyMap<string, SummaryInstructionsDraft>>(new Map());
 
   readonly renameRequested = output<string>();
   readonly segmentEdited = output<TranscriptSegmentEdit>();
@@ -165,6 +168,7 @@ export class MeetingDetailPaneComponent {
   readonly undoTranscriptRequested = output<void>();
   readonly undoSpeakerRequested = output<void>();
   readonly summarizeRequested = output<string>();
+  readonly regenerateRequested = output<string>();
   readonly cancelSummaryRequested = output<void>();
   readonly exportRequested = output<MeetingExportFormat>();
   readonly retryRequested = output<void>();
@@ -176,6 +180,10 @@ export class MeetingDetailPaneComponent {
   readonly summaryLoadRequested = output<SummaryLoadRequest>();
   /** Re-emitted from `app-summary-panel`'s edit mode with the (meeting, template, language) context of the edited summary. */
   readonly summaryEdited = output<SummaryEdit>();
+  /** Emitted after the toolbar's confirm-guarded Delete; the shell maps it onto `facade.deleteSummary`. */
+  readonly summaryDeleted = output<SummaryDelete>();
+  /** Re-emitted from the instructions editor with the active tab's template tagged on; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly summaryInstructionDraftChanged = output<SummaryDraftChange>();
   readonly splitRatioChanged = output<number>();
   readonly transcriptCollapsedChanged = output<boolean>();
   /** Re-emitted from `app-welcome-panel`'s Start a meeting button — see `meetings-shell.page.ts` for the wiring. */
@@ -205,47 +213,25 @@ export class MeetingDetailPaneComponent {
 
   protected readonly isLive = computed(() => this.recordingState() !== 'idle');
 
-  /**
-   * Drives the transcript column: a live import re-uses the same streaming
-   * view as a live recording. A diarize-only run over an already-saved
-   * meeting does NOT — it shares the `importing` slot but has nothing to
-   * stream, so it gets its own loading placeholder instead of this empty
-   * live view.
-   */
+  /** Live import re-uses the streaming view; a diarize-only run gets its own placeholder. */
   protected readonly showLiveTranscript = computed(
     () => this.isLive() || (this.importing() && !this.diarizing()),
   );
 
-  protected readonly importProgressLabel = computed(() =>
-    computeImportProgressLabel(this.importing(), this.importProgress()),
-  );
+  protected readonly importProgressLabel = computed(() => computeImportProgressLabel(this.importing(), this.importProgress()));
   protected readonly importProgressPercent = computed(() => computeImportProgressPercent(this.importProgress()));
-  protected readonly retranscribeDisabled = computed(() =>
-    isRetranscribeDisabled(this.hasAudio(), this.isLive(), this.importing()),
-  );
+  protected readonly retranscribeDisabled = computed(() => isRetranscribeDisabled(this.hasAudio(), this.isLive(), this.importing()));
   protected readonly replaceAudioDisabled = computed(() => isReplaceAudioDisabled(this.isLive(), this.importing()));
 
   /** Whether the diarization models (pyannote segmentation + NeMo TitaNet embedding) are present on disk. */
   protected readonly diarizationModelsPresent = computed(() => this.modelsStatus()?.diarization?.present ?? false);
   /** See {@link isDiarizeDisabled}. `isLive()` is passed both as `busy` (silent, matches every other reingest control) and as the explicit `recording` flag that drives the surfaced reason below. */
   protected readonly diarizeDisabled = computed(() =>
-    isDiarizeDisabled(
-      this.diarizationModelsPresent(),
-      this.hasSystemTrack(),
-      this.isLive(),
-      this.importing(),
-      this.diarizing(),
-      this.isLive(),
-    ),
+    isDiarizeDisabled(this.diarizationModelsPresent(), this.hasSystemTrack(), this.isLive(), this.importing(), this.diarizing(), this.isLive()),
   );
   /** See {@link diarizeDisabledReason}. The recording reason takes precedence over the other durable reasons while a recording is in progress. */
   protected readonly diarizeDisabledReason = computed<string | undefined>(() =>
-    diarizeDisabledReason(
-      this.diarizationModelsPresent(),
-      this.hasSystemTrack(),
-      this.modelsStatus()?.diarization?.path ?? '',
-      this.isLive(),
-    ),
+    diarizeDisabledReason(this.diarizationModelsPresent(), this.hasSystemTrack(), this.modelsStatus()?.diarization?.path ?? '', this.isLive()),
   );
   /** Drives the "some audio wasn't transcribed" recovery warning near the transcript. */
   protected readonly hasDroppedAudio = computed(() => (this.meeting()?.droppedAudioChunks ?? 0) > 0);
@@ -269,40 +255,29 @@ export class MeetingDetailPaneComponent {
     computeSummarySelectionTab(this.isNarrow(), this.activeTab(), this.wideActiveTemplate()),
   );
 
-  protected readonly headingDate = computed(() => {
-    const current = this.meeting();
-    return current ? formatMeetingHeadingDate(current.createdAt) : '';
-  });
+  protected readonly headingDate = computed(() => computeHeadingDate(this.meeting()));
 
   protected readonly displayTitle = computed(() => formatMeetingTitle(this.meeting()?.title ?? ''));
 
-  /** The selected meeting's speaker-name registry, with a FROZEN stable fallback so the transcript view's input never flips identity per CD pass. */
-  protected readonly speakerNamesRegistry = computed<Readonly<Record<string, string>>>(
-    () => this.meeting()?.speakerNames ?? EMPTY_SPEAKER_NAMES,
-  );
+  /** See {@link computeSpeakerNamesRegistry}. The FROZEN fallback keeps the transcript view's input identity stable per CD pass. */
+  protected readonly speakerNamesRegistry = computed(() => computeSpeakerNamesRegistry(this.meeting()));
 
-  protected readonly metaLine = computed(() => {
-    if (this.isLive()) {
-      return `Recording · ${this.effectiveCaptureLabel()}`;
-    }
-    const current = this.meeting();
-    return current ? formatMinutesLong(current.durationSec) : '';
-  });
+  protected readonly metaLine = computed(() =>
+    computeMetaLine(this.isLive(), this.effectiveCaptureLabel(), this.meeting()),
+  );
 
   /** See {@link computeEffectiveCaptureLabel}. Idle/saved meetings never call this — `metaLine` shows duration then. */
   protected readonly effectiveCaptureLabel = computed(() =>
     computeEffectiveCaptureLabel(this.captureSource(), this.effectiveSystemSource()),
   );
 
-  protected readonly activeTemplateLabel = computed(() => {
-    const template = this.templates().find((candidate) => candidate.name === this.summarySelectionTab());
-    return template ? formatTemplateLabel(template) : this.summarySelectionTab();
-  });
+  protected readonly activeTemplateLabel = computed(() =>
+    computeActiveTemplateLabel(this.templates(), this.summarySelectionTab()),
+  );
 
-  protected readonly activeLanguageLabel = computed(() => {
-    const code = this.selectedSummaryLanguage();
-    return this.summaryLanguages().find((language) => language.code === code)?.label ?? code;
-  });
+  protected readonly activeLanguageLabel = computed(() =>
+    computeActiveLanguageLabel(this.summaryLanguages(), this.selectedSummaryLanguage()),
+  );
 
   /** See {@link findExistingSummary}. A ref whose `markdown` is still `''` is resolved from `summaryCache` instead — see the constructor `effect` below, which requests that fetch. */
   protected readonly existingSummary = computed(() =>
@@ -312,6 +287,23 @@ export class MeetingDetailPaneComponent {
   /** See {@link isSummaryLoading}. */
   protected readonly summaryLoading = computed(() =>
     isSummaryLoading(this.meeting(), this.summaryCache(), this.summarySelectionTab(), this.selectedSummaryLanguage()),
+  );
+
+  /** Guards the has-summary Regenerate button — see {@link isRegenerateDisabled}. */
+  protected readonly regenerateDisabled = computed(() =>
+    isRegenerateDisabled(this.summarizing(), this.summaryLoading(), this.importing(), this.isLive(), this.generatingElsewhereLabel() !== undefined),
+  );
+
+  /** Armed by Regenerate; while true the dialog confirms before emitting. Pane-local, never persisted. */
+  protected readonly regenerateDialogOpen = signal(false);
+
+  /** Armed by Generate; while true the dialog confirms before emitting. Pane-local, never persisted. */
+  protected readonly generateDialogOpen = signal(false);
+  protected readonly summaryPanel = viewChild<SummaryPanelComponent>('summaryPanel');
+
+  /** See {@link buildRegenerateHint}. */
+  protected readonly regenerateHint = computed(() =>
+    buildRegenerateHint(this.activeSummaryDraft(), this.guidelinesPreview()),
   );
 
   /** See {@link computeIsGeneratingActiveTab}. Gates the loader, the streaming tokens, and Cancel — never the bare `summarizing` flag. */
@@ -324,55 +316,129 @@ export class MeetingDetailPaneComponent {
     computeGeneratingElsewhereLabel(this.summarizingKey(), this.isGeneratingActiveTab(), this.templates()),
   );
 
+  /** See {@link findSummaryDraft}. The active tab's focus draft, edited by the instructions editor above Generate. */
+  protected readonly activeSummaryDraft = computed(() =>
+    findSummaryDraft(this.summaryInstructionDrafts(), this.summarySelectionTab()),
+  );
+
+  /** See {@link buildGuidelinesPreview}. `''` hides the editor's hint — never placeholder content. */
+  protected readonly guidelinesPreview = computed(() => buildGuidelinesPreview(this.summaryGuidelines()));
+
   constructor() {
     // Requests a fetch whenever the active tab shows a persisted-but-unloaded
     // summary ref — see {@link findUnloadedSummaryRequest}. Re-running as
     // `summaryCache` itself changes is intentional: once the facade records a
     // 'loading' (then 'loaded'/'empty') entry for this exact key, the guard
-    // inside that helper stops emitting further requests for it.
+    // inside that helper stops emitting further requests for it. Also disarms
+    // the regenerate dialog the moment a generation starts anywhere,
+    // so the dialog never lingers over a live run nor reappears when the key
+    // later clears.
     effect(() => {
-      const request = findUnloadedSummaryRequest(
-        this.meeting(),
-        this.summarySelectionTab(),
-        this.transcriptTab,
-        this.selectedSummaryLanguage(),
-        this.summaryCache(),
-      );
-      if (request) {
-        this.summaryLoadRequested.emit(request);
-      }
-    });
+        if (this.summarizingKey() !== null) {
+          this.regenerateDialogOpen.set(false);
+          this.generateDialogOpen.set(false);
+        }
+        const request = findUnloadedSummaryRequest(
+          this.meeting(),
+          this.summarySelectionTab(),
+          this.transcriptTab,
+          this.selectedSummaryLanguage(),
+          this.summaryCache(),
+        );
+        if (request) {
+          this.summaryLoadRequested.emit(request);
+        }
+      });
   }
 
   protected templateLabel(template: SummaryTemplate): string {
     return formatTemplateLabel(template);
   }
-
   protected transcriptTabLabel(): string {
     return TRANSCRIPT_TAB_LABEL;
   }
-
   selectTab(tab: string): void {
+    this.regenerateDialogOpen.set(false);
+    this.generateDialogOpen.set(false);
     this.activeTab.set(tab);
   }
 
-  setExportFormat(format: MeetingExportFormat): void {
-    this.exportFormat.set(format);
-  }
-
   onExportFormatChange(event: Event): void {
-    this.setExportFormat((event.target as HTMLSelectElement).value as MeetingExportFormat);
+    this.exportFormat.set((event.target as HTMLSelectElement).value as MeetingExportFormat);
   }
 
   export(): void {
     this.exportRequested.emit(this.exportFormat());
   }
 
+  /** Arms the generate dialog instead of emitting; only `confirmGenerate` emits. */
   generateSummary(): void {
+    if (!this.regenerateDisabled()) {
+      this.generateDialogOpen.set(true);
+    }
+  }
+
+  /** Arms the dialog instead of emitting; only `confirmRegenerate` emits. */
+  regenerateSummary(): void {
+    if (this.regenerateDisabled()) {
+      return;
+    }
+    this.regenerateDialogOpen.set(true);
+  }
+
+  /** Confirm-guarded delete of the active summary; focuses Generate once the delete branch unmounts. */
+  deleteSummary(): void {
+    const current = this.meeting();
+    if (!current || this.regenerateDisabled()) {
+      return;
+    }
+    if (!window.confirm(buildSummaryDeleteMessage(this.summarySelectionTab(), this.selectedSummaryLanguage()))) {
+      return;
+    }
+    this.summaryDeleted.emit(buildSummaryDelete(current, this.summarySelectionTab(), this.selectedSummaryLanguage()));
+    // Macrotask (not microtask): Zone drains microtasks synchronously when
+    // the click task ends — before the shell's store update mounts Generate.
+    setTimeout(() => {
+      const generate = document.querySelector('.generate-button');
+      if (generate instanceof HTMLButtonElement) {
+        generate.focus();
+      }
+    }, 0);
+  }
+
+  /** Disarms, then emits exactly one `regenerateRequested` for the active tab. */
+  confirmRegenerate(): void {
+    if (this.regenerateDisabled()) {
+      return;
+    }
+    this.regenerateDialogOpen.set(false);
+    this.regenerateRequested.emit(this.summarySelectionTab());
+  }
+
+  /** Disarms the dialog without emitting. */
+  cancelRegenerate(): void {
+    this.regenerateDialogOpen.set(false);
+  }
+
+  /** Disarms, then emits exactly one `summarizeRequested` for the active tab. */
+  confirmGenerate(): void {
+    if (this.regenerateDisabled()) return;
+    this.generateDialogOpen.set(false);
     this.summarizeRequested.emit(this.summarySelectionTab());
   }
 
+  /** Disarms the generate dialog without emitting. */
+  cancelGenerate(): void {
+    this.generateDialogOpen.set(false);
+  }
+  /** Tags the editor's raw draft change with the active tab's template — the shell persists it against the selected meeting. */
+  onSummaryDraftChanged(draft: SummaryInstructionsDraft): void {
+    this.summaryInstructionDraftChanged.emit({ template: this.summarySelectionTab(), draft });
+  }
+
   onSummaryLanguageSelected(code: string): void {
+    this.regenerateDialogOpen.set(false);
+    this.generateDialogOpen.set(false);
     this.summaryLanguageSelected.emit(code);
   }
 

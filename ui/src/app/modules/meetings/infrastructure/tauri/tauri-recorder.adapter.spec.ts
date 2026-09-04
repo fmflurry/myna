@@ -8,6 +8,11 @@ import {
 } from './testing/tauri-internals.stub';
 import { TauriRecorderAdapter } from './tauri-recorder.adapter';
 
+// The stop-phase contract (stop/cancel acknowledgements, `recording://
+// stop-progress`, `recording://completed`, `recording://health`) is specified
+// in `tauri-recorder.adapter.stop-phase.spec.ts`, split out to keep this file
+// under the project's max-lines limit.
+
 describe('TauriRecorderAdapter', () => {
   let adapter: TauriRecorderAdapter;
 

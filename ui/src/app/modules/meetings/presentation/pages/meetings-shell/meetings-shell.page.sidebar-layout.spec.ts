@@ -1,0 +1,177 @@
+import { computed, signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { ActivatedRoute, provideRouter, convertToParamMap, type ParamMap } from '@angular/router';
+import { BehaviorSubject, EMPTY } from 'rxjs';
+import { vi } from 'vitest';
+
+import { MeetingsFacade } from '../../../application/facades/meetings.facade';
+import { NOOP_UPDATES_FACADE_STUB } from '../../../application/testing/noop-updates-facade.stub';
+import type { MeetingsErrorInfo } from '../../../application/stores/meetings.store';
+import type { AudioDevice, AudioLevel } from '../../../core/models/audio-device.model';
+import type { AudioSource } from '../../../core/models/audio-source.model';
+import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
+import type { Meeting } from '../../../core/models/meeting.model';
+import type { ModelsStatus } from '../../../core/models/models-status.model';
+import type { RecordingState } from '../../../core/models/recording-state.model';
+import type { SummaryTemplate } from '../../../core/models/summary-template.model';
+import type { TranscriptSegment } from '../../../core/models/transcript.model';
+import type { ImportProgress } from '../../../core/ports/audio-import.port';
+import { MeetingsShellPage } from './meetings-shell.page';
+
+const readyModelsStatus: ModelsStatus = {
+  parakeet: { present: true, expectedFiles: [] },
+  qwen: { present: true, expectedFiles: [] },
+  silero: { present: true, expectedFiles: [] },
+  allPresent: true,
+};
+
+describe('MeetingsShellPage — sidebar layout forwarding', () => {
+  const meetings = signal<readonly Meeting[]>([]);
+  const selectedMeeting = signal<Meeting | undefined>(undefined);
+  const modelsStatus = signal<ModelsStatus | undefined>(readyModelsStatus);
+  const devices = signal<readonly AudioDevice[]>([]);
+  const selectedDevice = signal<AudioDevice | null>(null);
+  const recordingState = signal<RecordingState>('idle');
+  const level = signal<AudioLevel | undefined>(undefined);
+  const finalizedSegments = signal<readonly TranscriptSegment[]>([]);
+  const partialTextMe = signal('');
+  const partialTextOthers = signal('');
+  const error = signal<MeetingsErrorInfo | undefined>(undefined);
+  const busy = computed(() => recordingState() !== 'idle');
+  const systemAudioStatus = signal<SystemAudioStatus | undefined>({ kind: 'available' });
+  const captureSource = signal<CaptureSource>('microphone');
+  const templates = signal<readonly SummaryTemplate[]>([]);
+  const summaryStream = signal('');
+  const summarizing = signal(false);
+  const summarizingKey = signal<{ template: string; language: string } | null>(null);
+  const startingRecording = signal(false);
+  const summaryLanguages = signal<readonly { code: string; label: string }[]>([]);
+  const selectedSummaryLanguage = signal('en');
+  const summaryCache = signal<ReadonlyMap<string, { status: string }>>(new Map());
+  const appVersion = signal<string | undefined>(undefined);
+  const audioSources = signal<readonly AudioSource[]>([]);
+  const selectedAudioSource = signal('system:all');
+  const effectiveSystemSource = signal<AudioSource | null>(null);
+  const splitRatio = signal(0.4);
+  const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
+  const importing = signal(false);
+  const importProgress = signal<ImportProgress | null>(null);
+
+  const noop = async (): Promise<void> => undefined;
+  const setSplitRatio = vi.fn((ratio: number) => void ratio);
+  const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const setSidebarWidth = vi.fn((width: number) => void width);
+  const setSidebarCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const folders = signal<readonly never[]>([]);
+  const expandedFolders = signal<ReadonlySet<never>>(new Set());
+
+  const facadeStub = {
+    settingsRequests: () => EMPTY,
+    activeRecording: signal(null),
+    resumeActiveRecording: vi.fn(async () => undefined),
+    meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
+    finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
+    summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
+    summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress,
+    setSplitRatio, setTranscriptCollapsed, setSidebarWidth, setSidebarCollapsed,
+    loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
+    checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
+    loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
+    startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
+    deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),
+    cancelSummarization: vi.fn(noop), exportMeeting: vi.fn(noop), selectDevice: vi.fn(),
+    selectCaptureSource: vi.fn(), selectAudioSource: vi.fn(), selectSummaryLanguage: vi.fn(),
+    requestSystemAudioPermission: vi.fn(noop),
+    folders, expandedFolders, loadFolders: vi.fn(noop), createFolder: vi.fn(noop), renameFolder: vi.fn(noop),
+    deleteFolder: vi.fn(noop), toggleFolderExpanded: vi.fn(),
+    speakerHistory: signal([]),
+transcriptUndo: signal(null),
+modelDownload: signal(undefined),
+    updates: NOOP_UPDATES_FACADE_STUB,
+  } as unknown as MeetingsFacade;
+
+  beforeEach(() => {
+    setSplitRatio.mockClear();
+    setTranscriptCollapsed.mockClear();
+    setSidebarWidth.mockClear();
+    setSidebarCollapsed.mockClear();
+    sidebarWidth.set(224);
+    sidebarCollapsed.set(false);
+    const routeParamMap = new BehaviorSubject<ParamMap>(convertToParamMap({}));
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter([]),
+        { provide: MeetingsFacade, useValue: facadeStub },
+        { provide: ActivatedRoute, useValue: { paramMap: routeParamMap } },
+      ],
+    });
+  });
+
+  const createFixture = () => {
+    const fixture = TestBed.createComponent(MeetingsShellPage);
+    fixture.detectChanges();
+    return fixture;
+  };
+
+  it('forwards a sidebar-width change from the splitter to the facade', () => {
+    const fixture = createFixture();
+
+    fixture.componentInstance.layoutControls.onSidebarWidthChanged(300);
+
+    expect(setSidebarWidth).toHaveBeenCalledWith(300);
+  });
+
+  it('forwards a sidebar-collapsed change from the splitter to the facade', () => {
+    const fixture = createFixture();
+
+    fixture.componentInstance.layoutControls.onSidebarCollapsedChanged(true);
+
+    expect(setSidebarCollapsed).toHaveBeenCalledWith(true);
+  });
+
+  it('renders the sidebar inside the splitter with the detail pane as its content', () => {
+    const fixture = createFixture();
+
+    expect(fixture.nativeElement.querySelector('app-sidebar-splitter')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('app-sidebar-splitter app-meeting-sidebar')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('app-sidebar-splitter app-meeting-detail-pane')).toBeTruthy();
+  });
+
+  it('toggles the sidebar on Cmd+B', () => {
+    createFixture();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true, bubbles: true }));
+
+    expect(setSidebarCollapsed).toHaveBeenCalledWith(true);
+  });
+
+  it('toggles the sidebar on Ctrl+B', () => {
+    createFixture();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'B', ctrlKey: true, bubbles: true }));
+
+    expect(setSidebarCollapsed).toHaveBeenCalledWith(true);
+  });
+
+  it('ignores a bare B without Cmd/Ctrl', () => {
+    createFixture();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true }));
+
+    expect(setSidebarCollapsed).not.toHaveBeenCalled();
+  });
+
+  it('ignores Cmd+B typed inside an editable field', () => {
+    const fixture = createFixture();
+    const input = document.createElement('input');
+    fixture.nativeElement.appendChild(input);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', metaKey: true, bubbles: true }));
+
+    expect(setSidebarCollapsed).not.toHaveBeenCalled();
+  });
+});

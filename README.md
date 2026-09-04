@@ -211,6 +211,7 @@ Myna is released under the **MIT** License — [read it here](LICENSE).
 - **[Architecture & Decisions](docs/stack-proposal.md)** — why we chose Tauri, Parakeet, Qwen, and llama.cpp.
 - **Source code** — MIT-licensed; read it, run it, modify it.
 - **[Developer Notes](docs/adr/)** — architecture decision records.
+- **[Custom Summary Instructions](docs/custom-summary-instructions.md)** — steer summaries with general guidelines and per-request instructions.
 
 ### Questions?
 Open an issue or discussion on the project's repository.

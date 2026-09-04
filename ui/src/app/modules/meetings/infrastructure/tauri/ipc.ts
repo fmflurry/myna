@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Observable } from 'rxjs';
 
 import { MeetingsError, type MeetingsErrorCode } from '../../core/models/recording-state.model';
+import type { AudioChunk } from '../../core/ports/audio-repository.port';
 import type { CommandArgs, CommandName, CommandResult } from './commands';
 import type { EventName, EventPayload } from './events';
 
@@ -113,4 +114,21 @@ export function onEvent<E extends EventName>(name: E): Observable<EventPayload<E
 export async function getMeetingAudioUrl(meetingId: string): Promise<string | null> {
   const path = await invokeCommand('get_meeting_audio_path', { id: meetingId });
   return path !== null ? convertFileSrc(path) : null;
+}
+
+/**
+ * Returns a meeting's ordered playable audio chunks for seamless multipart
+ * WAV playback. Invokes the Rust `get_meeting_audio_chunks` command and
+ * converts EVERY chunk path to a Tauri asset URL via `convertFileSrc`,
+ * preserving the backend ordering (no client-side sort). Resolves to an
+ * empty array when the meeting has no chunks; rejects with a
+ * {@link MeetingsError} on command failure.
+ */
+export async function getMeetingAudioChunks(meetingId: string): Promise<readonly AudioChunk[]> {
+  const chunks = await invokeCommand('get_meeting_audio_chunks', { id: meetingId });
+  return chunks.map((chunk) => ({
+    url: convertFileSrc(chunk.path),
+    startSec: chunk.startSec,
+    durationSec: chunk.durationSec,
+  }));
 }

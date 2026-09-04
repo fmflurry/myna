@@ -52,7 +52,7 @@ export class SummaryPanelComponent {
     });
   }
 
-  protected beginEdit(): void {
+  beginEdit(): void {
     if (!this.editable() || this.editing()) {
       return;
     }

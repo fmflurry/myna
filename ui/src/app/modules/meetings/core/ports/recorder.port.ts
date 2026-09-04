@@ -4,6 +4,7 @@ import type { AudioDevice, AudioLevel } from '../models/audio-device.model';
 import type { AudioSource } from '../models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../models/capture-source.model';
 import type { Meeting, MeetingId } from '../models/meeting.model';
+import type { RecordingHealthEvent, StopAcknowledgement, StopPhase } from '../models/recording-lifecycle.model';
 import type { RecordingState } from '../models/recording-state.model';
 
 /**
@@ -21,11 +22,12 @@ export interface RecordingSnapshot {
 }
 
 /**
- * Maps onto the frozen Rust command surface: list_input_devices,
+ * Maps onto the Rust command surface: list_input_devices,
  * default_input_device, list_audio_sources, start_recording, stop_recording,
  * cancel_recording, recording_state, system_audio_status,
- * request_system_audio_permission, plus the recording://state and
- * recording://level events.
+ * request_system_audio_permission, plus the recording://state,
+ * recording://level, recording://stop-progress, recording://completed and
+ * recording://health events.
  */
 export abstract class RecorderPort {
   abstract start(
@@ -34,11 +36,35 @@ export abstract class RecorderPort {
     source?: CaptureSource,
     systemSource?: string,
   ): Promise<Meeting>;
+  /**
+   * Requests the stop. The Tauri backend resolves with the finalized meeting
+   * (duration + transcript + track flags) — the facade mirrors it into the
+   * store the moment the stop settles (the sync Stop landing). The
+   * `recording://completed` event does not exist on the backend; the
+   * {@link completedMeetings} stream is retained only as a best-effort
+   * mirror whose upsert filters by id (exactly-once on double landing).
+   */
   abstract stop(): Promise<Meeting>;
-  abstract cancel(): Promise<void>;
+  /** Requests the discard; resolves with the acknowledgement the backend accepts it with. */
+  abstract cancel(): Promise<StopAcknowledgement>;
   abstract state(): Promise<RecordingSnapshot>;
   abstract levels(): Observable<AudioLevel>;
   abstract stateChanges(): Observable<RecordingState>;
+  /**
+   * Fine-grained progress of an in-flight stop/cancel, from `recording://stop-progress`.
+   * Lets the UI render phase-specific text instead of one generic label.
+   */
+  abstract stopProgressChanges(): Observable<StopPhase>;
+  /**
+   * The durable, finalized meeting from `recording://completed` — the ONLY
+   * event that may end the 'stopping' state and publish the finished row.
+   */
+  abstract completedMeetings(): Observable<Meeting>;
+  /**
+   * Mid-recording durability warnings/errors from `recording://health`
+   * (WAV writes, journal writes, decode drops, tap rebuilds, disk pressure).
+   */
+  abstract healthChanges(): Observable<RecordingHealthEvent>;
   /**
    * The system audio source `recording://state` reports as ACTUALLY in
    * effect for the current/last recording — after any silent fallback

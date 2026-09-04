@@ -1,0 +1,40 @@
+<div
+  class="regenerate-instructions-backdrop"
+  role="button"
+  tabindex="0"
+  aria-label="Cancel and close dialog"
+  (click)="onBackdropClick($event)"
+  (keydown)="onBackdropKeydown($event)"
+>
+  <div
+    class="regenerate-instructions-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="regenerate-instructions-title"
+    aria-describedby="regenerate-instructions-description"
+  >
+    <h2 id="regenerate-instructions-title">{{ dialogTitlePrefix() }}@if (templateLabel() !== '') { — {{ templateLabel() }}}</h2>
+
+    <p id="regenerate-instructions-description">
+      {{ description() }}
+    </p>
+
+    <app-summary-instructions-editor
+      [draft]="draft()"
+      [guidelinesPreview]="guidelinesPreview()"
+      [forceExpanded]="true"
+      (draftChanged)="onDraftChanged($event)"
+    />
+
+    @if (hint() !== '') {
+      <p class="hint">{{ hint() }}</p>
+    }
+
+    <div class="actions">
+      <button type="button" class="confirm" (click)="confirm()" [disabled]="confirmDisabled()">
+        {{ confirmLabel() }}
+      </button>
+      <button type="button" class="cancel" (click)="cancel()">Cancel</button>
+    </div>
+  </div>
+</div>

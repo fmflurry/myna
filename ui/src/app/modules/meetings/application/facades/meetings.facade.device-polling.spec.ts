@@ -30,6 +30,7 @@ import { InMemoryRecorderFake } from '../testing/in-memory-recorder.fake';
 import { InMemorySummarizerFake } from '../testing/in-memory-summarizer.fake';
 import { InMemoryTemplateRepositoryFake } from '../testing/in-memory-template-repository.fake';
 import { InMemoryTranscriberFake } from '../testing/in-memory-transcriber.fake';
+import { MeetingsStore } from '../stores/meetings.store';
 import { DEVICE_POLL_INTERVAL_MS } from './meetings-facade.support';
 import { MeetingsFacade } from './meetings.facade';
 
@@ -123,5 +124,105 @@ describe('MeetingsFacade device polling', () => {
     await vi.advanceTimersByTimeAsync(0); // flush tick 1's completion, clear the in-flight flag
     await vi.advanceTimersByTimeAsync(DEVICE_POLL_INTERVAL_MS);
     expect(listSpy).toHaveBeenCalledTimes(2); // tick 3 runs again
+  });
+
+  it('does not poll any input, output, or default device source while recording or stopping', async () => {
+    vi.useFakeTimers();
+    configure();
+    TestBed.inject(MeetingsFacade);
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    const store = TestBed.inject(MeetingsStore);
+    const inputDevices = vi.spyOn(recorder, 'listDevices');
+    const inputDefault = vi.spyOn(recorder, 'defaultDevice');
+    const outputDevices = vi.spyOn(recorder, 'listOutputDevices');
+    const outputDefault = vi.spyOn(recorder, 'defaultOutputDevice');
+
+    store.setRecordingState('recording');
+    await vi.advanceTimersByTimeAsync(60_000);
+    store.setRecordingState('stopping');
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(inputDevices).not.toHaveBeenCalled();
+    expect(inputDefault).not.toHaveBeenCalled();
+    expect(outputDevices).not.toHaveBeenCalled();
+    expect(outputDefault).not.toHaveBeenCalled();
+  });
+
+  it('refreshes devices immediately when recording returns to idle', async () => {
+    vi.useFakeTimers();
+    configure();
+    TestBed.inject(MeetingsFacade);
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    const store = TestBed.inject(MeetingsStore);
+    const inputDevices = vi.spyOn(recorder, 'listDevices');
+    const inputDefault = vi.spyOn(recorder, 'defaultDevice');
+    const outputDevices = vi.spyOn(recorder, 'listOutputDevices');
+    const outputDefault = vi.spyOn(recorder, 'defaultOutputDevice');
+
+    store.setRecordingState('recording');
+    store.setRecordingState('idle');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(inputDevices).toHaveBeenCalledTimes(1);
+    expect(inputDefault).toHaveBeenCalledTimes(1);
+    expect(outputDevices).toHaveBeenCalledTimes(1);
+    expect(outputDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('backs off idle polling after failures, caps retries at one minute, and resets to five seconds after success', async () => {
+    vi.useFakeTimers();
+    configure();
+    TestBed.inject(MeetingsFacade);
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    const listDevices = vi
+      .spyOn(recorder, 'listDevices')
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockRejectedValueOnce(new Error('second failure'))
+      .mockRejectedValueOnce(new Error('third failure'))
+      .mockResolvedValue([{ name: 'Built-in Microphone' }]);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(listDevices).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(listDevices).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(listDevices).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(listDevices).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(listDevices).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(listDevices).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(listDevices).toHaveBeenCalledTimes(5);
+  });
+
+  it('cancels a pending poll when its injector is destroyed', async () => {
+    vi.useFakeTimers();
+    configure();
+    TestBed.inject(MeetingsFacade);
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    const listDevices = vi.spyOn(recorder, 'listDevices');
+
+    TestBed.resetTestingModule();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(listDevices).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicit device refresh while recording or stopping', async () => {
+    vi.useFakeTimers();
+    configure();
+    const facade = TestBed.inject(MeetingsFacade);
+    const recorder = TestBed.inject(RecorderPort) as InMemoryRecorderFake;
+    const store = TestBed.inject(MeetingsStore);
+    const listDevices = vi.spyOn(recorder, 'listDevices');
+
+    store.setRecordingState('recording');
+    await facade.loadDevices();
+    store.setRecordingState('stopping');
+    await facade.loadDevices();
+
+    expect(listDevices).toHaveBeenCalledTimes(2);
   });
 });

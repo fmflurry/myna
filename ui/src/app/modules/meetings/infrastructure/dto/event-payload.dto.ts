@@ -1,5 +1,11 @@
 import type { RecordingState } from '../../core/models/recording-state.model';
+import type {
+  RecordingHealthCategory,
+  RecordingHealthSeverity,
+  StopPhase,
+} from '../../core/models/recording-lifecycle.model';
 import type { AudioSourceDto } from './device.dto';
+import type { MeetingDto } from './meeting.dto';
 import type { RawTranscriptSegmentDto } from './transcript.dto';
 
 /**
@@ -32,6 +38,23 @@ export interface RecordingStatePayloadDto {
 export interface LevelPayloadDto {
   readonly rms: number;
   readonly dbfs: number;
+}
+
+/** Payload for the `recording://stop-progress` event. */
+export interface StopProgressPayloadDto {
+  readonly phase: StopPhase;
+}
+
+/** Payload for the `recording://completed` event — the finalized meeting. */
+export interface RecordingCompletedPayloadDto {
+  readonly meeting: MeetingDto;
+}
+
+/** Payload for the `recording://health` event. */
+export interface RecordingHealthPayloadDto {
+  readonly category: RecordingHealthCategory;
+  readonly severity: RecordingHealthSeverity;
+  readonly message: string;
 }
 
 /** Payload for the `transcript://partial` event. */
