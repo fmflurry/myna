@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.3] — 2026-09-04
+
+### Added
+
+- **Resizable sidebar splitter** — the meeting-list sidebar is now
+  resizable, with layout preferences persisted across launches.
+- **Summary regenerate with instructions** — re-run a summary with
+  extra guidance via a dialog, plus per-meeting summary guidelines.
+- **Delete-summary use case** — remove a generated summary from the
+  meeting detail pane.
+- **Capture resilience supervisor** — a supervisor plus segmented
+  recorder coverage keeps recordings going across device
+  interruptions.
+
+### Fixed
+
+- **Bluetooth mic selection and stop-landing behavior** — choosing a
+  Bluetooth microphone and the landing state after stopping a
+  recording now behave correctly.
 
 ### Changed
 
