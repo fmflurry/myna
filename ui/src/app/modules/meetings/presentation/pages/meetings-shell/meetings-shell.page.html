@@ -46,6 +46,7 @@
     [dismissedVersion]="facade.updates.dismissedVersion()"
     [installState]="facade.updates.installState()"
     [recording]="facade.busy()"
+    [restarting]="updateHandlers.restarting()"
     [restartError]="updateHandlers.restartError()"
     (dismissed)="updateHandlers.onBannerDismissed()"
     (updateRequested)="updateHandlers.onUpdate()"

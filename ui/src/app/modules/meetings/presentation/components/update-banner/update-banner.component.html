@@ -27,7 +27,7 @@
           <button
             type="button"
             class="restart"
-            [disabled]="recording()"
+            [disabled]="recording() || restarting()"
             [title]="recording() ? 'finish your recording first' : ''"
             (click)="restart()"
           >Restart now</button>

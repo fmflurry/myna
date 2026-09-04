@@ -312,4 +312,50 @@ describe('MeetingsShellPage update checks', () => {
     const restartButton: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
     expect(restartButton.disabled).toBe(true);
   });
+
+  it('[Restart now] disables while the restart is in flight and re-enables with the message on reject', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    let rejectRestart!: (reason: unknown) => void;
+    restartApp.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRestart = reject;
+        }),
+    );
+    const fixture = await createFixture();
+
+    fixture.nativeElement.querySelector('app-update-banner .restart').click();
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    expect(restartApp).toHaveBeenCalledTimes(1);
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(true);
+
+    rejectRestart(new Error('restart request failed'));
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(false);
+    expect(fixture.nativeElement.querySelector('app-update-banner').textContent).toContain('restart request failed');
+  });
+
+  it('a second [Restart now] click while restarting issues no second restartApp call', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    restartApp.mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const fixture = await createFixture();
+
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
+    button.click();
+    await flushMicrotasks();
+    fixture.detectChanges();
+    button.click();
+    await flushMicrotasks();
+
+    expect(restartApp).toHaveBeenCalledTimes(1);
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(true);
+  });
 });

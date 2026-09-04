@@ -173,11 +173,14 @@ export interface UpdateHandlers {
   readonly onRestart: () => void;
   /** Message from the last rejected restart, shown by the banner in the ready state; `null` hides it. */
   readonly restartError: Signal<string | null>;
+  /** True from the first `onRestart` click until a rejection clears it — success never resolves (Rust relaunches), so it stays pending by design; drives the banner's disabled state alongside `busy()`. */
+  readonly restarting: Signal<boolean>;
 }
 
 /** Builds {@link UpdateHandlers} bound to `facade`. "Turn on update checks" persists consent THEN immediately runs the first check; the settings toggle and × / Esc never check. */
 export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
   const restartError = signal<string | null>(null);
+  const restarting = signal(false);
   return {
     visible: computed(() => facade.updates.consent() === 'unset' && !facade.busy()),
     onGranted: () => {
@@ -196,12 +199,18 @@ export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
     onBannerDismissed: () => facade.updates.dismissBanner(),
     onUpdate: () => void facade.updates.installUpdate(),
     onRestart: () => {
+      if (restarting()) {
+        return;
+      }
+      restarting.set(true);
       restartError.set(null);
       facade.updates.restartApp().catch((caught: unknown) => {
+        restarting.set(false);
         restartError.set(caught instanceof Error ? caught.message : String(caught));
       });
     },
     restartError: restartError.asReadonly(),
+    restarting: restarting.asReadonly(),
   };
 }
 

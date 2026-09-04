@@ -187,13 +187,42 @@ pub async fn install_update(
     Ok(payload)
 }
 
+/// Resolves the `.app` bundle root for a running executable path.
+///
+/// Pure (no I/O): walks the macOS parent chain `.../*.app/Contents/MacOS/<bin>`
+/// and returns the `*.app` root. Returns `None` for dev binaries
+/// (`target/debug/myna`), non-bundle installs, or any path whose parents do
+/// not match exactly `MacOS` -> `Contents` -> `*.app`. The binary name itself
+/// is intentionally unchecked: `productName` (`Myna`) differs from the bin
+/// name (`myna`).
+fn relaunch_target(current_exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let macos_dir = current_exe.parent()?;
+    if macos_dir.file_name()?.to_str()? != "MacOS" {
+        return None;
+    }
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()?.to_str()? != "Contents" {
+        return None;
+    }
+    let bundle = contents_dir.parent()?;
+    if bundle.extension()?.to_str()? != "app" {
+        return None;
+    }
+    Some(bundle.to_path_buf())
+}
+
 /// Restarts the app so a freshly installed update takes over.
 ///
 /// Refuses with [`AppError::Busy`] while a recording session is live —
 /// same ADR 0011 invariant as [`install_update`]. No consent gate: a
 /// restart is harmless on its own and is also the right follow-up after a
-/// manually installed update. Never returns on success: `restart` relaunch
-/// kills this process.
+/// manually installed update. Never returns on success: the macOS bundle
+/// path relaunches through LaunchServices (`/usr/bin/open -n`) and then
+/// `exit(0)` — `process::restart`'s fork/exec races the atomic bundle
+/// swap, while `open` resolves the fresh bundle. A failed `open` spawn
+/// surfaces [`AppError::Updater`] and never exits, so the running
+/// (pre-update) process stays alive. Non-bundle/dev and non-macOS paths
+/// diverge through `restart` as before.
 #[tauri::command]
 pub fn restart_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     if lock_session(&state)?.is_some() {
@@ -201,8 +230,36 @@ pub fn restart_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), App
             "cannot restart while a recording is in progress",
         ));
     }
+    #[cfg(target_os = "macos")]
+    {
+        let current_exe = std::env::current_exe().ok();
+        let bundle = current_exe.as_ref().and_then(|exe| relaunch_target(exe));
+        if let Some(bundle) = bundle {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            eprintln!("myna-app: restart_app current_exe={current_exe:?} bundle={bundle:?} args={args:?}");
+            // Release Tauri resources before leaving this process behind —
+            // the relaunched bundle is a NEW process, so no Tauri API may
+            // run after this point.
+            app.cleanup_before_exit();
+            match std::process::Command::new("/usr/bin/open")
+                .arg("-n")
+                .arg(&bundle)
+                .arg("--args")
+                .args(&args)
+                .spawn()
+            {
+                Ok(_) => std::process::exit(0),
+                Err(err) => {
+                    return Err(AppError::Updater(format!(
+                        "failed to relaunch app bundle: {err}"
+                    )));
+                }
+            }
+        }
+    }
     // Diverges: `restart` relaunches and kills this process, so the
-    // `!` coerces to the command's `Result` — no Ok path exists.
+    // `!` coerces to the command's `Result` — no Ok path exists. This is
+    // also the non-bundle/dev fallback on macOS.
     app.restart()
 }
 
@@ -361,6 +418,57 @@ mod tests {
             refusal_error(InstallDecision::SkipNoConsent),
             Some(AppError::Updater(_))
         ));
+    }
+
+    #[test]
+    fn relaunch_target_resolves_the_myna_app_bundle() {
+        // productName `Myna` vs bin `myna`: only the parent chain matters,
+        // never the binary file name.
+        let exe = std::path::Path::new("/Applications/Myna.app/Contents/MacOS/myna");
+        assert_eq!(
+            relaunch_target(exe),
+            Some(std::path::PathBuf::from("/Applications/Myna.app"))
+        );
+    }
+
+    #[test]
+    fn relaunch_target_is_none_for_dev_binaries() {
+        assert_eq!(
+            relaunch_target(std::path::Path::new("/Users/dev/myna/target/debug/myna")),
+            None
+        );
+        assert_eq!(
+            relaunch_target(std::path::Path::new("/Users/dev/myna/target/release/myna")),
+            None
+        );
+    }
+
+    #[test]
+    fn relaunch_target_is_none_for_non_bundle_paths() {
+        // Plain binary with no bundle parents.
+        assert_eq!(
+            relaunch_target(std::path::Path::new("/usr/local/bin/myna")),
+            None
+        );
+        // Right leaf names but wrong nesting: no `Contents` between
+        // `MacOS` and the `.app` root.
+        assert_eq!(
+            relaunch_target(std::path::Path::new("/Applications/Myna.app/MacOS/myna")),
+            None
+        );
+        // Inside the bundle but not under `MacOS` (e.g. a helper under
+        // `Resources`).
+        assert_eq!(
+            relaunch_target(std::path::Path::new(
+                "/Applications/Myna.app/Contents/Resources/helper"
+            )),
+            None
+        );
+        // Parent directory is not an `.app` bundle.
+        assert_eq!(
+            relaunch_target(std::path::Path::new("/opt/Myna/Contents/MacOS/myna")),
+            None
+        );
     }
 
     #[test]
