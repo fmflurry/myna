@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] — 2026-09-04
+
+### Fixed
+
+- **Update check retries soon after failure** — `last_check_at` is now
+  stamped only on success, so transient failures retry instead of
+  waiting out the 24h throttle; granting update consent from settings
+  triggers an immediate check.
+- **Update-available banner shine** — the available-state banner
+  headline gets an animated shine treatment.
+
 ## [0.2.5] — 2026-09-04
 
 ### Fixed
