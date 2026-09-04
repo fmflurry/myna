@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "myna-app"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "base64 0.22.1",
  "hound",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "myna-audio"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cpal",
  "hound",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "myna-coreaudio-tap"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "block2",
  "objc2",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "myna-integration-tests"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "myna-audio",
  "myna-llm",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "myna-llm"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "myna-stt"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "clap",
  "ctrlc",
@@ -4808,7 +4808,7 @@ dependencies = [
 
 [[package]]
 name = "transpose"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
