@@ -170,22 +170,29 @@ fn failed_dto(message: String) -> UpdateCheckDto {
     }
 }
 
-/// Calls `fetcher.fetch()` and unconditionally stamps
-/// `prefs.last_check_at = Some(now)` immediately after it returns —
-/// success or failure — before mapping the result to a DTO. Stamping
-/// after (never before) the call is deliberate: stamping first is exactly
-/// the bug that let a decode throttle elsewhere in this codebase run
-/// 40x/sec, because the cap never bound.
+/// Calls `fetcher.fetch()` and stamps `prefs.last_check_at = Some(now)`
+/// only on success — before mapping the result to a DTO. Stamping after
+/// (never before) the call is deliberate: stamping first is exactly the
+/// bug that let a decode throttle elsewhere in this codebase run 40x/sec,
+/// because the cap never bound. A failed fetch leaves the timestamp
+/// untouched so the next automatic check retries soon instead of being
+/// suppressed for a full [`crate::update_prefs::CHECK_INTERVAL`]; the
+/// `Failed` DTO itself stays banner-silent by design (the banner renders
+/// only for `Available`).
 fn run_check(
     fetcher: &dyn UpdateFetcher,
     prefs: &mut UpdatePrefs,
     now: OffsetDateTime,
 ) -> UpdateCheckDto {
-    let result = fetcher.fetch();
-    prefs.last_check_at = Some(now);
-    match result {
-        Ok(Some(remote)) => available_dto(remote),
-        Ok(None) => up_to_date_dto(),
+    match fetcher.fetch() {
+        Ok(Some(remote)) => {
+            prefs.last_check_at = Some(now);
+            available_dto(remote)
+        }
+        Ok(None) => {
+            prefs.last_check_at = Some(now);
+            up_to_date_dto()
+        }
         Err(err) => failed_dto(err.to_string()),
     }
 }

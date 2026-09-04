@@ -123,10 +123,13 @@ pub enum CheckDecision {
 ///
 /// Pure and side-effect free — it reads no clock and touches no disk. The
 /// caller owns stamping `last_check_at`, and must only do so *after* the
-/// check actually completes, never before: stamping first is exactly the
-/// bug that let a decode throttle elsewhere in this codebase run 40x/sec
-/// because the cap never bound (the timestamp existed before the guarded
-/// work ran, so every concurrent caller saw "not throttled yet").
+/// check actually completes, and only on success — never before, and never
+/// on failure: stamping first is exactly the bug that let a decode
+/// throttle elsewhere in this codebase run 40x/sec because the cap never
+/// bound (the timestamp existed before the guarded work ran, so every
+/// concurrent caller saw "not throttled yet"), while stamping on failure
+/// would suppress the next automatic check for a full [`CHECK_INTERVAL`]
+/// after a transient network error.
 pub fn decide_check(
     consent: UpdateConsent,
     last_check_at: Option<OffsetDateTime>,

@@ -177,7 +177,7 @@ export interface UpdateHandlers {
   readonly restarting: Signal<boolean>;
 }
 
-/** Builds {@link UpdateHandlers} bound to `facade`. "Turn on update checks" persists consent THEN immediately runs the first check; the settings toggle and × / Esc never check. */
+/** Builds {@link UpdateHandlers} bound to `facade`. "Turn on update checks" persists consent THEN immediately runs the first check, as does the settings toggle flipped to granted; toggling off and × / Esc never check. */
 export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
   const restartError = signal<string | null>(null);
   const restarting = signal(false);
@@ -190,7 +190,7 @@ export function createUpdateHandlers(facade: MeetingsFacade): UpdateHandlers {
     onPostponed: () => undefined,
     onConsentChanged: (consent) => {
       if (consent === 'granted') {
-        void facade.updates.grantConsent();
+        void facade.updates.grantConsent().then(() => facade.updates.checkForUpdate(false));
       } else {
         void facade.updates.declineConsent();
       }

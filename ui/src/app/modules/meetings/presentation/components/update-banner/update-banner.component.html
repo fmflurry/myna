@@ -2,7 +2,7 @@
   <div class="update-banner" role="status" aria-live="polite">
     @switch (mode()) {
       @case ('available') {
-        <p class="message">Myna {{ info.version }} is available.</p>
+        <p class="message message--available">Myna {{ info.version }} is available.</p>
         <div class="actions">
           <button type="button" class="install" (click)="update()">Update</button>
           <details class="whats-new">
