@@ -14,9 +14,15 @@
       @if (isDownloading()) {
         <div class="download-status">
           <p class="download-progress" role="status" aria-live="polite">
-            Downloading {{ download().artifact }} ({{ download().index + 1 }} of {{ download().total }})&hellip;
+            Downloading {{ download().artifact }} ({{ download().index + 1 }} of {{ download().total }})<span
+              class="ellipsis"
+              aria-hidden="true"
+              ><span>.</span><span>.</span><span>.</span></span
+            >
+            <span class="download-pulse" aria-hidden="true"></span>
           </p>
           <p class="download-hint">Please keep Myna open until it finishes.</p>
+          <p class="download-whimsy" role="status" aria-live="polite">{{ whimsy() }}</p>
         </div>
         <button type="button" class="cancel-download" (click)="cancelDownload()">Cancel</button>
       } @else {

@@ -63,6 +63,72 @@ li.present {
   font-size: 0.9rem;
 }
 
+/* Animated ellipsis: three dots blink in sequence (pure CSS, aria-hidden
+   in the template so screen readers hear the live region once, not per dot). */
+.download-progress .ellipsis span {
+  display: inline-block;
+  animation: ellipsis-blink 1.2s infinite;
+}
+
+.download-progress .ellipsis span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.download-progress .ellipsis span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes ellipsis-blink {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+  }
+
+  30% {
+    opacity: 1;
+  }
+}
+
+/* Decorative indeterminate pulse alongside the progress text. */
+.download-progress .download-pulse {
+  display: inline-block;
+  width: 2.5rem;
+  height: 0.25rem;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+  border-radius: var(--radius-sm);
+  background: currentcolor;
+  opacity: 0.3;
+  animation: download-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes download-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-progress .ellipsis span,
+  .download-progress .download-pulse {
+    animation: none;
+  }
+
+  .download-progress .ellipsis span {
+    opacity: 1;
+  }
+
+  .download-progress .download-pulse {
+    opacity: 0.3;
+  }
+}
+
 /* Progress text and its static hint stack vertically inside the flex row. */
 .download-status {
   display: flex;
@@ -75,6 +141,15 @@ li.present {
 .download-hint {
   margin: 0;
   font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* Rotating reassurance line: its own polite live region, sibling — never a
+   child — of .download-progress so the two regions announce independently. */
+.download-whimsy {
+  margin: 0;
+  font-size: 0.85rem;
+  font-style: italic;
   color: var(--color-text-muted);
 }
 
