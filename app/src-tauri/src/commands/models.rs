@@ -20,7 +20,7 @@ use crate::paths;
 const PARAKEET_DIR_NAME: &str = "parakeet-tdt-0.6b-v3-int8";
 /// Directory name (under the resolved models root) containing the Qwen GGUF
 /// summarization model.
-const QWEN_DIR_NAME: &str = "qwen2.5-3b-instruct";
+const QWEN_DIR_NAME: &str = "qwen2.5-7b-instruct";
 /// Directory name (under the resolved models root) containing the Silero
 /// VAD model artifact.
 const SILERO_DIR_NAME: &str = "silero-vad";
@@ -40,7 +40,12 @@ const PARAKEET_EXPECTED_FILES: [&str; 4] = [
     "joiner.int8.onnx",
     "tokens.txt",
 ];
-const QWEN_EXPECTED_FILES: [&str; 1] = ["qwen2.5-3b-instruct-q4_k_m.gguf"];
+/// Split GGUF: the q4_k_m distribution ships as two shards, so presence
+/// requires both files (llama.cpp loads them starting from the first).
+const QWEN_EXPECTED_FILES: [&str; 2] = [
+    "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+    "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+];
 const SILERO_EXPECTED_FILES: [&str; 1] = ["silero_vad.onnx"];
 const DIARIZE_SEGMENTATION_EXPECTED_FILES: [&str; 1] = ["model.int8.onnx"];
 const DIARIZE_EMBEDDING_EXPECTED_FILES: [&str; 1] = ["nemo_en_titanet_small.onnx"];

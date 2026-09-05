@@ -149,4 +149,70 @@ describe('TauriSummarizerAdapter', () => {
     expect(summary.createdAt).toEqual(new Date('2026-01-15T10:00:00Z'));
     expect(summary.language).toBe('en');
   });
+
+  it('summarize() sends instructions as { specific, includeGeneral } when given', async () => {
+    let receivedArgs: unknown;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args;
+      return { template: 'key-points', markdown: '# Key Points', createdAt: '2026-01-15T10:00:00Z', language: 'en' };
+    });
+
+    await adapter.summarize(
+      toMeetingId('m-1'),
+      { name: 'key-points', description: 'desc', prompt: 'prompt' },
+      'en',
+      { text: 'focus on decisions', includeGeneral: false },
+    );
+
+    expect(receivedArgs).toEqual({
+      meetingId: 'm-1',
+      template: 'key-points',
+      language: 'en',
+      instructions: { specific: 'focus on decisions', includeGeneral: false },
+    });
+  });
+
+  it('summarize() omits the instructions key entirely when no draft is given', async () => {
+    let receivedArgs: Record<string, unknown> | undefined;
+    installTauriInternalsStub((_cmd, args) => {
+      receivedArgs = args as Record<string, unknown>;
+      return { template: 'key-points', markdown: '# Key Points', createdAt: '2026-01-15T10:00:00Z', language: 'en' };
+    });
+
+    await adapter.summarize(toMeetingId('m-1'), { name: 'key-points', description: 'desc', prompt: 'prompt' }, 'en');
+
+    expect(receivedArgs).toEqual({ meetingId: 'm-1', template: 'key-points', language: 'en' });
+    // toEqual ignores undefined-valued keys, so pin the exact key set: a
+    // present-but-undefined `instructions` — which the conditional spread
+    // must prevent — fails here.
+    expect(Object.keys(receivedArgs ?? {})).toEqual(['meetingId', 'template', 'language']);
+  });
+
+  it('getGuidelines() invokes get_summary_guidelines and returns the raw string', async () => {
+    let receivedCmd: string | undefined;
+    installTauriInternalsStub((cmd) => {
+      receivedCmd = cmd;
+      return 'Always list action items.';
+    });
+
+    const guidelines = await adapter.getGuidelines();
+
+    expect(receivedCmd).toBe('get_summary_guidelines');
+    expect(guidelines).toBe('Always list action items.');
+  });
+
+  it('setGuidelines() invokes set_summary_guidelines with the guidelines arg', async () => {
+    let receivedCmd: string | undefined;
+    let receivedArgs: unknown;
+    installTauriInternalsStub((cmd, args) => {
+      receivedCmd = cmd;
+      receivedArgs = args;
+      return undefined;
+    });
+
+    await adapter.setGuidelines('Focus on decisions.');
+
+    expect(receivedCmd).toBe('set_summary_guidelines');
+    expect(receivedArgs).toEqual({ guidelines: 'Focus on decisions.' });
+  });
 });

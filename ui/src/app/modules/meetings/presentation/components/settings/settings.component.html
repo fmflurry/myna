@@ -1,0 +1,62 @@
+<section class="settings" aria-label="Myna settings">
+  <header>
+    <h2>Settings</h2>
+    <button type="button" class="close" (click)="closed.emit()">Close</button>
+  </header>
+
+  <section class="update-settings" aria-label="Updates">
+    <h3>Updates</h3>
+    <label class="auto-check">
+      <input
+        type="checkbox"
+        [checked]="autoCheckEnabled()"
+        (change)="onAutoCheckToggled($event)"
+      />
+      Check for updates automatically (once a day)
+    </label>
+    <p class="privacy-note">once a day, sends only your IP address to GitHub. Never any meeting data.</p>
+    <div class="check-now-row">
+      <button type="button" class="check-now" [disabled]="checkNowDisabled()" (click)="checkNow()">Check now</button>
+      <span class="last-checked">Last checked: {{ lastCheckedLabel() }}</span>
+    </div>
+  </section>
+
+  <section class="summary-language" aria-label="Summary language">
+    <h3>Summary language</h3>
+    <label class="language-picker">
+      <span class="language-label">Output language for generated summaries</span>
+      <select
+        aria-label="Summary output language"
+        [disabled]="summaryLanguages().length === 0"
+        (change)="onSummaryLanguageChanged($event)"
+      >
+        @for (language of summaryLanguages(); track language.code) {
+          <option [value]="language.code" [selected]="language.code === selectedSummaryLanguage()">
+            {{ language.label }}
+          </option>
+        }
+      </select>
+    </label>
+  </section>
+
+  <section class="summary-guidelines" aria-label="General summary guidelines">
+    <h3>General guidelines</h3>
+    <label class="guidelines-helper" for="general-guidelines-input"
+      >Free-text instructions added to every generated summary, unless a per-request draft turns them off.</label
+    >
+    <textarea
+      id="general-guidelines-input"
+      class="guidelines-input"
+      aria-label="General summary guidelines"
+      rows="4"
+      [value]="guidelinesValue()"
+      (input)="onGuidelinesInput($event)"
+      (blur)="saveGuidelines()"
+    ></textarea>
+    <div class="guidelines-actions">
+      <button type="button" class="save-guidelines" [disabled]="!guidelinesDirty()" (click)="saveGuidelines()">
+        Save guidelines
+      </button>
+    </div>
+  </section>
+</section>

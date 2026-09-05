@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 
+import type { AudioDevice } from '../../../core/models/audio-device.model';
 import type { CaptureSource, SystemAudioStatus } from '../../../core/models/capture-source.model';
 
 interface CaptureSourceOption {
@@ -12,6 +13,35 @@ const CAPTURE_SOURCE_OPTIONS: readonly CaptureSourceOption[] = [
   { value: 'system', label: 'System audio only' },
   { value: 'mixed', label: 'Both' },
 ];
+
+/** Substrings (lowercased) identifying a Bluetooth/HFP input — mirrors `myna_audio::is_bluetooth_input`. */
+const BLUETOOTH_INPUT_NEEDLES: readonly string[] = [
+  'airpod',
+  'bluetooth',
+  'hands-free',
+  'handsfree',
+  'hands free',
+  'hfp',
+];
+
+/** Name parts (lowercased) marking a built-in microphone — mirrors the Rust fallback preference. */
+const BUILTIN_MIC_NEEDLES: readonly string[] = [
+  'built-in',
+  'builtin',
+  'built in',
+  'macbook',
+  'internal',
+];
+
+function isBluetoothInput(name: string): boolean {
+  const lower = name.toLowerCase();
+  return BLUETOOTH_INPUT_NEEDLES.some((needle) => lower.includes(needle));
+}
+
+function isBuiltinMic(name: string): boolean {
+  const lower = name.toLowerCase();
+  return BUILTIN_MIC_NEEDLES.some((needle) => lower.includes(needle));
+}
 
 /**
  * Pure presentation: takes the current selection and system-audio status as
@@ -27,9 +57,12 @@ const CAPTURE_SOURCE_OPTIONS: readonly CaptureSourceOption[] = [
 export class CaptureSourcePickerComponent {
   readonly captureSource = input.required<CaptureSource>();
   readonly systemAudioStatus = input.required<SystemAudioStatus>();
+  readonly selectedDeviceName = input<string | null>(null);
+  readonly devices = input<readonly AudioDevice[]>([]);
   readonly disabled = input(false);
 
   readonly sourceSelected = output<CaptureSource>();
+  readonly fallbackMicSelected = output<string>();
   readonly permissionRequested = output<void>();
 
   protected readonly options = CAPTURE_SOURCE_OPTIONS;
@@ -68,6 +101,29 @@ export class CaptureSourcePickerComponent {
 
   protected readonly showHeadphonesHint = computed(() => this.captureSource() === 'mixed');
 
+  /**
+   * Opening a Bluetooth/HFP mic flips most headsets (e.g. AirPods) from
+   * A2DP music quality to SCO call quality, so live output goes quiet. Warn
+   * whenever the selected input looks like BT and the source would open it
+   * (`system` never touches the input side).
+   */
+  protected readonly showBluetoothHint = computed(() => {
+    const name = this.selectedDeviceName();
+    return name !== null && isBluetoothInput(name) && this.captureSource() !== 'system';
+  });
+
+  /**
+   * Non-BT mic the "Switch" button offers, preferring built-in — `null`
+   * when no alternative exists (then only "Use system only" is offered).
+   */
+  protected readonly fallbackMicName = computed<string | null>(() => {
+    const selected = this.selectedDeviceName();
+    const nonBt = this.devices().filter(
+      (device) => !isBluetoothInput(device.name) && device.name !== selected,
+    );
+    return nonBt.find((device) => isBuiltinMic(device.name))?.name ?? nonBt[0]?.name ?? null;
+  });
+
   protected isOptionDisabled(value: CaptureSource): boolean {
     if (this.disabled()) {
       return true;
@@ -84,5 +140,16 @@ export class CaptureSourcePickerComponent {
 
   protected onRequestPermission(): void {
     this.permissionRequested.emit();
+  }
+
+  protected onUseSystemOnly(): void {
+    this.onSelect('system');
+  }
+
+  protected onUseFallbackMic(): void {
+    const fallback = this.fallbackMicName();
+    if (fallback !== null) {
+      this.fallbackMicSelected.emit(fallback);
+    }
   }
 }

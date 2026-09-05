@@ -1,149 +1,147 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="myna-brand-kit/myna-logo-horizontal-dark.svg">
-  <img alt="Myna: AI meeting recorder & summarizer" src="myna-brand-kit/myna-logo-horizontal.svg" width="420">
+  <img alt="Myna: AI meeting recorder and summarizer" src="myna-brand-kit/myna-logo-horizontal.svg" width="420">
 </picture>
 
 **Capture, transcribe, and summarize your meetings — entirely on your machine.**
 
+**100% local · No account · No cloud · Free forever (MIT)**
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-FFC300?style=flat-square&logo=open-source-initiative)](LICENSE)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-0F1115?style=flat-square&logo=apple)]
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-0F1115?style=flat-square&logo=apple)](docs/usage.md)
 [![100% Local](https://img.shields.io/badge/runs-100%25%20local-6366F1?style=flat-square&logo=shield-check)](docs/usage.md)
 [![No Account](https://img.shields.io/badge/account-not%20required-FFC300?style=flat-square&logo=circle-check)](docs/usage.md)
 [![Price: $0](https://img.shields.io/badge/price-%240-0F1115?style=flat-square&logo=handshake)](LICENSE)
 
 - **[⬇ Download & Install](#getting-started)**
+- [Showcase](#showcase)
 - [Features](#features)
 - [Privacy](#privacy-recording--transcription-stay-local)
+- [How Myna Compares](#how-myna-compares)
 - [Roadmap](#roadmap)
+
+<p align="center">
+  <img alt="Myna app recording a meeting with live transcript and summary" src="docs/screenshots/hero.png" width="800">
+</p>
+
+<p align="center">
+  <strong>Hit Record. Get transcript + summary. Nothing leaves your Mac.</strong><br>
+  <a href="https://github.com/fmflurry/myna/releases">⬇ Download the .dmg</a> ·
+  <a href="docs/usage.md">Usage guide</a>
+</p>
 
 ## Why Myna?
 
-Every meeting deserves a record. The problem is that every tool offering one either sends your call to someone else's servers or parks a bot in your meeting — both feel intrusive. Myna changes that: **it records your meetings locally, transcribes them offline, and summarizes them with AI running on your own hardware.** Nothing leaves your machine. No account. No API calls. No vendor access to your conversations. Just results you own.
+Every meeting deserves a record. Cloud tools send your call
+to someone else's servers or park a bot in your meeting.
+Myna records locally, transcribes offline, and summarizes
+on your own hardware. No account. No API calls. No vendor access.
+Just results you own.
 
-## Privacy: Recording & Transcription Stay Local
+## Showcase
 
-Myna is built on a simple premise: your meetings are yours alone. Here's what that means in practice:
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+<img alt="Recording controls with mic, system, and mixed capture modes" src="docs/screenshots/recording.png" width="400"><br>
+<strong>🎙 Record any source</strong><br>
+<sub>Mic, system audio, or mixed — with live status.</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<img alt="Live transcription captions appearing during a recording" src="docs/screenshots/transcription.png" width="400"><br>
+<strong>💬 Live transcription</strong><br>
+<sub>Parakeet-TDT + Silero VAD, 25 languages.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+<img alt="Meeting summary generated from Key Points template" src="docs/screenshots/summaries.png" width="400"><br>
+<strong>✨ One-click summaries</strong><br>
+<sub>Key Points, Action Items, Notes, Decisions.</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<img alt="Meeting library with transcripts and export options" src="docs/screenshots/library.png" width="400"><br>
+<strong>📚 Own your library</strong><br>
+<sub>Browse, rename, export. Stored in ~/myna/.</sub>
+</td>
+</tr>
+</table>
 
-- **Speech-to-text** runs locally via Parakeet-TDT (ONNX neural net via sherpa-onnx); **no audio is sent to any transcription service**.
-- **Summarization** runs locally via Qwen2.5-3B-Instruct (GGUF via embedded llama.cpp); **no transcript leaves your machine**.
-- **Recordings, transcripts, and summaries** live in `~/myna/` on your disk (override with `MYNA_DATA_DIR`); **nothing is synced to the cloud**.
-- **No telemetry, no analytics, no "improve our service" data collection**.
-- **No bot joins your call** — Myna captures from your microphone and system audio; it never participates as a meeting attendee.
-- **The only network call in Myna's lifetime is a one-time download** of the AI models from Hugging Face when you first click **Download** in the app (or run `./scripts/download-models.sh`). After that, **it works completely offline.**
-
-**One optional exception: update checks.** Myna can check GitHub once per 24 hours (off by default, opt-in only) to see if a newer version exists. If enabled, the only data sent is your IP address; no meeting data, OS version, or identifiers leave your machine. Myna only *notifies* you of updates; it never downloads or installs them automatically.
-
-**Verify it yourself:** Myna is MIT-licensed and open-source. Read the code. Run it with your network disconnected.
-
-## Free: Really Free
-
-No credit card. No API key. No sign-up. No seat limit. No trial. No usage meter. No paywalled tiers.
-
-Cloud alternatives meter AI compute — "free" plans cap your recording time or summarization credits. Myna meters nothing because there is no server to pay for. Your machine does the work. You own the results.
+> Screenshots are placeholders — see `docs/screenshots/*.png` (hero, recording, transcription, summaries, library).
 
 ## Features
 
-### Recording & Capture
-- **Three capture modes:** microphone only, system audio only (macOS 14.4+), or microphone + system audio mixed (macOS 14.4+). Gracefully degrades to microphone-only on older macOS versions.
-- **Input device selection:** choose which microphone to use; see all available devices.
-- **Pause-free recording:** start and stop cleanly; cancel a recording without saving.
-- **Permission flow:** requests system audio recording permission when needed; handles permission state (audio-only, no video capture).
-- **Live status:** see real-time recording state and transcription progress.
+### 🎙 Flexible capture
 
-### Transcription
-- **Parakeet-TDT v3** speech-to-text (640 MB, int8 ONNX): 25 European languages.
-- **Silero-VAD-segmented simulated streaming:** transcription happens in real-time as you speak, with final punctuated results emitted when you pause (~300 ms of silence).
-- **Live partial captions:** see transcription appear in the UI as you record.
+Three modes: **mic only**, **system audio only** (macOS 14.4+),
+or **mixed mic + system** as separate tracks with speaker labels
+(`Me` / `Others`). Device picker, clean start/stop/cancel,
+graceful fallback to mic on older macOS.
+See [docs/usage.md](docs/usage.md#choosing-a-capture-source).
 
-### Summarization
-- **Qwen2.5-3B-Instruct GGUF** via embedded llama.cpp (2.0 GB): one-shot summaries, no streaming service.
-- **Template-driven:** four built-in summary types — **Key Points**, **Action Items**, **Meeting Notes**, **Decisions** — plus your own custom templates.
-- **Cancellable:** stop summarization mid-generation if needed.
-- **Multi-language output:** summarize in your choice of language.
+- **Speaker labels** (`Me` for mic, `Others` for system) preserved
+  in transcripts and summaries.
 
-### Summary Templates
-- **User-extensible JSON:** add new summary types without recompiling. Template files live in `templates/`; same files drive both CLI and GUI.
-- **Built-in templates:** `key-points`, `action-items`, `meeting-notes`, `decisions` (all validated by `schema.json`).
-- **Placeholders:** `{transcript}`, `{duration}`, `{title}`, `{language}` — customize prompt logic for your use case.
+### 💬 Real-time transcription
 
-### Meeting Library
-- **List all meetings:** browse recordings with titles, timestamps, and summary status.
-- **View transcripts:** read the full meeting transcript.
-- **Access summaries:** retrieve saved summaries by template type.
-- **Rename meetings:** set human-readable titles.
-- **Delete meetings:** remove old recordings and associated data.
-- **Export meetings:** save transcripts and summaries to your filesystem.
+**Parakeet-TDT v3** (640 MB int8 ONNX via sherpa-onnx),
+**25 European languages**, Silero-VAD-segmented simulated streaming —
+partial captions live, final punctuated results
+after ~300 ms of silence.
 
-### App & Models
-- **Tauri 2 desktop shell:** Rust core + system webview; small binary, native performance. Currently ships for macOS; Windows and Linux support is on the roadmap.
-- **In-app model downloads:** one-click fetch of the AI models with live progress and cancel; see at a glance which models are ready.
-- **App version info:** identify your Myna build.
+### ✨ Local summarization
+
+**Qwen2.5-7B-Instruct** (4.7 GB GGUF via embedded llama.cpp)
+with four built-in templates — **Key Points**, **Action Items**,
+**Meeting Notes**, **Decisions** — plus user-extensible JSON templates
+(`templates/`, `{transcript}` `{duration}` `{title}` `{language}`).
+Cancellable, multi-language output.
+
+### 📚 Meeting library
+
+List, rename, delete, view transcripts, retrieve summaries by template,
+export to your filesystem. In-app model downloads with progress + cancel.
+Tauri 2 shell (Rust + webview); macOS-first.
+
+## Privacy: Recording & Transcription Stay Local
+
+- **STT** runs locally (Parakeet-TDT via sherpa-onnx) — no audio sent anywhere.
+- **Summaries** run locally (Qwen via llama.cpp) — no transcript leaves your machine.
+- **Storage** is `~/myna/` (override `MYNA_DATA_DIR`) — nothing synced to the cloud.
+- **No telemetry, no analytics.** **No bot joins your call.**
+- **The only network call:** one-time model download from Hugging Face
+  (~5.4 GB) via in-app **Download** or `./scripts/download-models.sh`.
+  Then fully offline.
+
+**Optional update checks** (off by default, opt-in): one GitHub check
+per 24 h, IP address only, notify-only, never auto-install.
+**Verify it yourself:** MIT-licensed — read the code, run offline.
+
+## Free: Really Free
+
+No card. No key. No sign-up. No seat limit. No trial. No meter.
+Cloud vendors meter AI compute; Myna meters nothing —
+your machine does the work.
 
 ## Getting Started
 
-**Platform support:** Myna is developed and tested on macOS only. Windows and Linux builds are not yet verified — see Roadmap.
+**macOS only** (Windows/Linux untested — see Roadmap).
 
-### Recommended: Download the .dmg
+1. Download the `.dmg` from [GitHub Releases](https://github.com/fmflurry/myna/releases),
+   drag to Applications, launch.
+2. Unsigned build (not notarized): if macOS says *"damaged"*,
+   run `xattr -dr com.apple.quarantine /Applications/Myna.app`.
+   Mic permission re-asks after each update (ad-hoc signature).
+3. Onboarding: grant **Microphone** (always) and
+   **Screen & System Audio Recording** (system/mixed only,
+   macOS 14.4+, restart after granting).
+   Click **Download** for models (~5.4 GB, one time).
+   Decline update checks with no loss.
+4. Hit **Record**, watch live captions, **Stop**, then **Summarize**.
 
-Grab the latest macOS `.dmg` from
-[GitHub Releases](https://github.com/fmflurry/myna/releases),
-open it and drag Myna to Applications, then launch.
-
-⚠️ **Important: Unsigned Build** — Myna v0.1.0 is ad-hoc
-signed but not notarized (Developer ID pending). macOS will
-quarantine the app on first download and may reject it with
-*"Myna is damaged and can't be opened."* To allow it to run,
-open Terminal and run:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Myna.app
-```
-
-Because the build is ad-hoc signed, your code-identity changes
-with each release, so **macOS will ask for microphone permission
-again after each update**.
-
-### First Launch
-
-On first run, Myna requests system permissions, asks about update checks, and downloads
-its AI models:
-
-**Permissions:** You'll see two permission prompts on first
-record:
-
-1. **Microphone access** — required for all recordings.
-2. **Screen/audio capture** (`kTCCServiceAudioCapture`) —
-   appears only if you select system audio or mixed capture
-   mode; grants access to record other apps' audio.
-
-**Update checks (optional):** Myna will ask if you'd like it to check GitHub once per day
-for new releases. This is off by default and completely optional. If you decline, Myna
-works exactly the same way — you'll just need to check GitHub Releases manually.
-
-**Model download:** The onboarding screen shows which models
-are ready. Click **Download** and watch live progress; cancel
-anytime. This downloads Parakeet-TDT (640 MB), Qwen2.5-Instruct
-(2.0 GB), and Silero VAD (629 KB) from Hugging Face — **~2.6 GB
-total, one time only**. After the download completes, everything
-runs fully offline. Requires macOS 14.4+.
-
-### Build from Source
-```bash
-npm install
-npm --prefix ui install
-npx tauri dev
-```
-Opens the Myna window. Ready to record.
-
-On first run, Myna's onboarding screen shows which models are ready. Click **Download** and watch live progress; cancel anytime. Fetches Parakeet-TDT (640 MB), Qwen2.5-Instruct (2.0 GB), and Silero VAD (629 KB) from Hugging Face (~2.6 GB total, one time). The manual/CLI alternative `./scripts/download-models.sh` still works (idempotent, safe to re-run).
-
-For production builds:
-```bash
-npx tauri build
-```
-
-### Next Steps
-See [docs/usage.md](docs/usage.md) for a complete walkthrough: choosing capture sources, recording meetings, generating summaries, and understanding your data storage. [docs/stack-proposal.md](docs/stack-proposal.md) explains why we chose each technology.
+From source: `npm install && npm --prefix ui install && npx tauri dev`.
+Release: `npx tauri build`.
+Full walkthrough: [docs/usage.md](docs/usage.md).
 
 ## How Myna Compares
 
@@ -152,73 +150,70 @@ See [docs/usage.md](docs/usage.md) for a complete walkthrough: choosing capture 
 | **Runs on-device** | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | **Bot joins call** | ✗ | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
 | **Account required** | ✗ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
-| **Price floor** | Free | Free (300 min/mo, $8.33–16.99/mo+) | Free tier (400 min storage, then $10–18/mo+) | Free basic ($14/user/mo+) | Free (gated AI, $15–20/mo+) | Free CE (PRO tier paywalled) | Free tier (€64 Pro) |
+| **Price floor** | Free | Free, then $8–17/mo | Free tier, then $10–18/mo | Free basic, then $14/mo | Free, then $15–20/mo | Free CE | Free tier (€64 Pro) |
 | **License** | MIT | Proprietary | Proprietary | Proprietary | Proprietary | MIT | Proprietary |
 
-**The reality:** several free plans now offer unlimited recording. Myna's edge is **privacy** (nothing leaves your machine) and **zero paywall** (every feature is open). You own your data, full stop.
-
-<sub>Pricing sourced from vendor pages, checked 2026-08:
-[Otter.ai](https://otter.ai/pricing) ·
-[Fireflies.ai](https://fireflies.ai/pricing) ·
-[Granola](https://www.granola.ai/pricing) ·
-[Fathom](https://www.fathom.ai/pricing) ·
+Myna's edge: **privacy** (nothing leaves your machine) +
+**zero paywall** (every feature open).
+<sub>Pricing checked 2026-08:
+[Otter.ai](https://otter.ai/pricing) · [Fireflies.ai](https://fireflies.ai/pricing) ·
+[Granola](https://www.granola.ai/pricing) · [Fathom](https://www.fathom.ai/pricing) ·
 [Meetily](https://github.com/Zackriya-Solutions/meetily) ·
 [MacWhisper](https://www.macwhisper.com/)</sub>
 
 ## Roadmap
 
+*Direction, not commitment.*
+
 ### Near-term
-- **Speaker diarization** — summaries know who said what (paywalled by all cloud rivals).
-- **Global search** — find meetings, transcripts, and summaries across your entire library.
-- **Export formats** — Markdown, TXT, SRT, VTT, PDF, plus Obsidian and Notion vault exports.
-- **Windows & Linux support** — build, test, and full feature parity on non-macOS platforms.
-- **Model picker** — choose between 3B, 8B, and larger LLMs based on your hardware.
-- **Custom vocabulary** — biasing and hotword support so proper nouns and technical terms transcribe correctly.
+
+- Speaker diarization
+- Global search across meetings
+- Export (Markdown/TXT/SRT/VTT/PDF, Obsidian/Notion)
+- Windows/Linux support
+- Model picker (7B/14B+)
+- Custom vocabulary
 
 ### Mid-term
-- **Calendar integration** — auto-title meetings from EventKit/ICS; remember attendees.
-- **Meeting-app auto-detect** — recognize Zoom/Teams/Meet and auto-record.
-- **Chat with your history** — local RAG over past meetings; talk to your own call library.
-- **True low-latency streaming** — replace VAD segmentation with proper streaming inference.
-- **Whisper fallback** — Whisper-large-v3-turbo for 99-language / CJK coverage.
-- **PII redaction** — remove sensitive data before summarization (the one thing cloud vendors structurally cannot do).
-- **Community template sharing** — discover and use templates others have built.
-- **Transcript editor** — fix transcription errors; scrub back to audio for verification.
+
+- Calendar integration
+- App auto-detect
+- Local RAG chat over meetings
+- True streaming transcription
+- Whisper fallback (99 languages)
+- PII redaction
+- Template sharing
+- Transcript editor
 
 ### Long-term
-- **iOS companion** — record in-person meetings on your phone.
-- **Encrypted sync** — backup to storage you own (S3, iCloud, Syncthing); encrypted end-to-end.
-- **Speaker enrollment** — identify speakers by voice, not "Speaker 2".
-- **Local MCP server** — webhooks and CRM/issue-tracker outbound integrations.
-- **Team workspace** — self-hosted collaboration without cloud infrastructure.
-- **Meeting analytics** — talk-time, question rates, engagement trends (once diarization is ready).
-- **Live captions + offline translation** — overlay subtitles; translate meetings as they happen.
 
-*This roadmap reflects our direction, not a commitment. Priorities shift based on user feedback and technical feasibility.*
+- iOS companion
+- Encrypted sync
+- Speaker enrollment
+- Local MCP server
+- Team workspace
+- Analytics
+- Live captions + translation
 
 ## Contributing & License
 
-Myna is released under the **MIT** License — [read it here](LICENSE).
+**MIT** — see [LICENSE](LICENSE).
 
-**Third-party model licenses:**
-- **Parakeet-TDT model weights** — CC-BY-4.0 (attribution required; credit is included in Myna's source).
-- **sherpa-onnx runtime** — Apache-2.0.
-- **llama.cpp runtime** — MIT.
-- **Qwen2.5-Instruct model** — Qwen research model agreement (see [Hugging Face](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF)).
+Third-party licenses:
 
-### Resources
-- **[Usage Guide](docs/usage.md)** — walkthrough, troubleshooting, export options.
-- **[Architecture & Decisions](docs/stack-proposal.md)** — why we chose Tauri, Parakeet, Qwen, and llama.cpp.
-- **Source code** — MIT-licensed; read it, run it, modify it.
-- **[Developer Notes](docs/adr/)** — architecture decision records.
+- Parakeet-TDT weights — **CC-BY-4.0**
+- sherpa-onnx runtime — **Apache-2.0**
+- llama.cpp runtime — **MIT**
+- Qwen2.5-Instruct — **Qwen research agreement**
+  ([Hugging Face](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF))
 
-### Questions?
-Open an issue or discussion on the project's repository.
+Resources:
 
-### Built with AI
-Myna was built entirely with AI — code, docs, and design. The agent configs, rules, and skills used to build the app are public: [fmflurry/settings-opencode](https://github.com/fmflurry/settings-opencode).
+- [Usage Guide](docs/usage.md)
+- [Architecture](docs/stack-proposal.md)
+- [ADRs](docs/adr/)
+- [Custom Summary Instructions](docs/custom-summary-instructions.md)
 
-### Support the project
-Myna is really free, and that doesn't change here. If the app has exceeded your expectations and you'd like to support development, a donation is purely optional: [paypal.me/fmflorianmichel](https://paypal.me/fmflorianmichel).
-
-Enjoy recording your meetings. Your data is yours alone.
+Questions? Open an issue.
+Built entirely with AI ([configs](https://github.com/fmflurry/settings-opencode)).
+Optional tip: [paypal.me/fmflorianmichel](https://paypal.me/fmflorianmichel).

@@ -1,7 +1,7 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, provideRouter, convertToParamMap, type ParamMap } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, EMPTY } from 'rxjs';
 import { vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -56,12 +56,16 @@ describe('MeetingsShellPage — transcript segment editing', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
 
   const noop = async (): Promise<void> => undefined;
   const setSplitRatio = vi.fn((ratio: number) => void ratio);
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const setSidebarWidth = vi.fn((width: number) => void width);
+  const setSidebarCollapsed = vi.fn((collapsed: boolean) => void collapsed);
   const setMeetingArchived = vi.fn(async (id: string, archived: boolean) => {
     void id;
     void archived;
@@ -75,16 +79,18 @@ describe('MeetingsShellPage — transcript segment editing', () => {
   const expandedFolders = signal<ReadonlySet<never>>(new Set());
 
   const facadeStub = {
+    settingsRequests: () => EMPTY,
     activeRecording: signal(null),
     resumeActiveRecording: vi.fn(async () => undefined),
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed, setMeetingArchived,
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed, setSidebarWidth, setSidebarCollapsed, setMeetingArchived,
     editTranscriptSegment,
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
     startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
     deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),

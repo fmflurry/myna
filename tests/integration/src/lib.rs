@@ -21,9 +21,10 @@ const PARAKEET_ARTIFACTS: [&str; 4] = [
     "tokens.txt",
 ];
 /// Directory name of the Qwen2.5 GGUF, relative to `models/`.
-const QWEN_MODEL_DIR: &str = "qwen2.5-3b-instruct";
-/// File name of the Qwen2.5 GGUF inside [`QWEN_MODEL_DIR`].
-const QWEN_GGUF_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
+const QWEN_MODEL_DIR: &str = "qwen2.5-7b-instruct";
+/// File name of the Qwen2.5 GGUF inside [`QWEN_MODEL_DIR`]: the first
+/// shard of the split q4_k_m distribution (llama.cpp loads the rest from it).
+const QWEN_GGUF_FILE: &str = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf";
 /// Directory name of the Silero VAD model, relative to `models/`.
 const SILERO_VAD_DIR: &str = "silero-vad";
 /// File name of the Silero VAD model inside [`SILERO_VAD_DIR`].

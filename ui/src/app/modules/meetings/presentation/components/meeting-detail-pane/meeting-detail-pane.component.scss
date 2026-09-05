@@ -94,6 +94,13 @@
   flex-shrink: 0;
 }
 
+.pane-toolbar-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .cancel-import,
 .pane-toolbar-transcript .retranscribe,
 .pane-toolbar-transcript .replace-audio,
@@ -101,6 +108,9 @@
 .pane-toolbar-transcript .detect-speakers,
 .pane-toolbar-transcript .stop-diarize,
 .pane-toolbar-transcript .undo,
+.pane-toolbar-summary .regenerate-button,
+.pane-toolbar-summary .edit-summary,
+.pane-toolbar-summary .delete-summary,
 .export-controls .export {
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border);
@@ -121,6 +131,9 @@
 .pane-toolbar-transcript .replace-audio:disabled,
 .degraded-audio-warning .recover-transcript:disabled,
 .pane-toolbar-transcript .detect-speakers:disabled,
+.pane-toolbar-summary .regenerate-button:disabled,
+.pane-toolbar-summary .edit-summary:disabled,
+.pane-toolbar-summary .delete-summary:disabled,
 .export-controls .export:disabled {
   color: var(--color-text-disabled);
   cursor: not-allowed;

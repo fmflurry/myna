@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, inject } from '@angular/core';
+import { Injectable, OnDestroy, effect, inject } from '@angular/core';
 
 import { RecorderPort } from '../../core/ports/recorder.port';
 import { ListDevicesUseCase } from '../use-cases/list-devices.usecase';
@@ -7,14 +7,15 @@ import { DEVICE_POLL_INTERVAL_MS, clearErrorFromSource, toErrorInfo } from './me
 
 /** Error `source` tag for {@link DevicesFacade.loadDevices}; see `clearErrorFromSource`. */
 const LOAD_DEVICES_SOURCE = 'loadDevices';
+const MAX_DEVICE_POLL_BACKOFF_MS = 60_000;
+const DEVICE_POLL_BACKOFF_MS = [DEVICE_POLL_INTERVAL_MS, 15_000, MAX_DEVICE_POLL_BACKOFF_MS] as const;
 
 /**
  * Input/output audio-device listing and selection, split out of
  * `MeetingsFacade` to stay under the project's max-lines limit. The
  * constructor starts a background poll (cpal exposes no
- * default-device-changed callback) that re-runs `loadDevices` every
- * `DEVICE_POLL_INTERVAL_MS`; a tick that overlaps an in-flight load is
- * skipped and dropped, never queued. Injected directly by `MeetingsFacade`,
+ * default-device-changed callback). Polling pauses during recording and uses
+ * bounded failure backoff while idle. Injected directly by `MeetingsFacade`,
  * never by a component — see the module's facade-pattern rule.
  */
 @Injectable()
@@ -22,8 +23,15 @@ export class DevicesFacade implements OnDestroy {
   private readonly store = inject(MeetingsStore);
   private readonly listDevicesUseCase = inject(ListDevicesUseCase);
   private readonly recorder = inject(RecorderPort);
-  private readonly pollHandle: ReturnType<typeof setInterval>;
+  private pollHandle: ReturnType<typeof setTimeout> | undefined;
   private pollInFlight = false;
+  private consecutivePollFailures = 0;
+  private previousRecordingState = this.store.recordingState();
+  private readonly originalSetRecordingState = this.store.setRecordingState;
+  private readonly recordingStateHandler: MeetingsStore['setRecordingState'] = (recordingState) => {
+    this.originalSetRecordingState.call(this.store, recordingState);
+    this.handleRecordingState(recordingState);
+  };
 
   readonly devices = this.store.devices;
   readonly selectedDevice = this.store.selectedDevice;
@@ -32,11 +40,18 @@ export class DevicesFacade implements OnDestroy {
   readonly defaultOutputDevice = this.store.defaultOutputDevice;
 
   constructor() {
-    this.pollHandle = setInterval(() => this.pollDevices(), DEVICE_POLL_INTERVAL_MS);
+    this.store.setRecordingState = this.recordingStateHandler;
+    effect(() => {
+      this.handleRecordingState(this.store.recordingState());
+    });
+    this.schedulePoll(DEVICE_POLL_INTERVAL_MS);
   }
 
   ngOnDestroy(): void {
-    clearInterval(this.pollHandle);
+    this.cancelPoll();
+    if (this.store.setRecordingState === this.recordingStateHandler) {
+      this.store.setRecordingState = this.originalSetRecordingState;
+    }
   }
 
   /**
@@ -47,20 +62,9 @@ export class DevicesFacade implements OnDestroy {
    */
   async loadDevices(): Promise<void> {
     try {
-      const devices = await this.listDevicesUseCase.list();
-      this.store.setDevices(devices);
-      const current = this.store.selectedDevice();
-      if (current && !devices.some((device) => device.name === current.name)) {
-        this.store.setSelectedDevice(null);
-      }
-      this.store.setDefaultDevice(await this.listDevicesUseCase.default());
-      this.store.setOutputDevices(await this.recorder.listOutputDevices());
-      this.store.setDefaultOutputDevice(await this.recorder.defaultOutputDevice());
-      // Source-scoped: this runs on a 5s poll, so an unconditional clear
-      // would erase any other operation's error seconds after it appeared.
-      clearErrorFromSource(this.store, LOAD_DEVICES_SOURCE);
+      await this.refreshDevices();
     } catch (caught) {
-      this.store.setError({ ...toErrorInfo(caught), source: LOAD_DEVICES_SOURCE });
+      this.setLoadDevicesError(caught);
     }
   }
 
@@ -76,14 +80,79 @@ export class DevicesFacade implements OnDestroy {
     }
   }
 
-  /** Skips (never queues) a tick that overlaps a still in-flight load; the next tick tries again. */
+  /** Skips a tick that overlaps a still in-flight load; the active load schedules the next poll. */
   private pollDevices(): void {
-    if (this.pollInFlight) {
+    if (this.pollInFlight || this.isRecordingActive()) {
       return;
     }
     this.pollInFlight = true;
-    void this.loadDevices().finally(() => {
-      this.pollInFlight = false;
-    });
+    void this.refreshDevices()
+      .then(() => {
+        this.consecutivePollFailures = 0;
+      })
+      .catch((caught: unknown) => {
+        this.consecutivePollFailures += 1;
+        this.setLoadDevicesError(caught);
+      })
+      .finally(() => {
+        this.pollInFlight = false;
+        if (!this.isRecordingActive()) {
+          this.schedulePoll(this.nextPollDelay());
+        }
+      });
+  }
+
+  private async refreshDevices(): Promise<void> {
+    const devices = await this.listDevicesUseCase.list();
+    this.store.setDevices(devices);
+    const current = this.store.selectedDevice();
+    if (current && !devices.some((device) => device.name === current.name)) {
+      this.store.setSelectedDevice(null);
+    }
+    this.store.setDefaultDevice(await this.listDevicesUseCase.default());
+    this.store.setOutputDevices(await this.recorder.listOutputDevices());
+    this.store.setDefaultOutputDevice(await this.recorder.defaultOutputDevice());
+    clearErrorFromSource(this.store, LOAD_DEVICES_SOURCE);
+  }
+
+  private schedulePoll(delay: number): void {
+    this.cancelPoll();
+    this.pollHandle = setTimeout(() => {
+      this.pollHandle = undefined;
+      this.pollDevices();
+    }, delay);
+  }
+
+  private cancelPoll(): void {
+    if (this.pollHandle !== undefined) {
+      clearTimeout(this.pollHandle);
+      this.pollHandle = undefined;
+    }
+  }
+
+  private isRecordingActive(): boolean {
+    const recordingState = this.store.recordingState();
+    return recordingState === 'recording' || recordingState === 'stopping';
+  }
+
+  private handleRecordingState(recordingState: ReturnType<MeetingsStore['recordingState']>): void {
+    const returnedToIdle = this.previousRecordingState !== 'idle' && recordingState === 'idle';
+    this.previousRecordingState = recordingState;
+    if (recordingState === 'recording' || recordingState === 'stopping') {
+      this.cancelPoll();
+      return;
+    }
+    if (returnedToIdle) {
+      this.pollDevices();
+    }
+  }
+
+  private nextPollDelay(): number {
+    const backoffIndex = Math.min(this.consecutivePollFailures, DEVICE_POLL_BACKOFF_MS.length - 1);
+    return DEVICE_POLL_BACKOFF_MS[backoffIndex] ?? MAX_DEVICE_POLL_BACKOFF_MS;
+  }
+
+  private setLoadDevicesError(caught: unknown): void {
+    this.store.setError({ ...toErrorInfo(caught), source: LOAD_DEVICES_SOURCE });
   }
 }

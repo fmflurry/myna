@@ -216,4 +216,22 @@ impl MeetingStore for FsMeetingStore {
             language: language.to_string(),
         })
     }
+
+    fn delete_summary(
+        &self,
+        id: MeetingId,
+        template: &str,
+        language: &str,
+    ) -> Result<(), AppError> {
+        let meeting = self.get(id)?;
+        let path = self.summary_path(id, template, language);
+        if !path.exists() {
+            return Err(AppError::NotFound(format!(
+                "summary '{template}' ({language}) for meeting {id}"
+            )));
+        }
+        fs::remove_file(&path)?;
+        self.save(&meeting.without_summary(template, language))?;
+        Ok(())
+    }
 }

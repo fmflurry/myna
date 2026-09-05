@@ -12,8 +12,32 @@ import { AudioPlayerComponent, formatTime } from './audio-player.component';
  * under the project's max-lines limit (same pattern as the
  * `meeting-detail-pane.component.*.spec.ts` files).
  */
+
+/** Port/facade view of one playable chunk (see adapter spec for the wire DTO). */
+interface AudioChunkView {
+  readonly url: string;
+  readonly startSec: number;
+  readonly durationSec: number;
+}
+
+const LEGACY_CHUNKS: readonly AudioChunkView[] = [
+  { url: 'tauri://audio.wav', startSec: 0, durationSec: 0 },
+];
+
+const PART_ONE: AudioChunkView = {
+  url: 'asset://localhost/audio.wav',
+  startSec: 0,
+  durationSec: 60,
+};
+const PART_TWO: AudioChunkView = {
+  url: 'asset://localhost/audio.part-0002.wav',
+  startSec: 60,
+  durationSec: 40,
+};
+
 class MockMeetingsFacade {
   getAudioUrl = vi.fn().mockResolvedValue(null);
+  getAudioChunks = vi.fn().mockResolvedValue(LEGACY_CHUNKS);
 }
 
 describe('AudioPlayerComponent playback state regressions', () => {
@@ -29,6 +53,7 @@ describe('AudioPlayerComponent playback state regressions', () => {
   const renderWithAudio = async (): Promise<ComponentFixture<AudioPlayerComponent>> => {
     const facade = TestBed.inject(MeetingsFacade) as unknown as MockMeetingsFacade;
     facade.getAudioUrl = vi.fn().mockResolvedValue('tauri://audio.wav');
+    facade.getAudioChunks = vi.fn().mockResolvedValue(LEGACY_CHUNKS);
 
     const fixture = TestBed.createComponent(AudioPlayerComponent);
     fixture.componentRef.setInput('meetingId', toMeetingId('m1'));
@@ -164,6 +189,152 @@ describe('AudioPlayerComponent playback state regressions', () => {
     expect(component.playbackRate()).toBe(1.5);
     expect(select.value).toBe('1.5');
     expect(audio.playbackRate).toBe(1.5);
+  });
+
+  describe('multipart playback state (RED: seamless chunked WAV)', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const flush = async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(0);
+    };
+
+    const renderWithChunks = async (
+      chunks: readonly AudioChunkView[],
+    ): Promise<ComponentFixture<AudioPlayerComponent>> => {
+      const facade = TestBed.inject(MeetingsFacade) as unknown as MockMeetingsFacade;
+      facade.getAudioUrl = vi.fn().mockResolvedValue(null);
+      facade.getAudioChunks = vi.fn().mockResolvedValue(chunks);
+
+      const fixture = TestBed.createComponent(AudioPlayerComponent);
+      fixture.componentRef.setInput('meetingId', toMeetingId('m1'));
+      fixture.componentRef.setInput('hasAudio', true);
+      fixture.detectChanges();
+
+      await flush();
+      fixture.detectChanges();
+      return fixture;
+    };
+
+    // One <audio> element, one src swap per part — never JS-side buffering.
+    it('auto-advances to the next part on ended, preserving play, rate and volume', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      const playSpy = vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+
+      const select = fixture.nativeElement.querySelector('.rate-select') as HTMLSelectElement;
+      select.value = '1.5';
+      select.dispatchEvent(new Event('change'));
+      const volumeSlider = fixture.nativeElement.querySelector('.volume-slider') as HTMLInputElement;
+      volumeSlider.value = '0.4';
+      volumeSlider.dispatchEvent(new Event('input'));
+
+      audio.dispatchEvent(new Event('play'));
+      audio.currentTime = 59.5;
+      audio.dispatchEvent(new Event('timeupdate'));
+      fixture.detectChanges();
+      expect(component.currentTime()).toBe(59.5);
+
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+
+      expect(component.url()).toBe(PART_TWO.url);
+      expect(audio.src).toContain('audio.part-0002.wav');
+      expect(component.playing()).toBe(true);
+      expect(playSpy).toHaveBeenCalled();
+      expect(component.playbackRate()).toBe(1.5);
+      expect(audio.playbackRate).toBe(1.5);
+      expect(component.volume()).toBe(0.4);
+      expect(audio.volume).toBeCloseTo(0.4, 5);
+      // Global position continues seamlessly at part two's start offset.
+      expect(component.currentTime()).toBe(60);
+    });
+
+    it('reports the global timeline position while the second part plays', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+      audio.dispatchEvent(new Event('play'));
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+      expect(component.url()).toBe(PART_TWO.url);
+
+      audio.currentTime = 5;
+      audio.dispatchEvent(new Event('timeupdate'));
+      fixture.detectChanges();
+
+      expect(component.currentTime()).toBe(65);
+      expect(component.currentTimeDisplay()).toBe('1:05');
+      const slider = fixture.nativeElement.querySelector('.seek-slider') as HTMLInputElement;
+      expect(Number(slider.value)).toBeCloseTo(65, 1);
+    });
+
+    // The element's duration is chunk-local; the logical timeline's total is
+    // the sum and must never shrink when a part's metadata lands.
+    it('keeps the summed total when the element reports a chunk-local duration', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.duration()).toBe(100);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      Object.defineProperty(audio, 'duration', { value: 60, configurable: true });
+      audio.dispatchEvent(new Event('durationchange'));
+      fixture.detectChanges();
+
+      expect(component.duration()).toBe(100);
+      expect(component.durationDisplay()).toBe('1:40');
+    });
+
+    it('stops and rewinds to the start when the final part ends', async () => {
+      const fixture = await renderWithChunks([PART_ONE, PART_TWO]);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe(PART_ONE.url);
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+      audio.dispatchEvent(new Event('play'));
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+      expect(component.url()).toBe(PART_TWO.url);
+
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+
+      expect(component.playing()).toBe(false);
+      expect(component.currentTime()).toBe(0);
+      expect(component.url()).toBe(PART_TWO.url);
+    });
+
+    it('resets like today when a legacy single-chunk meeting ends', async () => {
+      const fixture = await renderWithChunks(LEGACY_CHUNKS);
+      const component = fixture.componentInstance;
+      expect(component.url()).toBe('tauri://audio.wav');
+
+      const audio = fixture.nativeElement.querySelector('audio') as HTMLAudioElement;
+      vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+      audio.dispatchEvent(new Event('play'));
+      fixture.detectChanges();
+      expect(component.playing()).toBe(true);
+
+      audio.dispatchEvent(new Event('ended'));
+      await flush();
+      fixture.detectChanges();
+
+      // No phantom advance: single chunk ends exactly like the old player.
+      expect(component.playing()).toBe(false);
+      expect(component.currentTime()).toBe(0);
+      expect(component.url()).toBe('tauri://audio.wav');
+    });
   });
 });
 

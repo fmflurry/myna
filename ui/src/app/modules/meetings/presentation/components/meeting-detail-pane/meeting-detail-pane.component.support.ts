@@ -1,3 +1,4 @@
+import { DEFAULT_SUMMARY_INSTRUCTIONS_DRAFT } from '../../../application/stores/summary-instructions-preferences.util';
 import type { SummaryCacheEntry, SummarizingKey } from '../../../application/stores/meetings.store';
 import { summaryCacheKey } from '../../../application/stores/meetings.store';
 import type { AudioSource } from '../../../core/models/audio-source.model';
@@ -5,8 +6,15 @@ import type { CaptureSource } from '../../../core/models/capture-source.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
 import type { ImportProgress } from '../../../core/ports/audio-import.port';
 import type { Summary } from '../../../core/models/summary.model';
+import type { SummaryInstructionsDraft } from '../../../core/models/summary-instructions.model';
+import type { SummaryLanguage } from '../../../core/models/summary-language.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
-import { formatMmSs, formatTemplateLabel } from '../../utils/format-display.util';
+import {
+  formatMeetingHeadingDate,
+  formatMmSs,
+  formatMinutesLong,
+  formatTemplateLabel,
+} from '../../utils/format-display.util';
 
 /**
  * Below this viewport width, the two-column split workspace no longer fits
@@ -74,6 +82,20 @@ export const buildSummaryEdit = (
   markdown,
 });
 
+/** A request to delete a persisted summary for one (meeting, template, language) triple. */
+export interface SummaryDelete {
+  readonly meetingId: MeetingId;
+  readonly template: string;
+  readonly language: string;
+}
+
+/** Tags the active (meeting, template, language) triple as a summary-delete request. */
+export const buildSummaryDelete = (meeting: Meeting, template: string, language: string): SummaryDelete =>
+  ({ meetingId: meeting.id, template, language });
+/** Confirm copy for the destructive summary-delete path; a declined confirmation emits nothing. */
+export const buildSummaryDeleteMessage = (template: string, language: string): string =>
+  `Delete ${template} in ${language}? This cannot be undone — regenerate from the transcript to recreate it.`;
+
 /**
  * Header label for the determinate import/re-transcribe progress bar, or
  * `null` when nothing should render — either nothing is importing, no
@@ -108,6 +130,15 @@ export const isRetranscribeDisabled = (hasAudio: boolean, busy: boolean, importi
 
 /** "Replace audio & re-transcribe…" always works (it supplies its own file), except while something else is already running. */
 export const isReplaceAudioDisabled = (busy: boolean, importing: boolean): boolean => busy || importing;
+
+/** "Regenerate" re-runs summarization for the active tab; disabled while anything is generating/loading/importing/live. */
+export const isRegenerateDisabled = (
+  summarizing: boolean,
+  summaryLoading: boolean,
+  importing: boolean,
+  isLive: boolean,
+  generatingElsewhere: boolean,
+): boolean => summarizing || summaryLoading || importing || isLive || generatingElsewhere;
 
 /** "Detect speakers" needs the diarization models AND a system-audio track, and never runs alongside anything else — including a recording still in progress, since diarization needs the finished system-audio track. */
 export const isDiarizeDisabled = (
@@ -287,3 +318,83 @@ export const findUnloadedSummaryRequest = (
   }
   return { meetingId: meeting.id, template: tab, language };
 };
+
+/** A focus-draft change from the instructions editor, tagged with the template (tab) it was made against. */
+export interface SummaryDraftChange {
+  readonly template: string;
+  readonly draft: SummaryInstructionsDraft;
+}
+
+/** The active tab's focus draft; the default draft (empty text, general included) when none was ever saved. */
+export const findSummaryDraft = (
+  drafts: ReadonlyMap<string, SummaryInstructionsDraft>,
+  template: string,
+): SummaryInstructionsDraft => drafts.get(template) ?? DEFAULT_SUMMARY_INSTRUCTIONS_DRAFT;
+
+/**
+ * Single-line preview of the general guidelines for the instructions editor's
+ * hint: whitespace collapsed, truncated at ~`maxLength` chars with an
+ * ellipsis. `''` for empty guidelines — the editor never shows placeholder
+ * content.
+ */
+export const buildGuidelinesPreview = (guidelines: string, maxLength = 80): string => {
+  const collapsed = guidelines.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= maxLength) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, maxLength).trimEnd()}…`;
+};
+
+/**
+ * Contextual copy for the inline regenerate confirm strip. Varies by draft
+ * state so the strip always names what the next run will use: custom focus
+ * text when the user wrote some (plus the general guidelines when those are
+ * both included and non-empty), the guidelines preview when only those
+ * apply, and a plain default-settings line otherwise. Pure — no framework
+ * deps, safe for the pane's `OnPush` computed.
+ */
+export const buildRegenerateHint = (draft: SummaryInstructionsDraft, guidelinesPreview: string): string => {
+  const focus = draft.text.trim();
+  if (focus !== '') {
+    return draft.includeGeneral && guidelinesPreview !== ''
+      ? `Regenerate using your instructions (“${focus}”) plus general guidelines: ${guidelinesPreview}`
+      : `Regenerate using your instructions (“${focus}”)`;
+  }
+  if (draft.includeGeneral && guidelinesPreview !== '') {
+    return `Regenerate using general guidelines: ${guidelinesPreview}`;
+  }
+  return 'Regenerate from the current transcript with default settings.';
+};
+
+/** Heading date for the pane title; `''` with no meeting selected. */
+export const computeHeadingDate = (meeting: Meeting | undefined): string =>
+  meeting ? formatMeetingHeadingDate(meeting.createdAt) : '';
+
+/** Frozen fallback registry so the speaker-names input never allocates a fresh object per CD pass. */
+const EMPTY_SPEAKER_NAMES: Readonly<Record<string, string>> = Object.freeze({});
+
+/** The selected meeting's speaker-name registry, with a FROZEN stable fallback. */
+export const computeSpeakerNamesRegistry = (meeting: Meeting | undefined): Readonly<Record<string, string>> =>
+  meeting?.speakerNames ?? EMPTY_SPEAKER_NAMES;
+
+/** Duration for a saved meeting, capture source while live — never a fabricated speaker count or language. */
+export const computeMetaLine = (
+  isLive: boolean,
+  effectiveCaptureLabel: string,
+  meeting: Meeting | undefined,
+): string => {
+  if (isLive) {
+    return `Recording · ${effectiveCaptureLabel}`;
+  }
+  return meeting ? formatMinutesLong(meeting.durationSec) : '';
+};
+
+/** Display label of the active summary tab's template; falls back to the raw tab name. */
+export const computeActiveTemplateLabel = (templates: readonly SummaryTemplate[], tab: string): string => {
+  const template = templates.find((candidate) => candidate.name === tab);
+  return template ? formatTemplateLabel(template) : tab;
+};
+
+/** Label of the selected summary language; falls back to the raw code when the list hasn't loaded. */
+export const computeActiveLanguageLabel = (languages: readonly SummaryLanguage[], code: string): string =>
+  languages.find((language) => language.code === code)?.label ?? code;

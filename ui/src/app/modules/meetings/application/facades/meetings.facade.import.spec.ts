@@ -15,6 +15,7 @@ import { SummarizerPort } from '../../core/ports/summarizer.port';
 import { TemplateRepositoryPort } from '../../core/ports/template-repository.port';
 import { TranscriberPort } from '../../core/ports/transcriber.port';
 import { provideMeetings } from '../../meetings.providers';
+import { FINAL_BATCH_MS } from '../stores/meetings-store-wiring.support';
 import { MeetingsStore } from '../stores/meetings.store';
 import { InMemoryAppInfoFake } from '../testing/in-memory-app-info.fake';
 import { InMemoryAudioImportFake } from '../testing/in-memory-audio-import.fake';
@@ -67,6 +68,10 @@ describe('MeetingsFacade import', () => {
   let transcriber: InMemoryTranscriberFake;
 
   beforeEach(() => {
+    // Fake timers BEFORE the facade/store graph is constructed: the finals
+    // batch window (`bufferTime(FINAL_BATCH_MS)`) schedules its flush timer
+    // at subscribe time, so the clock must already be faked at injection.
+    vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [
         provideMeetings(),
@@ -89,6 +94,10 @@ describe('MeetingsFacade import', () => {
     transcriber = TestBed.inject(TranscriberPort) as InMemoryTranscriberFake;
     audioImport.seed(IMPORTED_MEETING);
     store.setSelectedMeeting(PREVIOUSLY_SELECTED_MEETING);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('importAudio', () => {
@@ -214,6 +223,7 @@ describe('MeetingsFacade import', () => {
         meetingId: PREVIOUSLY_SELECTED_MEETING.id,
         segment: transcriptSegment({ startSec: 0, endSec: 1, text: 'stale leftover' }),
       });
+      vi.advanceTimersByTime(FINAL_BATCH_MS);
       expect(facade.finalizedSegments().length).toBe(1);
 
       let resolveImport!: (meeting: Meeting) => void;
@@ -232,6 +242,7 @@ describe('MeetingsFacade import', () => {
         meetingId: IMPORTED_MEETING.id,
         segment: transcriptSegment({ startSec: 0, endSec: 2, text: 'live during ingest' }),
       });
+      vi.advanceTimersByTime(FINAL_BATCH_MS);
       expect(facade.finalizedSegments().map((segment) => segment.text)).toEqual(['live during ingest']);
 
       resolveImport(IMPORTED_MEETING);

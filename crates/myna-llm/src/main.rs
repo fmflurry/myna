@@ -143,5 +143,8 @@ fn build_render_context(
         duration: duration.unwrap_or_default(),
         title: title.unwrap_or_default(),
         language: language_label.to_string(),
+        // The CLI exposes no instruction flags yet; user instructions are a
+        // GUI (Phase 2) concern.
+        instructions: None,
     })
 }

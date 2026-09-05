@@ -27,7 +27,7 @@
       [playbackRate]="playbackRate()"
       (play)="onPlay()"
       (pause)="onPause()"
-      (ended)="onEnded()"
+      (ended)="onEnded($event)"
       (timeupdate)="onTimeUpdate()"
       (durationchange)="onDurationChange()"
       (error)="onMediaError()"

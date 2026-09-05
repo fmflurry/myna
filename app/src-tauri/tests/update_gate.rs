@@ -174,7 +174,7 @@ fn manual_bypasses_the_throttle_but_not_the_consent_gate() {
 }
 
 #[test]
-fn last_check_at_is_stamped_even_when_the_fetch_fails() {
+fn failed_fetch_leaves_last_check_at_untouched_so_autos_retry_soon() {
     let fetcher = RecordingFetcher::new(CannedOutcome::Failed("network unreachable".to_string()));
     let now = OffsetDateTime::now_utc();
     let mut prefs = prefs_with(UpdateConsent::Granted, None);
@@ -183,9 +183,35 @@ fn last_check_at_is_stamped_even_when_the_fetch_fails() {
 
     assert_eq!(fetcher.call_count(), 1);
     assert_eq!(
+        prefs.last_check_at, None,
+        "a failed fetch must not stamp last_check_at, or the next automatic check would be suppressed for 24h"
+    );
+    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Failed);
+
+    // The very next automatic check retries instead of being throttled.
+    let soon = now + Duration::minutes(5);
+    decide_and_check(&fetcher, &mut prefs, false, soon, false);
+    assert_eq!(
+        fetcher.call_count(),
+        2,
+        "failed autos must retry soon, not wait out the 24h success throttle"
+    );
+}
+
+#[test]
+fn failed_fetch_preserves_a_prior_success_timestamp() {
+    let fetcher = RecordingFetcher::new(CannedOutcome::Failed("network unreachable".to_string()));
+    let now = OffsetDateTime::now_utc();
+    let prior = now - Duration::hours(25);
+    let mut prefs = prefs_with(UpdateConsent::Granted, Some(prior));
+
+    let dto = decide_and_check(&fetcher, &mut prefs, false, now, false);
+
+    assert_eq!(fetcher.call_count(), 1);
+    assert_eq!(
         prefs.last_check_at,
-        Some(now),
-        "last_check_at must be stamped after a failed fetch, to avoid a retry storm"
+        Some(prior),
+        "a failed fetch must leave a prior success timestamp untouched, not clear or refresh it"
     );
     assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Failed);
 }

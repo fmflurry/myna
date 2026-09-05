@@ -1,6 +1,6 @@
 //! WAV file loading for offline decode.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use hound::{SampleFormat, WavReader, WavSpec};
 
@@ -20,6 +20,53 @@ pub fn read_wav_to_f32(path: &Path) -> Result<(Vec<f32>, u32), SttError> {
     let mono = downmix_to_mono(samples, spec.channels as usize);
 
     Ok((mono, spec.sample_rate))
+}
+
+/// Reads a base WAV and its sequential `.part-0002.wav` companions into one
+/// chronological mono sample stream.
+pub fn read_wav_parts_to_f32(path: &Path) -> Result<(Vec<f32>, u32), SttError> {
+    let mut samples = Vec::new();
+    let mut part_number = 1_usize;
+    let mut sample_rate = None;
+
+    loop {
+        let part_path = segmented_part_path(path, part_number)?;
+        if part_number > 1 && !part_path.exists() {
+            break;
+        }
+        let (part_samples, part_rate) = read_wav_to_f32(&part_path)?;
+        if let Some(expected_rate) = sample_rate {
+            if part_rate != expected_rate {
+                return Err(SttError::Wav(format!(
+                    "segmented WAV part {} has sample rate {part_rate}, expected {expected_rate}",
+                    part_path.display()
+                )));
+            }
+        } else {
+            sample_rate = Some(part_rate);
+        }
+        samples.extend(part_samples);
+        part_number += 1;
+    }
+
+    Ok((
+        samples,
+        sample_rate.expect("the base WAV is always read first"),
+    ))
+}
+
+fn segmented_part_path(base_path: &Path, part_number: usize) -> Result<PathBuf, SttError> {
+    if part_number == 1 {
+        return Ok(base_path.to_path_buf());
+    }
+    let stem = base_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| {
+            SttError::Wav("segmented WAV base path must have a UTF-8 file stem".to_string())
+        })?;
+    let parent = base_path.parent().unwrap_or_else(|| Path::new(""));
+    Ok(parent.join(format!("{stem}.part-{part_number:04}.wav")))
 }
 
 /// Reads every remaining sample as `f32`, normalizing integer PCM in place.

@@ -21,6 +21,7 @@ import {
   PARTIAL_UI_AUDIT_MS,
   SUMMARY_LANGUAGE_PREFERENCE_KEY,
 } from './meetings.store';
+import { FINAL_BATCH_MS } from './meetings-store-wiring.support';
 
 const MEETING_ID = toMeetingId('m-1');
 
@@ -29,7 +30,6 @@ describe('MeetingsStore', () => {
   let recorder: InMemoryRecorderFake;
   let transcriber: InMemoryTranscriberFake;
   let preferences: InMemoryPreferencesFake;
-  let audioImport: InMemoryAudioImportFake;
 
   const configureStore = (sharedPreferences?: InMemoryPreferencesFake) => {
     TestBed.configureTestingModule({
@@ -50,12 +50,16 @@ describe('MeetingsStore', () => {
   };
 
   beforeEach(() => {
+    // Fake timers BEFORE the store is constructed: the finals batch window
+    // (`bufferTime(FINAL_BATCH_MS)` in `meetings-store-wiring.support.ts`)
+    // schedules its recurring flush timer at subscribe time, so installing
+    // fakes after construction would orphan that timer on the real clock.
+    vi.useFakeTimers();
     configureStore();
     store = TestBed.inject(MeetingsStore);
     recorder = TestBed.inject(InMemoryRecorderFake);
     transcriber = TestBed.inject(InMemoryTranscriberFake);
     preferences = TestBed.inject(PreferencesPort) as InMemoryPreferencesFake;
-    audioImport = TestBed.inject(InMemoryAudioImportFake);
   });
 
   afterEach(() => {
@@ -79,14 +83,13 @@ describe('MeetingsStore', () => {
       meetingId: toMeetingId('m-1'),
       segment: transcriptSegment({ startSec: 0, endSec: 1, text: 'Hello' }),
     });
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
 
     expect(store.finalizedSegments().length).toBe(1);
     expect(store.finalizedSegments()[0]?.text).toBe('Hello');
   });
 
   it('renders a burst of finals followed by a trailing partial without dropping any of them', () => {
-    vi.useFakeTimers();
-
     for (let index = 0; index < 5; index += 1) {
       transcriber.emitFinal({
         meetingId: toMeetingId('m-1'),
@@ -94,6 +97,8 @@ describe('MeetingsStore', () => {
       });
     }
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'still speaking', speaker: 'me' });
+    // The audit window also covers the finals batch window (50 ms), so the
+    // whole burst lands in the single flush at the 50 ms mark.
     vi.advanceTimersByTime(PARTIAL_UI_AUDIT_MS);
 
     expect(store.finalizedSegments().length).toBe(5);
@@ -108,8 +113,6 @@ describe('MeetingsStore', () => {
   });
 
   it('replaces the partial with the final once it arrives, keeping the final', () => {
-    vi.useFakeTimers();
-
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'partial in flight', speaker: 'me' });
     vi.advanceTimersByTime(PARTIAL_UI_AUDIT_MS);
     expect(store.partialTextMe()).toBe('partial in flight');
@@ -119,14 +122,15 @@ describe('MeetingsStore', () => {
       segment: transcriptSegment({ startSec: 0, endSec: 1, text: 'partial in flight, finalized' }),
     });
 
+    // The final supersedes the partial synchronously (the `tap` before the
+    // batch window); the segment itself becomes visible at the batch flush.
     expect(store.partialTextMe()).toBe('');
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
     expect(store.finalizedSegments().length).toBe(1);
     expect(store.finalizedSegments()[0]?.text).toBe('partial in flight, finalized');
   });
 
   it('throttles a burst of partials to at most one update per audit window, keeping the latest', () => {
-    vi.useFakeTimers();
-
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'partial 1', speaker: 'me' });
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'partial 2', speaker: 'me' });
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'partial 3', speaker: 'me' });
@@ -141,7 +145,6 @@ describe('MeetingsStore', () => {
   });
 
   it('routes simultaneous "me"/"others" partials into their own slots (an "others:2" sub-identity collapses into "others")', () => {
-    vi.useFakeTimers();
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'I think we should', speaker: 'me' });
     transcriber.emitPartial({ meetingId: toMeetingId('m-1'), text: 'actually I disagree', speaker: 'others:2' });
     vi.advanceTimersByTime(PARTIAL_UI_AUDIT_MS);
@@ -155,6 +158,9 @@ describe('MeetingsStore', () => {
       meetingId: toMeetingId('m-1'),
       segment: transcriptSegment({ startSec: 0, endSec: 1, text: 'immediate final' }),
     });
+    // Finals are never coalesced away the way partials are: the batch window
+    // bounds the store MERGE, not the delivery — every final lands.
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
     expect(store.finalizedSegments().map((segment) => segment.text)).toEqual(['immediate final']);
   });
 
@@ -165,6 +171,7 @@ describe('MeetingsStore', () => {
         segment: transcriptSegment({ startSec: index, endSec: index + 1, text: `Line ${index}` }),
       });
     }
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
 
     const texts = store.finalizedSegments().map((segment) => segment.text);
     expect(texts.length).toBe(20);
@@ -369,32 +376,7 @@ describe('MeetingsStore', () => {
     expect(store.appVersion()).toBe('0.3.1');
   });
 
-  it('starts not importing with no import progress', () => {
-    expect(store.importing()).toBe(false);
-    expect(store.importProgress()).toBeNull();
-  });
-
-  it('reflects setImporting', () => {
-    store.setImporting(true);
-    expect(store.importing()).toBe(true);
-
-    store.setImporting(false);
-    expect(store.importing()).toBe(false);
-  });
-
-  it('reflects a pushed import://progress event onto importProgress', () => {
-    audioImport.emitProgress({ meetingId: MEETING_ID, phase: 'transcribing', processedSec: 12, totalSec: 60 });
-
-    expect(store.importProgress()).toEqual({ meetingId: MEETING_ID, phase: 'transcribing', processedSec: 12, totalSec: 60 });
-  });
-
-  it('resetImport clears both importing and importProgress', () => {
-    store.setImporting(true);
-    audioImport.emitProgress({ meetingId: MEETING_ID, phase: 'converting', processedSec: 1, totalSec: 10 });
-
-    store.resetImport();
-
-    expect(store.importing()).toBe(false);
-    expect(store.importProgress()).toBeNull();
-  });
+  // The import-flag state (`importing`, `importProgress`, `resetImport`) is
+  // covered in `meetings.store.import-progress.spec.ts` — same domain, split
+  // to keep this file under the project's max-lines limit.
 });

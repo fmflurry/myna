@@ -10,6 +10,7 @@ pub mod dto;
 pub mod error;
 pub mod events;
 pub mod ingest;
+pub mod menu;
 pub mod model_init;
 pub mod paths;
 pub mod recovery;
@@ -17,6 +18,7 @@ pub mod session;
 pub mod session_manifest;
 pub mod state;
 pub mod store;
+pub mod summary_prefs;
 pub mod update_prefs;
 
 use std::sync::Arc;
@@ -58,8 +60,13 @@ pub fn run() {
             let folders = FsFolderStore::new(root);
             app.manage(AppState::new(store, folders));
             app.manage(Arc::new(ModelDownloadManager::new()));
+            // Replace tauri's auto-generated default menu (only installed
+            // while `app.menu.is_none()`) with ours: same items, plus
+            // "Settings…" emitting events::MENU_SETTINGS.
+            app.set_menu(menu::build(app.handle())?)?;
             Ok(())
         })
+        .on_menu_event(|app, event| menu::handle(app, &event))
         .invoke_handler(tauri::generate_handler![
             commands::app_info::app_version,
             commands::devices::list_input_devices,
@@ -104,6 +111,9 @@ pub fn run() {
             commands::summary::cancel_summarization,
             commands::summary::get_summary,
             commands::summary::edit_summary,
+            commands::summary::delete_summary,
+            commands::summary::get_summary_guidelines,
+            commands::summary::set_summary_guidelines,
             commands::models::models_status,
             commands::models::start_model_download,
             commands::models::start_diarization_download,

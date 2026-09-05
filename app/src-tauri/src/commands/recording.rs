@@ -30,8 +30,8 @@ use crate::events::{emit_recording_state, ErrorPayload, RecordingStatePayload, A
 use crate::paths;
 use crate::recovery;
 use crate::session::{
-    guard_start, guard_stop, resolve_capture_source, resolve_system_source_id, AudioPaths,
-    CaptureSelection, RecordingSession, RecordingState,
+    guard_start, guard_stop, resolve_bt_safe_source, resolve_capture_source,
+    resolve_system_source_id, AudioPaths, CaptureSelection, RecordingSession, RecordingState,
 };
 use crate::session_manifest::{self, SessionManifest};
 use crate::state::{AppState, StoppingGuard};
@@ -114,14 +114,30 @@ fn start_recording_blocking(
         system: state.store.system_track_path(meeting.id),
         journal_path: state.store.transcript_journal_path(meeting.id),
     };
-    let effective_source = resolve_capture_source(source, myna_audio::system_audio_status());
+    let system_status = myna_audio::system_audio_status();
+    let effective_source = resolve_capture_source(source, system_status.clone());
     let device_info = match effective_source {
         CaptureSource::Microphone | CaptureSource::Mixed => Some(resolve_device(device)?),
         CaptureSource::System => None,
     };
+    let (effective_source, device_info) =
+        route_bluetooth_mic(effective_source, device_info, &system_status);
     let available_system_sources = myna_audio::list_system_audio_sources();
     let effective_system_source_id =
         resolve_system_source_id(system_source, &available_system_sources);
+    // Debug-only route snapshot for the A2DP→SCO hypothesis: effective
+    // source + resolved input + requested system source at capture start.
+    // Device names already appear in the picker — no new PII.
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "myna-app: start_recording (effective source {:?}, device '{}', system_source {:?})",
+        effective_source,
+        device_info
+            .as_ref()
+            .map(|d| d.name.as_str())
+            .unwrap_or("<none>"),
+        effective_system_source_id.as_deref().unwrap_or("<all>")
+    );
     let engine = state.stt_engine(app)?;
     let vad_cfg = VadConfig {
         model_path: paths::models_root(app)
@@ -498,6 +514,62 @@ pub fn get_live_transcript(
     let journal_path = state.store.transcript_journal_path(active_id);
     let transcript = session_manifest::read_journal(&journal_path)?;
     Ok(Some(TranscriptDto::from(transcript)))
+}
+
+/// Bluetooth/HFP guard (A2DP→SCO profile switch): opening a BT mic for
+/// capture collapses live output even though the recorded tracks look loud,
+/// while the system-audio tap alone never touches the input.
+///
+/// When `source` uses the microphone and `device` matches the
+/// [`myna_audio::is_bluetooth_input`] heuristic, prefers an explicit
+/// non-BT/built-in mic (source unchanged), else degrades to tap-only via
+/// [`resolve_bt_safe_source`] (no mic stream — the mic track stays absent
+/// per ADR 0008, never silent). Never silent: both branches log
+/// unconditionally (release builds too), and the degraded source flows into
+/// the manifest and the `recording://state` emissions via `session_source`,
+/// so the UI label stays truthful.
+///
+/// Extracted from [`start_recording_blocking`] (clippy `too_many_lines`).
+fn route_bluetooth_mic(
+    source: CaptureSource,
+    device: Option<DeviceInfo>,
+    system_status: &myna_audio::SystemAudioStatus,
+) -> (CaptureSource, Option<DeviceInfo>) {
+    if !matches!(source, CaptureSource::Microphone | CaptureSource::Mixed) {
+        return (source, device);
+    }
+    let Some(mic) = device.clone() else {
+        return (source, device);
+    };
+    if !myna_audio::is_bluetooth_input(&mic.name) {
+        return (source, device);
+    }
+    let available = myna_audio::list_input_devices().unwrap_or_default();
+    if let Some(safe) = myna_audio::find_non_bluetooth_mic(&available) {
+        eprintln!(
+            "myna-app: input '{}' looks like a Bluetooth/HFP mic \
+             (opening it would switch the headset to call quality) — \
+             capturing from '{}' instead",
+            mic.name, safe.name
+        );
+        return (source, Some(safe.clone()));
+    }
+    let routed = resolve_bt_safe_source(
+        source,
+        system_status.clone(),
+        Some(mic.name.as_str()),
+        false,
+    );
+    if routed != source {
+        eprintln!(
+            "myna-app: input '{}' looks like a Bluetooth/HFP mic and no \
+             non-Bluetooth mic is available — degrading {source:?} to \
+             system-audio-only (no mic track)",
+            mic.name
+        );
+    }
+    let device = if routed != source { None } else { device };
+    (routed, device)
 }
 
 /// Resolves `device` by name, or the host's default input device when

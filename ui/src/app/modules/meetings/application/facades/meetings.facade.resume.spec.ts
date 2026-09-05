@@ -14,6 +14,7 @@ import { SummarizerPort } from '../../core/ports/summarizer.port';
 import { TemplateRepositoryPort } from '../../core/ports/template-repository.port';
 import { TranscriberPort } from '../../core/ports/transcriber.port';
 import { provideMeetings } from '../../meetings.providers';
+import { FINAL_BATCH_MS } from '../stores/meetings-store-wiring.support';
 import { InMemoryAppInfoFake } from '../testing/in-memory-app-info.fake';
 import { InMemoryFileDialogFake } from '../testing/in-memory-file-dialog.fake';
 import { InMemoryMeetingRepositoryFake } from '../testing/in-memory-meeting-repository.fake';
@@ -52,6 +53,10 @@ describe('MeetingsFacade resumeActiveRecording (ADR 0011 re-attach)', () => {
   });
 
   beforeEach(() => {
+    // Fake timers BEFORE the facade/store graph is constructed: the finals
+    // batch window (`bufferTime(FINAL_BATCH_MS)`) schedules its flush timer
+    // at subscribe time, so the clock must already be faked at injection.
+    vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [
         provideMeetings(),
@@ -73,6 +78,10 @@ describe('MeetingsFacade resumeActiveRecording (ADR 0011 re-attach)', () => {
     recorder = TestBed.inject(InMemoryRecorderFake);
     transcriber = TestBed.inject(InMemoryTranscriberFake);
     repository = TestBed.inject(InMemoryMeetingRepositoryFake);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   const stubState = (snapshot: RecordingSnapshot): void => {
@@ -154,11 +163,13 @@ describe('MeetingsFacade resumeActiveRecording (ADR 0011 re-attach)', () => {
     // The live stream delivers the final BEFORE the journal query is folded
     // in — the seed merge is what keeps the overlap from double-rendering.
     transcriber.emitFinal({ meetingId: toMeetingId('m1'), segment: overlapping });
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
     await facade.resumeActiveRecording();
     transcriber.emitFinal({
       meetingId: toMeetingId('m1'),
       segment: transcriptSegment({ startSec: 21, endSec: 24, text: 'Fresh.', speaker: 'others' }),
     });
+    vi.advanceTimersByTime(FINAL_BATCH_MS);
 
     expect(facade.finalizedSegments().map((segment) => segment.text)).toEqual(['Journaled.', 'Fresh.']);
   });

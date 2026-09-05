@@ -28,7 +28,8 @@ fn render_context_carries_attributed_text_not_the_space_joined_full_text() {
     let meeting = Meeting::new("Prompt check").with_transcript(transcript.clone());
 
     // Act
-    let render_ctx = build_render_context(&meeting, "English").expect("meeting has a transcript");
+    let render_ctx =
+        build_render_context(&meeting, "English", None).expect("meeting has a transcript");
 
     // Assert: the prompt gets speaker-attributed lines...
     assert_eq!(render_ctx.transcript, transcript.attributed_text());
@@ -60,7 +61,8 @@ fn render_context_uses_the_meetings_assigned_speaker_name_when_present() {
         .with_speaker_names(speaker_names);
 
     // Act
-    let render_ctx = build_render_context(&meeting, "English").expect("meeting has a transcript");
+    let render_ctx =
+        build_render_context(&meeting, "English", None).expect("meeting has a transcript");
 
     // Assert
     assert_eq!(render_ctx.transcript, "Jean: I'll own the migration.");
@@ -73,7 +75,7 @@ fn build_render_context_fails_when_the_meeting_has_no_transcript_yet() {
     let meeting = Meeting::new("No transcript yet");
 
     // Act
-    let result = build_render_context(&meeting, "English");
+    let result = build_render_context(&meeting, "English", None);
 
     // Assert
     assert!(result.is_err());

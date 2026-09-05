@@ -142,6 +142,28 @@ impl From<TranscriptSegmentInput> for TranscriptSegment {
     }
 }
 
+/// Per-request summary instructions passed FROM the UI as an optional
+/// `summarize_meeting` argument — the inbound counterpart to
+/// [`myna_llm::SummaryInstructions`]. `specific` is the free-text focus for
+/// this one generation; `include_general` decides whether the persisted
+/// general guidelines (`summary_prefs`) join the prompt. It defaults to
+/// `true` so a payload that omits the flag keeps the pre-existing
+/// guidelines-always-apply behavior. Trimming, capping, and the
+/// both-empty collapse happen in `commands::summary::resolve_instructions`,
+/// not here — this shape is wire-only.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SummarizeInstructionsDto {
+    #[serde(default)]
+    pub specific: Option<String>,
+    #[serde(default = "default_true")]
+    pub include_general: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A language available for generated summary output, IPC-facing.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

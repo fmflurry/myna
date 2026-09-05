@@ -164,6 +164,26 @@ describe('UpdateBannerComponent', () => {
     expect(button!.getAttribute('title')).toContain('finish your recording first');
   });
 
+  it('ready: [Restart now] is disabled while a restart is in flight, even with no recording', () => {
+    const fixture = TestBed.createComponent(UpdateBannerComponent);
+    fixture.componentRef.setInput('check', available);
+    fixture.componentRef.setInput('installState', { status: 'ready', version: '0.4.0' });
+    fixture.componentRef.setInput('restarting', true);
+    fixture.detectChanges();
+
+    const button: HTMLButtonElement | null = banner(fixture)!.querySelector<HTMLButtonElement>('.restart');
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(true);
+  });
+
+  it('ready: [Restart now] is enabled when idle — neither recording nor restarting', () => {
+    const fixture = createFixture(available, { status: 'ready', version: '0.4.0' });
+
+    const button: HTMLButtonElement | null = banner(fixture)!.querySelector<HTMLButtonElement>('.restart');
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+  });
+
   it('ready: an empty version string reads "Installed, version unknown"', () => {
     const fixture = createFixture(available, { status: 'ready', version: '' });
 

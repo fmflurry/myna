@@ -85,11 +85,11 @@ fn summary_languages_includes_the_curated_set() {
 /// (`crates/myna-llm` -> repo root -> `models`).
 fn qwen_model_path() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf")
+        .join("../../models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn summarizes_a_french_transcript_and_produces_non_empty_output() {
     // Arrange
     let (_code, label) = resolve(Some("fr"));
@@ -106,6 +106,7 @@ fn summarizes_a_french_transcript_and_produces_non_empty_output() {
         duration: "".to_string(),
         title: "".to_string(),
         language: label.to_string(),
+        instructions: None,
     };
     let rendered = template.render(&ctx);
     let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");
@@ -126,7 +127,7 @@ fn summarizes_a_french_transcript_and_produces_non_empty_output() {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn summarizes_an_english_transcript_and_produces_non_empty_output() {
     // Arrange
     let (_code, label) = resolve(Some("en"));
@@ -143,6 +144,7 @@ fn summarizes_an_english_transcript_and_produces_non_empty_output() {
         duration: "".to_string(),
         title: "".to_string(),
         language: label.to_string(),
+        instructions: None,
     };
     let rendered = template.render(&ctx);
     let summarizer = Summarizer::load(&qwen_model_path()).expect("model should load");

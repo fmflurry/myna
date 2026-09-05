@@ -1,7 +1,7 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter, type ParamMap } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, EMPTY } from 'rxjs';
 import { vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -55,6 +55,8 @@ describe('MeetingsShellPage', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
 
@@ -64,6 +66,11 @@ describe('MeetingsShellPage', () => {
   const loadDevices = vi.fn(async () => undefined);
   const checkSystemAudio = vi.fn(async () => undefined);
   const loadSummaryLanguages = vi.fn(async () => undefined);
+  const loadSummaryGuidelines = vi.fn(async () => undefined);
+  const setSummaryGuidelines = vi.fn(async () => undefined);
+  const summaryGuidelines = signal("");
+  const summaryInstructionDraft = () => ({ text: "", includeGeneral: true });
+  const setSummaryInstructionDraft = vi.fn();
   const loadAppVersion = vi.fn(async () => undefined);
   const loadAudioSources = vi.fn(async () => undefined);
   const selectAudioSource = vi.fn((id: string) => {
@@ -112,6 +119,8 @@ describe('MeetingsShellPage', () => {
   const requestSystemAudioPermission = vi.fn(async () => undefined);
   const setSplitRatio = vi.fn((ratio: number) => void ratio);
   const setTranscriptCollapsed = vi.fn((collapsed: boolean) => void collapsed);
+  const setSidebarWidth = vi.fn((width: number) => void width);
+  const setSidebarCollapsed = vi.fn((collapsed: boolean) => void collapsed);
   const folders = signal<readonly never[]>([]);
   const expandedFolders = signal<ReadonlySet<never>>(new Set());
   const loadFolders = vi.fn(async () => undefined);
@@ -124,14 +133,16 @@ describe('MeetingsShellPage', () => {
   const toggleFolderExpanded = vi.fn((id: string) => void id);
 
   const facadeStub = {
+    settingsRequests: () => EMPTY,
     activeRecording: signal(null),
     resumeActiveRecording: vi.fn(async () => undefined),
     meetings, selectedMeeting, modelsStatus, devices, selectedDevice, recordingState, level,
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed,
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress, setSplitRatio, setTranscriptCollapsed, setSidebarWidth, setSidebarCollapsed,
     loadMeetings, loadTemplates, checkModels, loadDevices, checkSystemAudio, loadSummaryLanguages,
+    loadSummaryGuidelines, setSummaryGuidelines, summaryGuidelines, summaryInstructionDraft, setSummaryInstructionDraft,
     loadAppVersion, loadAudioSources, loadSummary, openMeeting, startRecording, stopRecording,
     cancelRecording, deleteMeeting, renameMeeting, summarizeMeeting, cancelSummarization,
     exportMeeting, selectDevice, selectCaptureSource, selectAudioSource, selectSummaryLanguage,
@@ -160,7 +171,7 @@ modelDownload: signal(undefined),
       startRecording, stopRecording, cancelRecording, deleteMeeting, renameMeeting,
       summarizeMeeting, cancelSummarization, exportMeeting, selectDevice, selectCaptureSource,
       selectAudioSource, selectSummaryLanguage, requestSystemAudioPermission,
-      setSplitRatio, setTranscriptCollapsed,
+      setSplitRatio, setTranscriptCollapsed, setSidebarWidth, setSidebarCollapsed,
     }).forEach((fn) => fn.mockClear());
 
     TestBed.configureTestingModule({

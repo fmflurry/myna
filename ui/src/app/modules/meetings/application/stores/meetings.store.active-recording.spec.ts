@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 
 import { toMeetingId } from '../../core/models/meeting.model';
 import { PreferencesPort } from '../../core/ports/preferences.port';
@@ -11,6 +12,7 @@ import { InMemoryRecorderFake } from '../testing/in-memory-recorder.fake';
 import { InMemorySummarizerFake } from '../testing/in-memory-summarizer.fake';
 import { InMemoryTranscriberFake } from '../testing/in-memory-transcriber.fake';
 import { MeetingsStore } from './meetings.store';
+import { FINAL_BATCH_MS } from './meetings-store-wiring.support';
 
 /**
  * ADR 0011 Phase 2 (UI re-attach) store surface: the `ACTIVE_RECORDING` slot
@@ -24,6 +26,10 @@ describe('MeetingsStore active recording (ADR 0011 re-attach)', () => {
   let transcriber: InMemoryTranscriberFake;
 
   beforeEach(() => {
+    // Fake timers BEFORE store construction: the finals batch window
+    // (`bufferTime(FINAL_BATCH_MS)`) schedules its flush timer at subscribe
+    // time, so the clock must already be faked when the store wires events.
+    vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [
         MeetingsStore,
@@ -38,6 +44,10 @@ describe('MeetingsStore active recording (ADR 0011 re-attach)', () => {
     store = TestBed.inject(MeetingsStore);
     recorder = TestBed.inject(InMemoryRecorderFake);
     transcriber = TestBed.inject(InMemoryTranscriberFake);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('ACTIVE_RECORDING slot', () => {
@@ -141,6 +151,7 @@ describe('MeetingsStore active recording (ADR 0011 re-attach)', () => {
         meetingId: toMeetingId('m1'),
         segment: transcriptSegment({ startSec: 10, endSec: 11, text: 'live', speaker: 'me' }),
       });
+      vi.advanceTimersByTime(FINAL_BATCH_MS);
 
       expect(store.finalizedSegments().map((segment) => segment.text)).toEqual(['seeded', 'live']);
     });

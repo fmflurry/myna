@@ -147,7 +147,7 @@ fn cancel_import_sets_the_shared_cancellation_flag() {
 // --- ModelSlot: evictable model caches (Phase 3 of the memory-leak fix) ---
 //
 // The pre-Phase-3 `AppState` held each model in a `OnceLock` that was
-// never cleared, so every loaded model's RAM (~2.5 GB for Qwen, ~1 GB for
+// never cleared, so every loaded model's RAM (~5 GB for Qwen, ~1 GB for
 // Parakeet, plus the diarizer pair) leaked for the whole app lifetime.
 // `ModelSlot` replaces those caches with evictable slots; the `Weak`
 // handles below are the proof that a "release" actually DROPS the model
@@ -333,7 +333,7 @@ const RSS_CHILD: &str = "MYNA_RSS_RELEASE_CHILD";
 
 fn qwen_model_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf")
+        .join("../../models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
 }
 
 /// Current process RSS in MB, via `ps` (no sysinfo dev-dependency needed
@@ -351,7 +351,7 @@ fn rss_mb(pid: u32) -> u64 {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn summarizer_reloads_after_being_dropped() {
     // CRITICAL precondition for end-of-operation release: a second
     // `Summarizer::load` in the same process must succeed after the first
@@ -369,7 +369,7 @@ fn summarizer_reloads_after_being_dropped() {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn dropping_the_summarizer_returns_rss_to_the_os() {
     let path = qwen_model_path();
     if !path.is_file() {

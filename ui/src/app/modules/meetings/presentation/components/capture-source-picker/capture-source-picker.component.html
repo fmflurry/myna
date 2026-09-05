@@ -40,3 +40,31 @@
     (once from system audio, once bleeding into the mic).
   </p>
 }
+
+@if (showBluetoothHint()) {
+  <p class="bluetooth-hint" role="status">
+    “{{ selectedDeviceName() }}” looks like a Bluetooth headset mic. Opening it
+    switches the headset to call quality and quiets what you hear — use system
+    audio only, or switch to a built-in mic instead.
+  </p>
+  <div class="bluetooth-actions">
+    <button
+      type="button"
+      class="bluetooth-action"
+      [disabled]="disabled() || !systemAudioSelectable()"
+      (click)="onUseSystemOnly()"
+    >
+      Use system only
+    </button>
+    @if (fallbackMicName(); as fallback) {
+      <button
+        type="button"
+        class="bluetooth-action"
+        [disabled]="disabled()"
+        (click)="onUseFallbackMic()"
+      >
+        Switch to {{ fallback }}
+      </button>
+    }
+  </div>
+}

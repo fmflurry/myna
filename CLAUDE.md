@@ -50,10 +50,10 @@ hf download csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 \
 wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
   -O models/silero-vad/silero_vad.onnx
 
-# Qwen2.5 Instruct GGUF (Q4_K_M, ~1.9 GB) — official Qwen repo
-hf download Qwen/Qwen2.5-3B-Instruct-GGUF \
-  --include "qwen2.5-3b-instruct-q4_k_m.gguf" \
-  --local-dir models/qwen2.5-3b-instruct
+# Qwen2.5 Instruct GGUF (Q4_K_M, ~4.7 GB, shipped as two shards) — official Qwen repo
+hf download Qwen/Qwen2.5-7B-Instruct-GGUF \
+  --include "qwen2.5-7b-instruct-q4_k_m-*.gguf" \
+  --local-dir models/qwen2.5-7b-instruct
 ```
 
 **Run STT** (sherpa-onnx, VAD simulated streaming):
@@ -71,12 +71,12 @@ cargo run -p myna-stt -- --model models/parakeet-tdt-0.6b-v3-int8 --vad-model mo
 ```bash
 # One-shot summarization from a template
 cargo run -p myna-llm -- summarize \
-  --model models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf \
+  --model models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf \
   --template templates/key-points.json \
   --transcript recordings/meeting.txt
 
 # Dev-only: llama-server for interactive prompt testing
-llama-server -m models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf -c 32768 --port 8080
+llama-server -m models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf -c 32768 --port 8080
 ```
 
 ## Capture Sources

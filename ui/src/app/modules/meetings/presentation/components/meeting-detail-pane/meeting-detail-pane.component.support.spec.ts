@@ -3,6 +3,7 @@ import {
   BUILT_IN_TEMPLATE_TAB_ORDER,
   diarizeDisabledReason,
   isDiarizeDisabled,
+  isRegenerateDisabled,
   sortTemplatesForDisplay,
 } from './meeting-detail-pane.component.support';
 
@@ -118,5 +119,25 @@ describe('diarizeDisabledReason', () => {
     expect(diarizeDisabledReason(false, false, '/Users/me/myna/models', true)).toBe(
       'Speaker detection runs on the finished recording — available once you stop recording.',
     );
+  });
+});
+
+describe('isRegenerateDisabled', () => {
+  it('is enabled when nothing is generating, loading, importing, or live', () => {
+    expect(isRegenerateDisabled(false, false, false, false, false)).toBe(false);
+  });
+
+  it('is disabled while a summary is generating on the active tab', () => {
+    expect(isRegenerateDisabled(true, false, false, false, false)).toBe(true);
+  });
+
+  it('is disabled while another template generates elsewhere', () => {
+    expect(isRegenerateDisabled(false, false, false, false, true)).toBe(true);
+  });
+
+  it('is disabled while the active summary is loading, importing, or live', () => {
+    expect(isRegenerateDisabled(false, true, false, false, false)).toBe(true);
+    expect(isRegenerateDisabled(false, false, true, false, false)).toBe(true);
+    expect(isRegenerateDisabled(false, false, false, true, false)).toBe(true);
   });
 });

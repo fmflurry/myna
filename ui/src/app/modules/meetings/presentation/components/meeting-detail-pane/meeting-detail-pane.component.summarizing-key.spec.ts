@@ -147,6 +147,14 @@ describe('MeetingDetailPaneComponent summarizingKey', () => {
     const emitted: string[] = [];
     fixture.componentInstance.summarizeRequested.subscribe((name) => emitted.push(name));
     button.click();
+    fixture.detectChanges();
+
+    expect(emitted).toEqual([]);
+    expect(
+      fixture.nativeElement.querySelector('app-regenerate-instructions-dialog [role="dialog"]'),
+    ).toBeTruthy();
+    (fixture.nativeElement.querySelector('app-regenerate-instructions-dialog .confirm') as HTMLButtonElement).click();
+    fixture.detectChanges();
     expect(emitted).toEqual(['decisions']);
   });
 });

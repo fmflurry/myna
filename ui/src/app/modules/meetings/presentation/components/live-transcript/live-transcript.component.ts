@@ -25,6 +25,9 @@ const BOTTOM_TOLERANCE_PX = 24;
 /** Size of the fixed CSS accent palette; see `.speaker-accent-N` in the stylesheet. */
 const SPEAKER_ACCENT_PALETTE_SIZE = 6;
 
+/** Maximum number of finalized rows retained in the live DOM. */
+const LIVE_WINDOW_SIZE = 250;
+
 /**
  * Finalized segments and the two streaming partials (one per speaker slot)
  * are explicit inputs — never a single merged `Transcript` with a sentinel
@@ -46,6 +49,27 @@ export class LiveTranscriptComponent implements OnDestroy {
   readonly isEmpty = computed(
     () => this.finalizedSegments().length === 0 && !this.partialTextMe() && !this.partialTextOthers(),
   );
+
+  /** Start index selected by explicit earlier-page navigation. */
+  private readonly selectedWindowStart = signal(0);
+
+  /** Finalized rows in the current bounded live page; the complete input remains untouched. */
+  readonly visibleFinalizedSegments = computed(() => {
+    const segments = this.finalizedSegments();
+    const tailStart = this.tailStart(segments.length);
+    const windowStart = this.pinnedToBottom() ? tailStart : Math.min(this.selectedWindowStart(), tailStart);
+    return segments.slice(windowStart, windowStart + LIVE_WINDOW_SIZE);
+  });
+
+  readonly canShowEarlier = computed(() => {
+    const segments = this.finalizedSegments();
+    const windowStart = this.pinnedToBottom()
+      ? this.tailStart(segments.length)
+      : Math.min(this.selectedWindowStart(), this.tailStart(segments.length));
+    return windowStart > 0;
+  });
+
+  readonly canShowNewer = computed(() => !this.pinnedToBottom());
 
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
 
@@ -95,7 +119,31 @@ export class LiveTranscriptComponent implements OnDestroy {
   onScroll(event: Event): void {
     const element = event.target as HTMLElement;
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    this.pinnedToBottom.set(distanceFromBottom <= BOTTOM_TOLERANCE_PX);
+    const isPinnedToBottom = distanceFromBottom <= BOTTOM_TOLERANCE_PX;
+    if (this.pinnedToBottom() && !isPinnedToBottom) {
+      this.selectedWindowStart.set(this.tailStart(this.finalizedSegments().length));
+    }
+    this.pinnedToBottom.set(isPinnedToBottom);
+  }
+
+  showEarlier(): void {
+    const currentStart = this.currentWindowStart();
+    this.selectedWindowStart.set(Math.max(0, currentStart - LIVE_WINDOW_SIZE));
+    this.pinnedToBottom.set(false);
+  }
+
+  showNewer(): void {
+    this.selectedWindowStart.set(this.tailStart(this.finalizedSegments().length));
+    this.pinnedToBottom.set(true);
+  }
+
+  private currentWindowStart(): number {
+    const tailStart = this.tailStart(this.finalizedSegments().length);
+    return this.pinnedToBottom() ? tailStart : Math.min(this.selectedWindowStart(), tailStart);
+  }
+
+  private tailStart(segmentCount: number): number {
+    return Math.max(0, segmentCount - LIVE_WINDOW_SIZE);
   }
 
   formatTimestamp(seconds: number): string {

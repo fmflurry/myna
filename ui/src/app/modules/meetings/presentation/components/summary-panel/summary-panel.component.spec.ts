@@ -112,13 +112,28 @@ describe('SummaryPanelComponent', () => {
     expect(fixture.nativeElement.querySelector('.markdown')).toBeTruthy();
   });
 
-  it('shows the Edit button when editable', () => {
+  it('owns no Edit button — the toolbar forwards into beginEdit() instead', () => {
     const fixture = TestBed.createComponent(SummaryPanelComponent);
     fixture.componentRef.setInput('markdown', '# Points');
     fixture.componentRef.setInput('editable', true);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('.edit')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('.edit')).toBeNull();
+    fixture.componentInstance.beginEdit();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.summary-input')).toBeTruthy();
+  });
+
+  it('beginEdit() is a no-op unless the parent opts into editable', () => {
+    const fixture = TestBed.createComponent(SummaryPanelComponent);
+    fixture.componentRef.setInput('markdown', '# Points');
+    fixture.detectChanges();
+
+    fixture.componentInstance.beginEdit();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.summary-input')).toBeNull();
   });
 
   it('entering edit mode shows a textarea pre-filled with the full current markdown', () => {
@@ -127,7 +142,7 @@ describe('SummaryPanelComponent', () => {
     fixture.componentRef.setInput('editable', true);
     fixture.detectChanges();
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
 
     const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.summary-input');
@@ -144,7 +159,7 @@ describe('SummaryPanelComponent', () => {
     const emitted: string[] = [];
     fixture.componentInstance.summaryEdited.subscribe((markdown) => emitted.push(markdown));
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
     const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.summary-input');
     textarea.value = '  # Rewritten points  ';
@@ -165,7 +180,7 @@ describe('SummaryPanelComponent', () => {
     const emitted: string[] = [];
     fixture.componentInstance.summaryEdited.subscribe((markdown) => emitted.push(markdown));
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
     fixture.nativeElement.querySelector('.done').click();
     fixture.detectChanges();
@@ -183,7 +198,7 @@ describe('SummaryPanelComponent', () => {
     const emitted: string[] = [];
     fixture.componentInstance.summaryEdited.subscribe((markdown) => emitted.push(markdown));
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
     const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.summary-input');
     textarea.value = '# Discarded';
@@ -204,7 +219,7 @@ describe('SummaryPanelComponent', () => {
     const emitted: string[] = [];
     fixture.componentInstance.summaryEdited.subscribe((markdown) => emitted.push(markdown));
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
     const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector('.summary-input');
     textarea.value = '# Discarded';
@@ -230,7 +245,7 @@ describe('SummaryPanelComponent', () => {
     fixture.detectChanges();
     document.body.appendChild(fixture.nativeElement);
 
-    fixture.nativeElement.querySelector('.edit').click();
+    fixture.componentInstance.beginEdit();
     fixture.detectChanges();
     await fixture.whenStable();
 

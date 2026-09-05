@@ -7,6 +7,11 @@ import type { AudioSource } from '../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { Meeting } from '../../core/models/meeting.model';
 import { toMeetingId } from '../../core/models/meeting.model';
+import type {
+  RecordingHealthEvent,
+  StopAcknowledgement,
+  StopPhase,
+} from '../../core/models/recording-lifecycle.model';
 import type { RecordingState } from '../../core/models/recording-state.model';
 import { RecorderPort } from '../../core/ports/recorder.port';
 import type { RecordingSnapshot } from '../../core/ports/recorder.port';
@@ -35,13 +40,21 @@ export class TauriRecorderAdapter extends RecorderPort {
     return mapMeetingDtoToDomain(dto);
   }
 
+  /**
+   * Stop-phase contract: `stop_recording` resolves with the finalized
+   * `MeetingDto` (duration + transcript + track flags) — mapped here to the
+   * domain `Meeting` and mirrored into the store by the facade. The
+   * `recording://completed` event does not exist on the backend (no such
+   * constant in `events.rs`); the completed stream is retained only as a
+   * best-effort mirror for fakes/legacy emitters.
+   */
   override async stop(): Promise<Meeting> {
     const dto = await invokeCommand('stop_recording', {});
     return mapMeetingDtoToDomain(dto);
   }
 
-  override async cancel(): Promise<void> {
-    await invokeCommand('cancel_recording', {});
+  override async cancel(): Promise<StopAcknowledgement> {
+    return invokeCommand('cancel_recording', {});
   }
 
   override async state(): Promise<RecordingSnapshot> {
@@ -64,6 +77,20 @@ export class TauriRecorderAdapter extends RecorderPort {
   override effectiveSystemSourceChanges(): Observable<AudioSource | null> {
     return onEvent('recording://state').pipe(
       map((dto) => (dto.effectiveSystemSource ? toAudioSource(dto.effectiveSystemSource) : null)),
+    );
+  }
+
+  override stopProgressChanges(): Observable<StopPhase> {
+    return onEvent('recording://stop-progress').pipe(map((dto) => dto.phase));
+  }
+
+  override completedMeetings(): Observable<Meeting> {
+    return onEvent('recording://completed').pipe(map((dto) => mapMeetingDtoToDomain(dto.meeting)));
+  }
+
+  override healthChanges(): Observable<RecordingHealthEvent> {
+    return onEvent('recording://health').pipe(
+      map((dto) => ({ category: dto.category, severity: dto.severity, message: dto.message })),
     );
   }
 

@@ -76,6 +76,8 @@ export class UpdateBannerComponent {
   readonly recording = input(false);
   /** Message from a rejected `restartApp()`, surfaced by the shell handler; `null` hides it. */
   readonly restartError = input<string | null>(null);
+  /** True while a restart request is in flight — [Restart now] stays disabled; cleared only on rejection (success never resolves). */
+  readonly restarting = input(false);
 
   readonly dismissed = output<void>();
   readonly updateRequested = output<void>();

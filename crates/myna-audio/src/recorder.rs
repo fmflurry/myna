@@ -104,6 +104,29 @@ impl WavRecorder {
         Ok(())
     }
 
+    /// Writes normalized f32 samples quantized round-to-nearest at the
+    /// signed-PCM full scale (`2^15`) that the STT reader (`read_wav_to_f32`)
+    /// decodes with, so every sample round-trips within half an LSB.
+    ///
+    /// This helper exists for [`crate::SegmentedWavRecorder`], whose
+    /// readback contract is value-faithful concatenation across parts.
+    /// [`Self::write`] deliberately keeps its historical scale-and-truncate
+    /// quantization so existing recordings and behavior are unchanged.
+    pub(crate) fn write_round_trip(&mut self, samples: &[f32]) -> Result<(), AudioError> {
+        const FULL_SCALE: f32 = (i16::MAX as i32 + 1) as f32;
+        for &sample in samples {
+            let clamped = sample.clamp(-1.0, 1.0);
+            let pcm = (clamped * FULL_SCALE)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+            self.writer
+                .write_sample(pcm)
+                .map_err(|err| AudioError::Wav(err.to_string()))?;
+        }
+        self.samples_written += samples.len() as u64;
+        Ok(())
+    }
+
     /// Flushes and closes the WAV file, returning summary statistics.
     pub fn finalize(self) -> Result<RecordingStats, AudioError> {
         let channels = self.spec.channels.max(1) as u64;

@@ -1,0 +1,74 @@
+:host {
+  display: block;
+}
+
+.regenerate-instructions-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: var(--z-modal);
+}
+
+.regenerate-instructions-dialog {
+  position: relative;
+  max-width: 32rem;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-5);
+}
+
+h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 1.15rem;
+}
+
+p {
+  margin: 0 0 var(--space-3);
+  line-height: var(--line-height-relaxed);
+}
+
+.hint {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+
+.confirm,
+.cancel {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.confirm {
+  border: none;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-contrast);
+  font-weight: 600;
+}
+
+.confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cancel {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}

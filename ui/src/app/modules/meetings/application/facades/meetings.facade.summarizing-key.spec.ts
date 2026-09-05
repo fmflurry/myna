@@ -23,6 +23,7 @@ import { InMemorySummarizerFake } from '../testing/in-memory-summarizer.fake';
 import { InMemoryTemplateRepositoryFake } from '../testing/in-memory-template-repository.fake';
 import { InMemoryTranscriberFake } from '../testing/in-memory-transcriber.fake';
 import { SummarizeMeetingUseCase } from '../use-cases/summarize-meeting.usecase';
+import { MeetingsStore } from '../stores/meetings.store';
 import { MeetingsFacade } from './meetings.facade';
 
 const FAKE_PORT_OVERRIDES = [
@@ -125,6 +126,72 @@ describe('MeetingsFacade summarizingKey', () => {
       prompt: 'p',
     });
     expect(facade.summarizingKey()).not.toBeNull();
+
+    await facade.cancelSummarization();
+
+    expect(facade.summarizingKey()).toBeNull();
+  });
+
+  it('regenerate over an existing stale summary upserts the fresh result and clears stale', async () => {
+    const store = TestBed.inject(MeetingsStore);
+    const id = toMeetingId('m-1');
+    store.setSelectedMeeting({
+      id,
+      title: 'Standup',
+      createdAt: new Date(),
+      durationSec: 60,
+      transcript: { segments: [] },
+      summaries: [{ template: 'meeting-notes', markdown: '# Old', createdAt: new Date(), language: 'en', stale: true }],
+      archived: false,
+      hasAudio: false,
+      hasSystemTrack: false,
+      droppedAudioChunks: 0,
+    });
+    facade.selectSummaryLanguage('en');
+    const useCase = TestBed.inject(SummarizeMeetingUseCase);
+    vi.spyOn(useCase, 'summarize').mockResolvedValue({
+      template: 'meeting-notes',
+      markdown: '# Fresh',
+      createdAt: new Date(),
+      language: 'en',
+      stale: false,
+    });
+
+    await facade.summarizeMeeting(id, { name: 'meeting-notes', description: 'Meeting notes', prompt: 'p' });
+
+    const summaries = facade.selectedMeeting()?.summaries ?? [];
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]?.markdown).toBe('# Fresh');
+    expect(summaries[0]?.stale).toBe(false);
+    expect(facade.summarizingKey()).toBeNull();
+    expect(facade.error()).toBeUndefined();
+  });
+
+  it('regenerate failure lands in the shared error banner and releases the key', async () => {
+    const useCase = TestBed.inject(SummarizeMeetingUseCase);
+    vi.spyOn(useCase, 'summarize').mockRejectedValue(new Error('regenerate boom'));
+    facade.selectSummaryLanguage('en');
+
+    await facade.summarizeMeeting(toMeetingId('m-1'), {
+      name: 'meeting-notes',
+      description: 'Meeting notes',
+      prompt: 'p',
+    });
+
+    expect(facade.summarizingKey()).toBeNull();
+    expect(facade.error()?.message).toContain('regenerate boom');
+  });
+
+  it('cancel during a regenerate releases the key', async () => {
+    const useCase = TestBed.inject(SummarizeMeetingUseCase);
+    vi.spyOn(useCase, 'summarize').mockImplementation(() => new Promise<Summary>(() => undefined));
+    facade.selectSummaryLanguage('en');
+    void facade.summarizeMeeting(toMeetingId('m-1'), {
+      name: 'meeting-notes',
+      description: 'Meeting notes',
+      prompt: 'p',
+    });
+    expect(facade.summarizingKey()).toEqual({ template: 'meeting-notes', language: 'en' });
 
     await facade.cancelSummarization();
 

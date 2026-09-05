@@ -90,4 +90,30 @@ describe('MeetingsStore summarizingKey', () => {
 
     expect(store.summaryStream()).toBe('');
   });
+
+  it('regenerate re-setting the same key keeps filtering tokens by template', () => {
+    store.resetSummaryStream();
+    store.setSummarizingKey({ template: 'meeting-notes', language: 'en' });
+    summarizer.emitToken({ meetingId: MEETING_ID, template: 'meeting-notes', token: 'Fresh ' });
+
+    // Regenerate captures the same pair again — the stream restarts, the filter still holds.
+    store.resetSummaryStream();
+    store.setSummarizingKey({ template: 'meeting-notes', language: 'en' });
+    summarizer.emitToken({ meetingId: MEETING_ID, template: 'decisions', token: 'Leaked' });
+    summarizer.emitToken({ meetingId: MEETING_ID, template: 'meeting-notes', token: 'Take two' });
+
+    expect(store.summaryStream()).toBe('Take two');
+    expect(store.summarizing()).toBe(true);
+  });
+
+  it('cancel during a regenerate (key cleared) drops late tokens', () => {
+    store.resetSummaryStream();
+    store.setSummarizingKey({ template: 'meeting-notes', language: 'en' });
+    store.setSummarizingKey(null);
+
+    summarizer.emitToken({ meetingId: MEETING_ID, template: 'meeting-notes', token: 'Late arrival' });
+
+    expect(store.summaryStream()).toBe('');
+    expect(store.summarizing()).toBe(false);
+  });
 });

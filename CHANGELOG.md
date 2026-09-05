@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] — 2026-09-04
+
+### Fixed
+
+- **Update check retries soon after failure** — `last_check_at` is now
+  stamped only on success, so transient failures retry instead of
+  waiting out the 24h throttle; granting update consent from settings
+  triggers an immediate check.
+- **Update-available banner shine** — the available-state banner
+  headline gets an animated shine treatment.
+
+## [0.2.5] — 2026-09-04
+
+### Fixed
+
+- **Relaunch macOS bundle on update restart** — restart now reopens the
+  installed Myna.app bundle instead of the updater staging copy, with a
+  guard against double-restart.
+
+## [0.2.4] — 2026-09-04
+
+### Fixed
+
+- **Onboarding download stays visibly alive** — the first-launch model
+  download progress no longer stalls silently; status remains visible
+  until all artifacts land.
+
+## [0.2.3] — 2026-09-04
+
+### Added
+
+- **Resizable sidebar splitter** — the meeting-list sidebar is now
+  resizable, with layout preferences persisted across launches.
+- **Summary regenerate with instructions** — re-run a summary with
+  extra guidance via a dialog, plus per-meeting summary guidelines.
+- **Delete-summary use case** — remove a generated summary from the
+  meeting detail pane.
+- **Capture resilience supervisor** — a supervisor plus segmented
+  recorder coverage keeps recordings going across device
+  interruptions.
+
+### Fixed
+
+- **Bluetooth mic selection and stop-landing behavior** — choosing a
+  Bluetooth microphone and the landing state after stopping a
+  recording now behave correctly.
+
+### Changed
+
+- **Summarization model upgraded 3B → 7B** — summaries now use
+  Qwen2.5-7B-Instruct (Q4_K_M, ≈4.7 GB, sharded GGUF) instead of
+  Qwen2.5-3B-Instruct, for noticeably richer key points and action
+  items (ADR 0013). Existing installs see the model as missing on
+  first launch and are re-prompted to download it in-app. Summaries
+  run on demand and can take up to ~1 minute for a 30-minute
+  meeting; a 12–16 GB Mac is now the practical floor. The old 3B
+  model is left in place — remove it manually with
+  `rm -rf ~/myna/models/qwen2.5-3b-instruct`.
+
+## [0.2.2] — 2026-09-03
+
+### Added
+
+- **Settings menu and modal** — a native "Settings…" item in the macOS
+  app menu (⌘, / Ctrl+, accelerator) and a title-bar gear button open an
+  in-app Settings modal. It surfaces only real, working settings: opt-in
+  update checks and the default summary language.
+- **Event-name drift guard** — a Rust↔TypeScript parity test
+  (`event_parity.rs`) fails the build when the UI's frozen event list and
+  the Rust event constants diverge, mirroring the existing command-parity
+  guard.
+
+### Changed
+
+- **Speaker detection is now manual-only** — stopping a recording no
+  longer auto-runs diarization; trigger it from the "Detect speakers"
+  button in the meeting detail pane (ADR 0009).
+- **Custom application menu** — the default Tauri menu is replaced with an
+  equivalent one (all predefined items, including the Edit clipboard roles,
+  reproduced item-for-item) plus the new "Settings…" entry.
+
+### Fixed
+
+- **Modal backdrop keyboard handling** — Enter and Space now dismiss the
+  Settings and About modals only when the backdrop itself is focused, so
+  activating a control inside the dialog no longer closes it.
+
 ## [0.1.0] — 2026-09-01
 
 ### Added

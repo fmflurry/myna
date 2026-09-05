@@ -1,7 +1,7 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter, type ParamMap } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, EMPTY } from 'rxjs';
 import { vi } from 'vitest';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -102,6 +102,8 @@ describe('MeetingsShellPage update checks', () => {
   const effectiveSystemSource = signal<AudioSource | null>(null);
   const splitRatio = signal(0.4);
   const transcriptCollapsed = signal(false);
+  const sidebarWidth = signal(224);
+  const sidebarCollapsed = signal(false);
   const importing = signal(false);
   const importProgress = signal<ImportProgress | null>(null);
   const folders = signal<readonly never[]>([]);
@@ -110,6 +112,7 @@ describe('MeetingsShellPage update checks', () => {
   const noop = async (): Promise<void> => undefined;
 
   const facadeStub = {
+    settingsRequests: () => EMPTY,
     activeRecording: signal(null),
     resumeActiveRecording: vi.fn(async () => undefined),
     speakerHistory: signal([]), transcriptUndo: signal(null),
@@ -117,10 +120,11 @@ describe('MeetingsShellPage update checks', () => {
     finalizedSegments, partialTextMe, partialTextOthers, error, busy, systemAudioStatus, captureSource, templates,
     summaryStream, summarizing, summarizingKey, startingRecording, summaryLanguages, selectedSummaryLanguage,
     summaryCache, appVersion, audioSources, selectedAudioSource, effectiveSystemSource,
-    splitRatio, transcriptCollapsed, importing, importProgress, folders, expandedFolders,
-    setSplitRatio: vi.fn(), setTranscriptCollapsed: vi.fn(),
+    splitRatio, transcriptCollapsed, sidebarWidth, sidebarCollapsed, importing, importProgress, folders, expandedFolders,
+    setSplitRatio: vi.fn(), setTranscriptCollapsed: vi.fn(), setSidebarWidth: vi.fn(), setSidebarCollapsed: vi.fn(),
     loadMeetings: vi.fn(noop), loadTemplates: vi.fn(noop), checkModels: vi.fn(noop), loadDevices: vi.fn(noop),
     checkSystemAudio: vi.fn(noop), loadSummaryLanguages: vi.fn(noop), loadAppVersion: vi.fn(noop),
+    loadSummaryGuidelines: vi.fn(async () => undefined), setSummaryGuidelines: vi.fn(async () => undefined), summaryGuidelines: signal(''), summaryInstructionDraft: () => ({ text: '', includeGeneral: true }), setSummaryInstructionDraft: vi.fn(),
     loadAudioSources: vi.fn(noop), loadSummary: vi.fn(noop), openMeeting: vi.fn(noop),
     startRecording: vi.fn(noop), stopRecording: vi.fn(noop), cancelRecording: vi.fn(noop),
     deleteMeeting: vi.fn(noop), renameMeeting: vi.fn(noop), summarizeMeeting: vi.fn(noop),
@@ -307,5 +311,51 @@ describe('MeetingsShellPage update checks', () => {
 
     const restartButton: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
     expect(restartButton.disabled).toBe(true);
+  });
+
+  it('[Restart now] disables while the restart is in flight and re-enables with the message on reject', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    let rejectRestart!: (reason: unknown) => void;
+    restartApp.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRestart = reject;
+        }),
+    );
+    const fixture = await createFixture();
+
+    fixture.nativeElement.querySelector('app-update-banner .restart').click();
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    expect(restartApp).toHaveBeenCalledTimes(1);
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(true);
+
+    rejectRestart(new Error('restart request failed'));
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(false);
+    expect(fixture.nativeElement.querySelector('app-update-banner').textContent).toContain('restart request failed');
+  });
+
+  it('a second [Restart now] click while restarting issues no second restartApp call', async () => {
+    updatesPort.seedConsent('granted');
+    updatesPort.seedCheckResult(availableCheck);
+    installState.set({ status: 'ready', version: '0.4.0' });
+    restartApp.mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const fixture = await createFixture();
+
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('app-update-banner .restart');
+    button.click();
+    await flushMicrotasks();
+    fixture.detectChanges();
+    button.click();
+    await flushMicrotasks();
+
+    expect(restartApp).toHaveBeenCalledTimes(1);
+    expect(fixture.nativeElement.querySelector('app-update-banner .restart').disabled).toBe(true);
   });
 });

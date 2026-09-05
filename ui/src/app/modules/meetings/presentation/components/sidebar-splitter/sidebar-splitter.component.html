@@ -1,0 +1,38 @@
+<div class="sidebar-splitter" #container>
+  @if (!internalCollapsed()) {
+    <div class="sidebar-pane" [id]="panelId()" [style.width.px]="internalWidth()">
+      <ng-content select="[sidebar]" />
+    </div>
+  }
+  <div
+    class="divider-zone"
+    [class.collapsed]="internalCollapsed()"
+    [attr.role]="internalCollapsed() ? null : 'separator'"
+    [attr.aria-orientation]="internalCollapsed() ? null : 'vertical'"
+    [attr.aria-valuenow]="internalCollapsed() ? null : ariaValueNow()"
+    [attr.aria-valuemin]="internalCollapsed() ? null : minWidth()"
+    [attr.aria-valuemax]="internalCollapsed() ? null : maxWidth()"
+    [attr.tabindex]="internalCollapsed() ? null : 0"
+    (pointerdown)="onDividerPointerDown($event)"
+    (keydown)="onDividerKeydown($event)"
+  >
+    <button
+      type="button"
+      #toggleButton
+      class="collapse-toggle"
+      [attr.aria-expanded]="!internalCollapsed()"
+      [attr.aria-controls]="panelId()"
+      [attr.aria-label]="toggleLabel()"
+      [attr.title]="toggleTitle()"
+      (click)="onToggleClick($event)"
+    >
+      <span class="chevron" aria-hidden="true">{{ internalCollapsed() ? '›' : '‹' }}</span>
+      @if (internalCollapsed()) {
+        <span class="rail-label">{{ sidebarLabel() }}</span>
+      }
+    </button>
+  </div>
+  <div class="content-pane">
+    <ng-content select="[content]" />
+  </div>
+</div>

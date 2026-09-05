@@ -541,7 +541,14 @@ mod tests {
             ("parakeet-tdt-0.6b-v3-int8", "decoder.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "joiner.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "tokens.txt"),
-            ("qwen2.5-3b-instruct", "qwen2.5-3b-instruct-q4_k_m.gguf"),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            ),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+            ),
             ("silero-vad", "silero_vad.onnx"),
             (
                 "pyannote-segmentation-3-0/sherpa-onnx-pyannote-segmentation-3-0",
@@ -572,7 +579,14 @@ mod tests {
             ("parakeet-tdt-0.6b-v3-int8", "decoder.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "joiner.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "tokens.txt"),
-            ("qwen2.5-3b-instruct", "qwen2.5-3b-instruct-q4_k_m.gguf"),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            ),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+            ),
             ("silero-vad", "silero_vad.onnx"),
         ] {
             seed_model(dir.path(), dir_name, file);
@@ -601,7 +615,14 @@ mod tests {
             ("parakeet-tdt-0.6b-v3-int8", "decoder.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "joiner.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "tokens.txt"),
-            ("qwen2.5-3b-instruct", "qwen2.5-3b-instruct-q4_k_m.gguf"),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            ),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+            ),
             ("silero-vad", "silero_vad.onnx"),
         ] {
             seed_model(dir.path(), dir_name, file);
@@ -767,9 +788,10 @@ case "$only" in
     done
     ;;
   qwen)
-    d="$dest/qwen2.5-3b-instruct"
+    d="$dest/qwen2.5-7b-instruct"
     mkdir -p "$d"
-    echo x > "$d/qwen2.5-3b-instruct-q4_k_m.gguf"
+    echo x > "$d/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+    echo x > "$d/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
     ;;
   vad)
     d="$dest/silero-vad"
@@ -885,7 +907,14 @@ printf '%s' "$PATH" > "$dest/path.txt"
             ("parakeet-tdt-0.6b-v3-int8", "decoder.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "joiner.int8.onnx"),
             ("parakeet-tdt-0.6b-v3-int8", "tokens.txt"),
-            ("qwen2.5-3b-instruct", "qwen2.5-3b-instruct-q4_k_m.gguf"),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            ),
+            (
+                "qwen2.5-7b-instruct",
+                "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+            ),
             ("silero-vad", "silero_vad.onnx"),
             (
                 "pyannote-segmentation-3-0/sherpa-onnx-pyannote-segmentation-3-0",

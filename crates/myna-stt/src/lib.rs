@@ -33,4 +33,4 @@ pub use vad::{
     VadConfig, VadSegmenter, DEFAULT_MIN_SILENCE_SEC, TARGET_SAMPLE_RATE, VAD_BUFFER_SECS,
     VAD_WINDOW_SIZE,
 };
-pub use wav::{read_wav_to_f32, WavBlockReader};
+pub use wav::{read_wav_parts_to_f32, read_wav_to_f32, WavBlockReader};

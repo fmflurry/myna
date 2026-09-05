@@ -32,7 +32,7 @@ const CHILD: &str = "MYNA_METAL_TEARDOWN_CHILD";
 /// used by `tests/engine.rs` and `tests/language.rs`.
 fn qwen_model_path() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../models/qwen2.5-3b-instruct/qwen2.5-3b-instruct-q4_k_m.gguf")
+        .join("../../models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
 }
 
 /// Re-execs the current test binary to run `test_name` alone, as the
@@ -47,7 +47,7 @@ fn run_as_child(test_name: &str) -> std::process::ExitStatus {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn a_leaked_summarizer_does_not_abort_the_process_at_exit() {
     if std::env::var_os(CHILD).is_some() {
         // Child: mirror AppState's evictable ModelSlot cache — load and never
@@ -67,7 +67,7 @@ fn a_leaked_summarizer_does_not_abort_the_process_at_exit() {
 }
 
 #[test]
-#[ignore = "model-gated: requires models/qwen2.5-3b-instruct/*.gguf on disk"]
+#[ignore = "model-gated: requires models/qwen2.5-7b-instruct/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf on disk"]
 fn a_normally_dropped_summarizer_still_exits_cleanly() {
     if std::env::var_os(CHILD).is_some() {
         // Child: load and drop normally (the non-leaking half of the

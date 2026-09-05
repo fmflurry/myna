@@ -7,6 +7,7 @@ import { AudioRepositoryPort } from './core/ports/audio-repository.port';
 import { FileDialogPort } from './core/ports/file-dialog.port';
 import { FolderRepositoryPort } from './core/ports/folder-repository.port';
 import { MeetingRepositoryPort } from './core/ports/meeting-repository.port';
+import { MenuPort } from './core/ports/menu.port';
 import { ModelsStatusPort } from './core/ports/models-status.port';
 import { PreferencesPort } from './core/ports/preferences.port';
 import { RecorderPort } from './core/ports/recorder.port';
@@ -21,6 +22,7 @@ import { TauriAudioRepositoryAdapter } from './infrastructure/tauri/tauri-audio-
 import { TauriFileDialogAdapter } from './infrastructure/tauri/tauri-file-dialog.adapter';
 import { TauriFolderRepositoryAdapter } from './infrastructure/tauri/tauri-folder-repository.adapter';
 import { TauriMeetingRepositoryAdapter } from './infrastructure/tauri/tauri-meeting-repository.adapter';
+import { TauriMenuAdapter } from './infrastructure/tauri/tauri-menu.adapter';
 import { TauriModelsStatusAdapter } from './infrastructure/tauri/tauri-models-status.adapter';
 import { TauriRecorderAdapter } from './infrastructure/tauri/tauri-recorder.adapter';
 import { TauriSummarizerAdapter } from './infrastructure/tauri/tauri-summarizer.adapter';
@@ -36,12 +38,14 @@ import { CheckSystemAudioUseCase } from './application/use-cases/check-system-au
 import { CreateFolderUseCase } from './application/use-cases/create-folder.usecase';
 import { DeleteFolderUseCase } from './application/use-cases/delete-folder.usecase';
 import { DeleteMeetingUseCase } from './application/use-cases/delete-meeting.usecase';
+import { DeleteSummaryUseCase } from './application/use-cases/delete-summary.usecase';
 import { DeleteTranscriptSegmentUseCase } from './application/use-cases/delete-transcript-segment.usecase';
 import { DiarizeMeetingUseCase } from './application/use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from './application/use-cases/edit-summary.usecase';
 import { EditTranscriptSegmentUseCase } from './application/use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from './application/use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from './application/use-cases/get-app-version.usecase';
+import { GetSummaryGuidelinesUseCase } from './application/use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from './application/use-cases/get-summary.usecase';
 import { GetUpdateConsentUseCase } from './application/use-cases/get-update-consent.usecase';
 import { ImportAudioUseCase } from './application/use-cases/import-audio.usecase';
@@ -63,6 +67,7 @@ import { RestoreTranscriptSegmentsUseCase } from './application/use-cases/restor
 import { RetranscribeMeetingUseCase } from './application/use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from './application/use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from './application/use-cases/set-meeting-folder.usecase';
+import { SetSummaryGuidelinesUseCase } from './application/use-cases/set-summary-guidelines.usecase';
 import { SetSegmentSpeakerUseCase } from './application/use-cases/set-segment-speaker.usecase';
 import { SetUpdateConsentUseCase } from './application/use-cases/set-update-consent.usecase';
 import { StartRecordingUseCase } from './application/use-cases/start-recording.usecase';
@@ -93,6 +98,7 @@ export function provideMeetings(): EnvironmentProviders {
     { provide: MeetingRepositoryPort, useClass: TauriMeetingRepositoryAdapter },
     { provide: FolderRepositoryPort, useClass: TauriFolderRepositoryAdapter },
     { provide: TemplateRepositoryPort, useClass: TauriTemplateRepositoryAdapter },
+    { provide: MenuPort, useClass: TauriMenuAdapter },
     { provide: ModelsStatusPort, useClass: TauriModelsStatusAdapter },
     { provide: FileDialogPort, useClass: TauriFileDialogAdapter },
     { provide: PreferencesPort, useClass: LocalStoragePreferencesAdapter },
@@ -111,6 +117,7 @@ export function provideMeetings(): EnvironmentProviders {
     SetMeetingArchivedUseCase,
     EditTranscriptSegmentUseCase,
     EditSummaryUseCase,
+    DeleteSummaryUseCase,
     SummarizeMeetingUseCase,
     ListTemplatesUseCase,
     CheckModelsUseCase,
@@ -120,6 +127,8 @@ export function provideMeetings(): EnvironmentProviders {
     ExportMeetingUseCase,
     CheckSystemAudioUseCase,
     ListSummaryLanguagesUseCase,
+    GetSummaryGuidelinesUseCase,
+    SetSummaryGuidelinesUseCase,
     GetSummaryUseCase,
     GetAppVersionUseCase,
     ImportAudioUseCase,

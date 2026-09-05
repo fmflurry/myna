@@ -28,6 +28,9 @@ pub const APP_ERROR: &str = "error://occurred";
 pub const SUMMARY_TOKEN: &str = "summary://token";
 /// Emitted once a summarization completes successfully.
 pub const SUMMARY_DONE: &str = "summary://done";
+/// Emitted when the user activates "Settings…" from the application menu
+/// (see `crate::menu`). Payload is empty — the webview owns the settings UI.
+pub const MENU_SETTINGS: &str = "menu://settings";
 
 /// Payload for [`RECORDING_STATE`].
 #[derive(Serialize, Clone)]

@@ -4,7 +4,9 @@ import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture
 import type { Folder, FolderId } from '../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../core/models/meeting.model';
 import type { ModelsStatus } from '../../core/models/models-status.model';
+import type { RecordingHealthEvent, StopPhase } from '../../core/models/recording-lifecycle.model';
 import type { MeetingsErrorCode, RecordingState } from '../../core/models/recording-state.model';
+import type { SummaryInstructionsDraft } from '../../core/models/summary-instructions.model';
 import type { SummaryLanguage } from '../../core/models/summary-language.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../core/models/transcript.model';
@@ -91,10 +93,21 @@ export interface MeetingsStoreConfig {
   DEFAULT_OUTPUT_DEVICE: AudioDevice | null;
   SUMMARIZING_KEY: SummarizingKey | null;
   STARTING_RECORDING: boolean;
+  /**
+   * Fine-grained progress of the in-flight stop/cancel (`recording://stop-progress`).
+   * `null` outside a stop — cleared when the `recording://completed` event lands.
+   */
+  STOP_PHASE: StopPhase | null;
+  /** Latest `recording://health` event; `null` while the recording stays healthy. */
+  RECORDING_HEALTH: RecordingHealthEvent | null;
   SYSTEM_AUDIO_STATUS: SystemAudioStatus;
   CAPTURE_SOURCE: CaptureSource;
   SUMMARY_LANGUAGES: readonly SummaryLanguage[];
   SELECTED_SUMMARY_LANGUAGE: string;
+  /** General summary guidelines; the server (via `SummarizerPort.getGuidelines`) is the source of truth — never persisted to `PreferencesPort`. */
+  SUMMARY_GUIDELINES: string;
+  /** Per-(meeting, template) instruction drafts keyed by `summaryInstructionsKey(...)`; lazily hydrated from `PreferencesPort` on read. */
+  SUMMARY_INSTRUCTION_DRAFTS: ReadonlyMap<string, SummaryInstructionsDraft>;
   SUMMARY_CACHE: ReadonlyMap<string, SummaryCacheEntry>;
   APP_VERSION: string;
   AUDIO_SOURCES: readonly AudioSource[];
@@ -102,6 +115,8 @@ export interface MeetingsStoreConfig {
   EFFECTIVE_SYSTEM_SOURCE: AudioSource | null;
   SPLIT_RATIO: number;
   TRANSCRIPT_COLLAPSED: boolean;
+  SIDEBAR_WIDTH: number;
+  SIDEBAR_COLLAPSED: boolean;
   IMPORTING: boolean;
   IMPORT_PROGRESS: ImportProgress | null;
   FOLDERS: readonly Folder[];

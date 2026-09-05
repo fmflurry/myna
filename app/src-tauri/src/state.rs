@@ -90,10 +90,12 @@ pub fn clamp_thread_count(detected: Option<i32>) -> i32 {
 
 /// Directory name (under the resolved models root) containing the Qwen GGUF
 /// summarization model.
-const LLM_MODEL_DIR_NAME: &str = "qwen2.5-3b-instruct";
+const LLM_MODEL_DIR_NAME: &str = "qwen2.5-7b-instruct";
 
-/// File name of the Qwen GGUF model, within [`LLM_MODEL_DIR_NAME`].
-const LLM_MODEL_FILE_NAME: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
+/// File name of the Qwen GGUF model, within [`LLM_MODEL_DIR_NAME`]: the
+/// first shard of the split q4_k_m distribution — llama.cpp opens it and
+/// follows the split metadata to load the companion shard.
+const LLM_MODEL_FILE_NAME: &str = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf";
 
 /// How long the cached STT engine may sit unused after a recording (or
 /// import) completes before [`AppState::evict_stt_if_idle`] releases it.
@@ -369,7 +371,7 @@ impl AppState {
     ///
     /// Model load is seconds-scale. Since Phase 3 the cache is *not*
     /// once-per-lifetime: `run_summarization` ends every operation with
-    /// [`AppState::release_summarizer`], returning the ~2.5 GB of weights
+    /// [`AppState::release_summarizer`], returning the ~5 GB of weights
     /// and KV cache to the OS immediately. A reload is safe: the
     /// `LlamaBackend::drop` in llama-cpp-2 0.1.154 resets the
     /// once-per-process init flag and calls `llama_backend_free`, and

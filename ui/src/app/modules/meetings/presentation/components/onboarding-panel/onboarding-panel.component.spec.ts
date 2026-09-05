@@ -64,7 +64,7 @@ describe('OnboardingPanelComponent', () => {
     expect(text).toContain('get your AI models');
     expect(text).toContain('nothing is ever sent to the cloud');
     expect(text).toContain('Download models');
-    // The download is ~2.6 GB — copy must not minimize it.
+    // The download is ~5.4 GB — copy must not minimize it.
     expect(text).not.toContain('small AI models');
   });
 

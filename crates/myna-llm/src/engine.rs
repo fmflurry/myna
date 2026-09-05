@@ -31,16 +31,16 @@
 //! plain stack local borrowing a sibling local. The public [`Summarizer`]
 //! methods are thin blocking client APIs over a message channel to that
 //! thread — only owned `String`s and results cross the boundary. Reusing
-//! one context across calls is also the fix for the ~1.2 GB KV-cache
+//! one context across calls is also the fix for the ~1.9 GB KV-cache
 //! allocation that was previously churned by every `summarize` call
 //! (including every map-reduce chunk).
 
 use std::num::NonZeroU32;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -259,7 +259,7 @@ enum StreamMsg {
 ///   across `spawn_blocking` threads) nor moved between threads. On the
 ///   worker it is a plain stack local borrowing a sibling local — no
 ///   self-reference needed.
-/// - Building a context allocates the whole KV cache (~1.2 GB at the
+/// - Building a context allocates the whole KV cache (~1.9 GB at the
 ///   32k-token default). Before this design every `summarize` call —
 ///   including every map-reduce chunk — paid that allocation and freed
 ///   it again; one context is now built per `Summarizer` and reused,
@@ -272,6 +272,9 @@ enum StreamMsg {
 /// freeing weights and KV cache before `drop` returns.
 pub struct Summarizer {
     jobs: Sender<Job>,
+    /// Shared with the inference worker — the only code that builds
+    /// contexts — and surfaced by [`Summarizer::context_builds`].
+    context_builds: Arc<AtomicU64>,
     /// `None` only transiently: [`Drop::drop`] takes the handle to join it.
     worker: Option<JoinHandle<()>>,
 }
@@ -300,15 +303,18 @@ impl Summarizer {
 
         let (jobs_tx, jobs_rx) = channel();
         let (ready_tx, ready_rx) = channel();
+        let context_builds = Arc::new(AtomicU64::new(0));
+        let worker_builds = Arc::clone(&context_builds);
         let worker_path = model_path.to_path_buf();
         let worker = std::thread::Builder::new()
             .name("myna-llm-inference".to_string())
-            .spawn(move || inference_worker(worker_path, jobs_rx, ready_tx))
+            .spawn(move || inference_worker(worker_path, jobs_rx, ready_tx, worker_builds))
             .map_err(|err| LlmError::Load(format!("spawning inference worker: {err}")))?;
 
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
                 jobs: jobs_tx,
+                context_builds,
                 worker: Some(worker),
             }),
             Ok(Err(err)) => {
@@ -324,6 +330,23 @@ impl Summarizer {
                 ))
             }
         }
+    }
+
+    /// Number of `LlamaContext` constructions this value's worker has
+    /// performed: exactly one for [`Summarizer::load`] (the reusable
+    /// context), plus one per parameter-keyed rebuild — see
+    /// [`serve_generation`] for when a rebuild happens. A `summarize`
+    /// call whose `(n_ctx, n_threads)` key matches the live context
+    /// reuses it and never increments this.
+    ///
+    /// Test/diagnostic hook, not a production API: the model-gated reuse
+    /// regression test in `tests/engine.rs` asserts this stays flat
+    /// across consecutive calls. It counts builds directly, which is
+    /// immune to the macOS page-eviction artifact that makes RSS deltas
+    /// an unreliable reuse proxy once several model load/drop cycles have
+    /// churned the VM.
+    pub fn context_builds(&self) -> u64 {
+        self.context_builds.load(Ordering::Relaxed)
     }
 
     /// Renders `template` against `ctx` and summarizes the result, like
@@ -535,7 +558,7 @@ impl Drop for Summarizer {
     /// in-flight job, then drops context, model, and backend — in that
     /// order — on its way out, and `join` guarantees that completed
     /// before this returns. A later app phase that evicts the cached
-    /// `Summarizer` relies on this to return the ~1.2 GB KV cache (and
+    /// `Summarizer` relies on this to return the ~1.9 GB KV cache (and
     /// the weights) to the OS.
     fn drop(&mut self) {
         let _ = self.jobs.send(Job::Shutdown);
@@ -552,7 +575,12 @@ impl Drop for Summarizer {
 /// it), which is exactly what "owned by this thread" buys; Rust drops
 /// locals in reverse declaration order, so the context is freed before
 /// the model and the backend before both.
-fn inference_worker(model_path: PathBuf, jobs: Receiver<Job>, ready: Sender<Result<(), LlmError>>) {
+fn inference_worker(
+    model_path: PathBuf,
+    jobs: Receiver<Job>,
+    ready: Sender<Result<(), LlmError>>,
+    context_builds: Arc<AtomicU64>,
+) {
     let (backend, model) = match load_backend_and_model(&model_path) {
         Ok(pair) => pair,
         Err(err) => {
@@ -560,7 +588,13 @@ fn inference_worker(model_path: PathBuf, jobs: Receiver<Job>, ready: Sender<Resu
             return;
         }
     };
-    let mut context = match build_context(&model, &backend, DEFAULT_N_CTX, DEFAULT_N_THREADS) {
+    let mut context = match build_context(
+        &model,
+        &backend,
+        DEFAULT_N_CTX,
+        DEFAULT_N_THREADS,
+        &context_builds,
+    ) {
         Ok(context) => context,
         Err(err) => {
             let _ = ready.send(Err(err));
@@ -592,6 +626,7 @@ fn inference_worker(model_path: PathBuf, jobs: Receiver<Job>, ready: Sender<Resu
                     &backend,
                     &mut context,
                     &mut context_key,
+                    &context_builds,
                     &opts,
                     &prompt,
                     &cancel,
@@ -616,12 +651,15 @@ fn load_backend_and_model(model_path: &Path) -> Result<(LlamaBackend, LlamaModel
 /// fixed [`DEFAULT_N_BATCH`] decode cap. The returned context borrows
 /// `model` (llama.cpp requires the model to outlive its contexts; the
 /// backend argument is a proof-of-init token that does not constrain the
-/// context's lifetime in `llama-cpp-2` 0.1.154).
+/// context's lifetime in `llama-cpp-2` 0.1.154). Every successful build
+/// is counted in `builds` — the single choke point behind
+/// [`Summarizer::context_builds`].
 fn build_context<'a>(
     model: &'a LlamaModel,
     backend: &LlamaBackend,
     n_ctx: u32,
     n_threads: i32,
+    builds: &AtomicU64,
 ) -> Result<LlamaContext<'a>, LlmError> {
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(n_ctx))
@@ -629,6 +667,9 @@ fn build_context<'a>(
         .with_n_threads(n_threads);
     model
         .new_context(backend, ctx_params)
+        .inspect(|_context| {
+            builds.fetch_add(1, Ordering::Relaxed);
+        })
         .map_err(|err| LlmError::Context(err.to_string()))
 }
 
@@ -643,6 +684,7 @@ fn serve_generation<'a>(
     backend: &LlamaBackend,
     context: &mut LlamaContext<'a>,
     context_key: &mut (u32, i32),
+    context_builds: &AtomicU64,
     opts: &SummaryOptions,
     prompt: &str,
     cancel: &Receiver<bool>,
@@ -652,7 +694,7 @@ fn serve_generation<'a>(
         // The key stores the context's *effective* n_ctx, so a request
         // llama.cpp would cap below the ask rebuilds per call — correct,
         // just no cheaper than the pre-fix behavior for that shape.
-        *context = build_context(model, backend, opts.n_ctx, opts.n_threads)?;
+        *context = build_context(model, backend, opts.n_ctx, opts.n_threads, context_builds)?;
         *context_key = (context.n_ctx(), opts.n_threads);
     }
     context.clear_kv_cache();
