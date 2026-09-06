@@ -74,6 +74,46 @@ scripts/generate-icons.sh
 The script fails loudly (non-zero exit, message on stderr) if a required
 tool can't be found, rather than silently producing a bad icon.
 
+## capture-screenshots.sh
+
+Serves `ui/` with the Angular dev server and captures the 5 README showcase
+PNGs into `docs/screenshots/` (`hero.png`, `recording.png`,
+`transcription.png`, `summaries.png`, `library.png`) — one state per scene of
+the single-window MeetingsShellPage via the screenshot harness at
+`http://localhost:<port>/?screenshot=<scene>` (see
+`ui/src/app/screenshot/*`).
+
+Requires only node/npm plus the known-good Playwright Chromium headless shell
+under `~/Library/Caches/ms-playwright/chromium_headless_shell-*` (same lookup
+as `generate-icons.sh`; install via
+`npx playwright install chromium-headless-shell` if missing). No model
+downloads, no microphone, no Tauri/Rust build, no CDN — on a clean checkout
+the script installs `ui/` dependencies itself (`npm ci`) before serving.
+
+Hero captures at `--window-size=1280,800`; cards at `900x700` (README displays
+hero at 800 wide, cards at 400 wide). All shots use
+`--force-device-scale-factor=2 --hide-scrollbars`, with
+`--timeout`/`--virtual-time-budget` (overridable via
+`SCREENSHOT_TIMEOUT_MS` / `SCREENSHOT_VIRTUAL_TIME_BUDGET_MS`) so Angular has
+time to boot before the capture fires. Re-runnable: existing PNGs are
+overwritten, and the dev server is stopped on exit.
+
+```bash
+# Capture all 5 screenshots to docs/screenshots/ (serves on port 4209)
+scripts/capture-screenshots.sh
+
+# Serve on a different port
+scripts/capture-screenshots.sh --port 4210
+PORT=4210 scripts/capture-screenshots.sh
+
+# Verify the outputs
+file docs/screenshots/*.png
+```
+
+The script fails loudly (non-zero exit, message on stderr) if the headless
+shell is missing, the dev server never becomes ready, or any PNG comes out
+missing/empty.
+
 ## bench-stt-cpu.sh
 
 Runs the `#[ignore]`d `stt_streaming_cpu_benchmark` test

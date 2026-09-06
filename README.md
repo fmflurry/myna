@@ -67,8 +67,6 @@ Just results you own.
 </tr>
 </table>
 
-> Screenshots are placeholders — see `docs/screenshots/*.png` (hero, recording, transcription, summaries, library).
-
 ## Features
 
 ### 🎙 Flexible capture
