@@ -1,0 +1,65 @@
+<main class="screenshot-shot" [attr.data-screenshot-scene]="scene">
+  @if (scene === 'recording') {
+    <header class="shot-titlebar">
+      <span class="shot-brand" aria-hidden="true"></span>
+      <app-record-control
+        [recordingState]="'recording'"
+        [devices]="devices"
+        [selectedDevice]="{ name: 'Built-in Microphone' }"
+        [captureSource]="'mixed'"
+        [systemAudioStatus]="{ kind: 'available' }"
+        [audioSources]="audioSources"
+        [selectedAudioSource]="'app:teams'"
+        [effectiveSystemSource]="{ id: 'app:teams', name: 'Teams' }"
+        [level]="{ rms: 0.42, dbfs: -7.5 }"
+        [elapsedLabel]="'12:34'"
+        [disabled]="false"
+        [startingRecording]="false"
+        [stopPhase]="null"
+        [recordingHealth]="null"
+      />
+    </header>
+    <section class="shot-capture" aria-label="Audio capture settings">
+      <h1 class="shot-heading">Audio capture settings</h1>
+      <p class="shot-sub">Microphone: Built-in Microphone · System audio: Teams</p>
+      <app-capture-source-picker
+        [captureSource]="'mixed'"
+        [systemAudioStatus]="{ kind: 'available' }"
+        [selectedDeviceName]="'Built-in Microphone'"
+        [devices]="devices"
+        [disabled]="false"
+      />
+    </section>
+    <section class="shot-live" aria-label="Live transcript">
+      <h2 class="shot-heading">Live transcript — Weekly Standup</h2>
+      <app-live-transcript
+        [finalizedSegments]="liveFinals"
+        partialTextMe="so the next step is to ship the docs tomorrow"
+        partialTextOthers=""
+      />
+    </section>
+  } @else if (scene === 'summaries') {
+    <div class="shot-split">
+      <app-meeting-sidebar [meetings]="sidebarMeetings" [selectedId]="selectedId" />
+      <section class="shot-summary" aria-label="Meeting summary">
+        <h1 class="shot-heading">{{ heroHeading }}</h1>
+        <nav class="shot-tabs" role="tablist" aria-label="Summary type">
+          @for (tab of summaryTabs; track tab.name) {
+            <button
+              type="button"
+              role="tab"
+              class="shot-tab"
+              [class.active]="tab.active"
+              [attr.aria-selected]="tab.active"
+            >
+              {{ tab.label }}
+            </button>
+          }
+        </nav>
+        <app-summary-panel [markdown]="keyPointsMarkdown" [editable]="false" />
+      </section>
+    </div>
+  } @else {
+    <app-meetings-shell-page />
+  }
+</main>
