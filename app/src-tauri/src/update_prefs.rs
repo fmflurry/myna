@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 use crate::error::AppError;
 use crate::paths;
@@ -96,18 +96,18 @@ pub fn save(root: &Path, prefs: &UpdatePrefs) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Minimum interval between automatic (non-manual) update checks.
-pub const CHECK_INTERVAL: Duration = Duration::hours(24);
-
 /// Outcome of asking "may we check for updates right now?".
+///
+/// There is deliberately no throttle arm: every app start with granted
+/// consent and no live recording checks exactly once (the 24h
+/// once-a-day throttle was removed — it forced users back onto the
+/// manual "check updates" button). Only the two hard invariants remain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckDecision {
     /// Go ahead and check.
     Run,
     /// The user has not granted consent (or declined it).
     SkipNoConsent,
-    /// A throttled (non-manual) check ran within [`CHECK_INTERVAL`].
-    SkipThrottled,
     /// A meeting is currently recording; do not perform network I/O now.
     SkipRecording,
 }
@@ -117,9 +117,11 @@ pub enum CheckDecision {
 /// Precedence, first match wins:
 /// 1. `consent != Granted` -> [`CheckDecision::SkipNoConsent`]
 /// 2. `is_recording` -> [`CheckDecision::SkipRecording`]
-/// 3. `!manual` and `last_check_at` is within [`CHECK_INTERVAL`] of `now` ->
-///    [`CheckDecision::SkipThrottled`]
-/// 4. otherwise -> [`CheckDecision::Run`]
+/// 3. otherwise -> [`CheckDecision::Run`]
+///
+/// `last_check_at`, `now`, and `manual` are retained (prefixed) so the
+/// `check_for_update` IPC shape and existing call sites keep compiling —
+/// they no longer gate anything. Every consented, idle launch checks.
 ///
 /// Pure and side-effect free — it reads no clock and touches no disk. The
 /// caller owns stamping `last_check_at`, and must only do so *after* the
@@ -127,15 +129,13 @@ pub enum CheckDecision {
 /// on failure: stamping first is exactly the bug that let a decode
 /// throttle elsewhere in this codebase run 40x/sec because the cap never
 /// bound (the timestamp existed before the guarded work ran, so every
-/// concurrent caller saw "not throttled yet"), while stamping on failure
-/// would suppress the next automatic check for a full [`CHECK_INTERVAL`]
-/// after a transient network error.
+/// concurrent caller saw "not throttled yet").
 pub fn decide_check(
     consent: UpdateConsent,
-    last_check_at: Option<OffsetDateTime>,
+    _last_check_at: Option<OffsetDateTime>,
     is_recording: bool,
-    now: OffsetDateTime,
-    manual: bool,
+    _now: OffsetDateTime,
+    _manual: bool,
 ) -> CheckDecision {
     if consent != UpdateConsent::Granted {
         return CheckDecision::SkipNoConsent;
@@ -143,21 +143,14 @@ pub fn decide_check(
     if is_recording {
         return CheckDecision::SkipRecording;
     }
-    if !manual {
-        if let Some(last) = last_check_at {
-            if (now - last).abs() < CHECK_INTERVAL {
-                return CheckDecision::SkipThrottled;
-            }
-        }
-    }
     CheckDecision::Run
 }
 
 /// Outcome of asking "may we install a downloaded update right now?".
 ///
-/// Mirrors [`CheckDecision`]'s shape but has no throttle arm: an install
-/// is always user-initiated (the UI only offers it after a check already
-/// cleared [`CHECK_INTERVAL`]), so only the two hard invariants remain.
+/// Mirrors [`CheckDecision`]'s shape: an install is always user-initiated
+/// (the UI only offers it after a check), so only the two hard invariants
+/// remain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallDecision {
     /// Go ahead and run the updater install.
@@ -351,8 +344,8 @@ mod tests {
     #[test]
     fn decide_check_matrix_covers_every_precedence_branch() {
         let now = OffsetDateTime::now_utc();
-        let throttled_last_check = now - Duration::hours(1);
-        let stale_last_check = now - Duration::hours(25);
+        let recent_last_check = now - time::Duration::hours(1);
+        let stale_last_check = now - time::Duration::hours(25);
 
         for consent in [
             UpdateConsent::Unset,
@@ -361,18 +354,10 @@ mod tests {
         ] {
             for is_recording in [false, true] {
                 for manual in [false, true] {
-                    for last_check_at in [None, Some(throttled_last_check), Some(stale_last_check)]
-                    {
+                    for last_check_at in [None, Some(recent_last_check), Some(stale_last_check)] {
                         let decision =
                             decide_check(consent, last_check_at, is_recording, now, manual);
-                        let expected = expected_decision(
-                            consent,
-                            last_check_at,
-                            is_recording,
-                            now,
-                            manual,
-                            throttled_last_check,
-                        );
+                        let expected = expected_decision(consent, is_recording);
                         assert_eq!(
                             decision, expected,
                             "consent={consent:?} is_recording={is_recording} manual={manual} \
@@ -385,30 +370,20 @@ mod tests {
     }
 
     /// Independent re-derivation of the expected precedence, so the matrix
-    /// test isn't just re-stating `decide_check`'s own branches.
-    fn expected_decision(
-        consent: UpdateConsent,
-        last_check_at: Option<OffsetDateTime>,
-        is_recording: bool,
-        now: OffsetDateTime,
-        manual: bool,
-        throttled_last_check: OffsetDateTime,
-    ) -> CheckDecision {
+    /// test isn't just re-stating `decide_check`'s own branches. There is
+    /// no throttle arm: a recent `last_check_at` never suppresses a check.
+    fn expected_decision(consent: UpdateConsent, is_recording: bool) -> CheckDecision {
         if consent != UpdateConsent::Granted {
             return CheckDecision::SkipNoConsent;
         }
         if is_recording {
             return CheckDecision::SkipRecording;
         }
-        if !manual && last_check_at == Some(throttled_last_check) {
-            return CheckDecision::SkipThrottled;
-        }
-        let _ = now;
         CheckDecision::Run
     }
 
     #[test]
-    fn decide_check_runs_only_when_granted_not_recording_and_not_throttled() {
+    fn decide_check_runs_only_when_granted_and_not_recording() {
         let now = OffsetDateTime::now_utc();
         assert_eq!(
             decide_check(UpdateConsent::Granted, None, false, now, false),
@@ -439,21 +414,14 @@ mod tests {
     }
 
     #[test]
-    fn decide_check_throttles_automatic_checks_within_the_interval() {
+    fn decide_check_runs_automatically_even_when_the_previous_check_just_ran() {
+        // Every-startup cadence: a recent `last_check_at` never suppresses
+        // an automatic check — this is the regression guard for "I still
+        // have to click on 'check updates' to actually check updates."
         let now = OffsetDateTime::now_utc();
-        let recent = now - Duration::hours(1);
+        let recent = now - time::Duration::minutes(5);
         assert_eq!(
             decide_check(UpdateConsent::Granted, Some(recent), false, now, false),
-            CheckDecision::SkipThrottled
-        );
-    }
-
-    #[test]
-    fn decide_check_manual_bypasses_the_throttle() {
-        let now = OffsetDateTime::now_utc();
-        let recent = now - Duration::hours(1);
-        assert_eq!(
-            decide_check(UpdateConsent::Granted, Some(recent), false, now, true),
             CheckDecision::Run
         );
     }
@@ -461,9 +429,25 @@ mod tests {
     #[test]
     fn decide_check_runs_automatically_once_the_interval_has_elapsed() {
         let now = OffsetDateTime::now_utc();
-        let stale = now - Duration::hours(25);
+        let stale = now - time::Duration::hours(25);
         assert_eq!(
             decide_check(UpdateConsent::Granted, Some(stale), false, now, false),
+            CheckDecision::Run
+        );
+    }
+
+    #[test]
+    fn decide_check_ignores_the_manual_flag_for_gating() {
+        // `manual` is still part of the IPC shape but no longer gates
+        // anything: automatic and manual checks run under the same guards.
+        let now = OffsetDateTime::now_utc();
+        let recent = now - time::Duration::hours(1);
+        assert_eq!(
+            decide_check(UpdateConsent::Granted, Some(recent), false, now, true),
+            CheckDecision::Run
+        );
+        assert_eq!(
+            decide_check(UpdateConsent::Granted, Some(recent), false, now, false),
             CheckDecision::Run
         );
     }

@@ -128,6 +128,37 @@ describe('MeetingsShellPage launch update check (real facade graph)', () => {
     expect(fixture.nativeElement.querySelector('app-update-banner .update-banner')).toBeTruthy();
   });
 
+  it('checks again on every restart with consent granted (no once-a-day skip)', async () => {
+    stubIpc('granted');
+
+    // First launch checks once.
+    const first = await createFixture();
+    expect(checkInvocations(tauri).length).toBe(1);
+    first.destroy();
+
+    // A fresh startup — a new page instance over a reset injector, the way a
+    // real restart boots — checks again instead of skipping for 24h.
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter([]),
+        provideMeetings(),
+        {
+          provide: ActivatedRoute,
+          useValue: { paramMap: new BehaviorSubject<ParamMap>(convertToParamMap({})) },
+        },
+      ],
+    });
+    const second = await createFixture();
+
+    const calls = checkInvocations(tauri);
+    expect(calls.length).toBe(2);
+    expect(calls[1]?.[1]).toEqual({ manual: false });
+    const facade = TestBed.inject(MeetingsFacade);
+    expect(facade.updates.lastCheck()).toEqual(expectedAvailable);
+    second.destroy();
+  });
+
   it('runs no update check on launch when consent is declined', async () => {
     stubIpc('declined');
 

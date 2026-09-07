@@ -138,7 +138,8 @@ export function describeLatestSpeakerUndo(history: readonly SpeakerOp[]): string
 
 /**
  * Loads the persisted consent on every launch; a `'granted'` result immediately
- * runs a throttled, non-blocking check. The consent read is this path's only
+ * runs an unthrottled, non-blocking check — every app start checks exactly
+ * once. The consent read is this path's only
  * fallible step, and the call site's `void` would drop a rejection with zero
  * diagnostics — a transient `update_consent` IPC failure then reads in the
  * shipped app exactly like "the launch check never runs at all". So the

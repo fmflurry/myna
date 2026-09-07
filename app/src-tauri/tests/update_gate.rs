@@ -1,7 +1,8 @@
 //! Guards the network gate in front of `check_for_update`: the update
 //! checker must not reach the network unless the user has granted
-//! consent, no meeting is recording, and (for automatic calls) the 24h
-//! throttle has elapsed. Every scenario here drives
+//! consent and no meeting is recording. Every consented, idle call
+//! checks — there is no once-a-day throttle (every app start checks
+//! exactly once). Every scenario here drives
 //! `commands::updates::decide_and_check` with a recording
 //! [`UpdateFetcher`] test double so "did we call the network" is a plain
 //! invocation count, never an actual HTTP request.
@@ -129,7 +130,10 @@ fn fetches_exactly_once_when_granted_idle_and_unthrottled() {
 }
 
 #[test]
-fn second_automatic_call_within_24h_is_throttled_with_zero_fetches() {
+fn second_automatic_call_checks_again_no_throttle() {
+    // Every-startup cadence: a second automatic call an hour after a
+    // success still fetches — the regression guard for "I still have to
+    // click on 'check updates' to actually check updates."
     let fetcher = RecordingFetcher::new(CannedOutcome::UpToDate);
     let now = OffsetDateTime::now_utc();
     let mut prefs = prefs_with(UpdateConsent::Granted, None);
@@ -138,21 +142,20 @@ fn second_automatic_call_within_24h_is_throttled_with_zero_fetches() {
     decide_and_check(&fetcher, &mut prefs, false, now, false);
     assert_eq!(fetcher.call_count(), 1);
 
-    // A second automatic call an hour later is throttled: no new fetch.
+    // A second automatic call an hour later checks again: a new fetch.
     let later = now + Duration::hours(1);
     let dto = decide_and_check(&fetcher, &mut prefs, false, later, false);
 
     assert_eq!(
         fetcher.call_count(),
-        1,
-        "throttled call must not reach the network"
+        2,
+        "every consented, idle startup must check — no 24h skip"
     );
-    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Skipped);
-    assert_eq!(dto.reason, Some(myna_app::dto::UpdateSkipReason::Throttled));
+    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::UpToDate);
 }
 
 #[test]
-fn manual_bypasses_the_throttle_but_not_the_consent_gate() {
+fn manual_does_not_bypass_the_consent_gate() {
     let now = OffsetDateTime::now_utc();
 
     // Manual, but consent was never granted: still zero fetches.
@@ -165,12 +168,12 @@ fn manual_bypasses_the_throttle_but_not_the_consent_gate() {
         "manual must not bypass the consent gate"
     );
 
-    // Manual, granted, and recently checked: throttle is bypassed, one fetch.
+    // Manual, granted, and recently checked: one fetch, same as automatic.
     let fetcher = RecordingFetcher::new(CannedOutcome::UpToDate);
     let recent = now - Duration::hours(1);
     let mut granted_prefs = prefs_with(UpdateConsent::Granted, Some(recent));
     decide_and_check(&fetcher, &mut granted_prefs, false, now, true);
-    assert_eq!(fetcher.call_count(), 1, "manual must bypass the throttle");
+    assert_eq!(fetcher.call_count(), 1, "manual must check");
 }
 
 #[test]
@@ -184,18 +187,14 @@ fn failed_fetch_leaves_last_check_at_untouched_so_autos_retry_soon() {
     assert_eq!(fetcher.call_count(), 1);
     assert_eq!(
         prefs.last_check_at, None,
-        "a failed fetch must not stamp last_check_at, or the next automatic check would be suppressed for 24h"
+        "a failed fetch must not stamp last_check_at"
     );
     assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Failed);
 
-    // The very next automatic check retries instead of being throttled.
+    // The very next automatic check retries.
     let soon = now + Duration::minutes(5);
     decide_and_check(&fetcher, &mut prefs, false, soon, false);
-    assert_eq!(
-        fetcher.call_count(),
-        2,
-        "failed autos must retry soon, not wait out the 24h success throttle"
-    );
+    assert_eq!(fetcher.call_count(), 2, "failed autos must retry soon");
 }
 
 #[test]

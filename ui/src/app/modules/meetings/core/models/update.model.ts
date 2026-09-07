@@ -9,9 +9,10 @@ export type UpdateConsent = 'unset' | 'granted' | 'declined';
 /**
  * Result of a check-for-update pass. A discriminated union on `status`:
  * `'skipped'` covers every reason the backend declined to check (no
- * consent yet, throttled, or a recording in progress), and `'failed'`
- * covers a check that ran but errored — both distinct from a genuine
- * `'up-to-date'` result.
+ * consent yet, a recording in progress — `'throttled'` is retained for
+ * wire compatibility but no longer emitted, since every consented idle
+ * launch checks), and `'failed'` covers a check that ran but errored —
+ * both distinct from a genuine `'up-to-date'` result.
  */
 export type UpdateCheck =
   | { readonly status: 'up-to-date' }

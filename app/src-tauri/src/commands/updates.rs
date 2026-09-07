@@ -6,7 +6,7 @@
 //! command in this crate that may reach the network — and only when
 //! [`update_prefs::decide_check`] says `Run`. The actual
 //! `tauri-plugin-updater` call is hidden behind [`UpdateFetcher`] so the
-//! consent/recording/throttle gate can be exercised in tests without ever
+//! consent/recording gate can be exercised in tests without ever
 //! constructing a live [`tauri::AppHandle`] or touching the network (see
 //! `tests/update_gate.rs`).
 
@@ -175,10 +175,8 @@ fn failed_dto(message: String) -> UpdateCheckDto {
 /// (never before) the call is deliberate: stamping first is exactly the
 /// bug that let a decode throttle elsewhere in this codebase run 40x/sec,
 /// because the cap never bound. A failed fetch leaves the timestamp
-/// untouched so the next automatic check retries soon instead of being
-/// suppressed for a full [`crate::update_prefs::CHECK_INTERVAL`]; the
-/// `Failed` DTO itself stays banner-silent by design (the banner renders
-/// only for `Available`).
+/// untouched; the `Failed` DTO itself stays banner-silent by design (the
+/// banner renders only for `Available`).
 fn run_check(
     fetcher: &dyn UpdateFetcher,
     prefs: &mut UpdatePrefs,
@@ -199,12 +197,13 @@ fn run_check(
 
 /// Full decision-and-maybe-fetch orchestration behind [`check_for_update`],
 /// minus the `AppHandle`/filesystem plumbing — split out so tests can drive
-/// the consent/recording/throttle gate with an in-memory [`UpdatePrefs`]
+/// the consent/recording gate with an in-memory [`UpdatePrefs`]
 /// and a recording [`UpdateFetcher`] test double, and assert exactly how
 /// many times `fetch()` ran. `fetcher.fetch()` is reached only when
 /// [`update_prefs::decide_check`] returns [`CheckDecision::Run`]; every
 /// `Skip*` decision returns straight from the match without touching
-/// `fetcher`.
+/// `fetcher`. `manual` is still accepted (part of the IPC shape) but no
+/// longer gates anything: every consented, idle call checks.
 pub fn decide_and_check(
     fetcher: &dyn UpdateFetcher,
     prefs: &mut UpdatePrefs,
@@ -220,17 +219,16 @@ pub fn decide_and_check(
         manual,
     ) {
         CheckDecision::SkipNoConsent => skipped_dto(UpdateSkipReason::NoConsent),
-        CheckDecision::SkipThrottled => skipped_dto(UpdateSkipReason::Throttled),
         CheckDecision::SkipRecording => skipped_dto(UpdateSkipReason::Recording),
         CheckDecision::Run => run_check(fetcher, prefs, now),
     }
 }
 
-/// Checks for an update, gated by the user's consent, current recording
-/// state, and (for non-manual calls) the 24h throttle — see
-/// [`update_prefs::decide_check`] for the exact precedence. Never reaches
-/// the network unless consent is `Granted`: every `Skip*` branch of
-/// [`decide_and_check`] returns before `fetcher.fetch()` is ever called.
+/// Checks for an update, gated by the user's consent and current recording
+/// state — see [`update_prefs::decide_check`] for the exact precedence.
+/// Every consented, idle call checks (no once-a-day throttle). Never
+/// reaches the network unless consent is `Granted`: every `Skip*` branch
+/// of [`decide_and_check`] returns before `fetcher.fetch()` is ever called.
 #[tauri::command]
 pub fn check_for_update(
     app: AppHandle,

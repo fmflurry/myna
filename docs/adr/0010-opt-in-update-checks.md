@@ -10,7 +10,7 @@
 Add **opt-in update checks** that:
 - **Off by default** — unset consent, no check until the user opts in.
 - **Notify-only, never auto-install** — download and install are user-initiated; Myna presents a link and a choice, never silently replaces itself.
-- **One request per 24 hours** — checked once on launch and then throttled; never triggered while recording.
+- **Checked on every launch** — each app start with granted consent runs exactly one check (no once-a-day throttle, so users never fall back to the manual button); never triggered while recording.
 - **Static manifest endpoint** — no URL templating (Tauri supports `{{target}}/{{arch}}/{{current_version}}` but we deliberately omit it); every user fetches the same public file and version comparison happens locally.
 - **Minimal disclosure** — the HTTP request sends only:
   - **IP address** (to `github.com` and its redirect target `objects.githubusercontent.com`)
@@ -43,9 +43,9 @@ Templated endpoints (e.g., `.../releases/latest/download/{version}-{arch}.json`)
 
 If the server were to return only the version number or a yes/no decision, the server learns which version a user is running. By returning the entire manifest (name, version, notes, pub_date, signature) to every request, the server learns nothing — every user's request is identical and the server's response is identical.
 
-### Cadence: once per 24 hours, never while recording
+### Cadence: every launch, never while recording
 
-Polling more frequently than once per 24 hours creates unnecessary network chatter. Checking while recording would create a race: if an update is available and the user is mid-transcription, notifications could distract or interrupt the workflow. Once recording stops, the next check (if 24 hours have passed) is fair game.
+Each app start with granted consent runs exactly one check — the earlier once-per-24-hours throttle was removed because it forced users back onto the manual "check updates" button. One small manifest fetch per launch is negligible chatter. Checking while recording would create a race: if an update is available and the user is mid-transcription, notifications could distract or interrupt the workflow. Once recording stops, the next launch checks.
 
 ### Why the User-Agent is fixed?
 
@@ -80,7 +80,7 @@ Polling more frequently than once per 24 hours creates unnecessary network chatt
 - Opt-in users get update notifications without the privacy cost of auto-check (e.g., no version leakage, no architecture fingerprint).
 - Notify-only prevents the TCC permission revocation bug.
 - Rust-side plugin gating means the webview can never be exploited to trigger egress.
-- Cadence (once per 24h, not while recording) keeps network overhead negligible (~1 KB per request).
+- Cadence (once per launch, not while recording) keeps network overhead negligible (~1 KB per request).
 
 ### Negative
 - Users accustomed to "install and forget" auto-update workflows will need to manually re-download and re-install.
@@ -98,7 +98,7 @@ Polling more frequently than once per 24 hours creates unnecessary network chatt
 
 ## Testing
 
-- Rust-side: unit tests for the update-check plugin verify that requests are rate-limited to ≤1 per 24h and that recording blocks checks.
+- Rust-side: unit tests for the update-check plugin verify that every consented idle launch checks (no throttle) and that recording blocks checks.
 - UI: component tests verify the consent dialog renders with accurate copy and that clicking "Turn on" and "No thanks" persist the preference correctly.
 - Integration: end-to-end test verifies that a user who opted in sees a notification when a newer version is available on GitHub.
 

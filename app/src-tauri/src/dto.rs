@@ -352,6 +352,10 @@ pub enum UpdateCheckStatus {
 /// Why a `check_for_update` call was skipped without ever reaching the
 /// network — populated only when [`UpdateCheckDto::status`] is
 /// [`UpdateCheckStatus::Skipped`].
+///
+/// `Throttled` is retained for wire compatibility (older backends could
+/// emit it; the UI still accepts it) but is no longer emitted: every
+/// consented, idle call checks on every app start.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateSkipReason {

@@ -12,7 +12,7 @@ import { UpdatesPort } from '../../core/ports/updates.port';
 /**
  * In-memory UpdatesPort implementation for specs and the placeholder
  * providers. Records every `check()` call's `manual` argument into
- * {@link checkCalls} so specs can assert call counts (e.g. throttling
+ * {@link checkCalls} so specs can assert call counts (e.g. every-startup
  * behavior) without spying on a real IPC boundary. The install event
  * streams mirror `InMemoryAudioImportFake`'s Subject pattern.
  */
