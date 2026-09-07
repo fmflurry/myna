@@ -25,6 +25,7 @@ export const COMMAND_NAMES = [
   'cancel_recording',
   'recording_state',
   'get_live_transcript',
+  'edit_live_transcript_segment',
   'list_meetings',
   'get_meeting',
   'delete_meeting',
@@ -75,6 +76,9 @@ export const COMMAND_NAMES = [
   'get_template_prompt',
   'set_template_prompt',
   'reset_template_prompt',
+  'get_storage_location',
+  'set_storage_location',
+  'reset_storage_location',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -173,6 +177,15 @@ export interface CommandSignatures {
   readonly get_live_transcript: {
     args: { readonly meetingId: string };
     result: TranscriptDto | null;
+  };
+  /**
+   * Corrects a live journal segment's text. Rejects when `meetingId` is not
+   * the active recording, the index is out of range, or the trimmed text is
+   * empty/unchanged. Resolves with the patched live transcript.
+   */
+  readonly edit_live_transcript_segment: {
+    args: { readonly meetingId: string; readonly segmentIndex: number; readonly text: string };
+    result: TranscriptDto;
   };
   readonly list_meetings: { args: NoArgs; result: readonly MeetingDto[] };
   readonly get_meeting: { args: { readonly id: string }; result: MeetingDto };
@@ -336,6 +349,29 @@ export interface CommandSignatures {
   };
   readonly install_update: { args: NoArgs; result: UpdateInstallResultDto };
   readonly restart_app: { args: NoArgs; result: void };
+  readonly get_storage_location: { args: NoArgs; result: string };
+  readonly set_storage_location: {
+    args: { readonly path: string; readonly moveExisting?: boolean };
+    result: StorageLocationResultDto;
+  };
+  readonly reset_storage_location: {
+    args: { readonly moveExisting?: boolean };
+    result: StorageLocationResultDto;
+  };
+}
+
+/**
+ * Mirrors the Rust `StorageLocationResult` (`#[serde(rename_all =
+ * "camelCase")]`, `app/src-tauri/src/commands/storage.rs`) — the outcome of
+ * `set_storage_location`/`reset_storage_location`. `restartRequired` is true
+ * whenever the location actually changed (the live stores are never
+ * re-rooted; the next boot takes effect). Precedence (`MYNA_DATA_DIR` >
+ * pointer > `~/myna`) describes meetings/preferences/folders only — models
+ * always resolve to `~/myna/models` (`MYNA_MODELS_DIR` only override).
+ */
+export interface StorageLocationResultDto {
+  readonly path: string;
+  readonly restartRequired: boolean;
 }
 
 export type CommandArgs<C extends CommandName> = CommandSignatures[C]['args'];

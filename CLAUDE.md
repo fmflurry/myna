@@ -102,7 +102,7 @@ System audio capture uses **Core Audio process taps** (see [ADR 0007](docs/adr/0
 - **`models/`** is gitignored — downloaded artifacts (`.gguf`, `.onnx`) are never committed; fetched once via `./scripts/download-models.sh` and stored locally.
 - **`templates/`** is user-extensible JSON — same files drive both the CLI and the GUI; add new summary types without recompiling.
 - **`data/`** is machine-local runtime data (gitignored) — never commit recordings, transcripts, or caches.
-- **`~/myna`** is the data root (recordings, transcripts, summaries). Override with `MYNA_DATA_DIR` environment variable. Note: the directory is **not** `~/.myna` (no dot prefix).
+- **`~/myna`** is the meetings data root (meetings, preferences, folders). Configurable via `MYNA_DATA_DIR` > Settings pointer > `~/myna`. Models are fixed at `~/myna/models` (`MYNA_MODELS_DIR` only override) — `MYNA_DATA_DIR` never affects models. Note: the directory is **not** `~/.myna` (no dot prefix).
 
 ## Verification
 
@@ -172,7 +172,7 @@ npx tauri info && npx tauri dev && npx tauri build --no-bundle
 
 - **`cargo` is not on the non-interactive PATH.** Prefix every invocation with `export PATH="$HOME/.cargo/bin:$PATH"; `. Prevents "cargo: command not found" in non-login shells.
 - `unsafe_code = "forbid"` is workspace-wide and has never needed an override—keep it that way; the chosen crates all expose safe APIs.
-- Models live at `~/myna/models` (data root `~/myna`, `MYNA_DATA_DIR` / `MYNA_MODELS_DIR` overrides). Templates are bundled into the app as Tauri resources.
+- Models are fixed at `~/myna/models` (`MYNA_MODELS_DIR` only override) — `MYNA_DATA_DIR` never affects models. Templates are bundled into the app as Tauri resources.
 - Self-host fonts; never `@import` from a CDN. The CSP is `default-src 'self'` and the product promise is fully local.
 
 ### Working with the user

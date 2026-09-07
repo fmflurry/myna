@@ -138,10 +138,10 @@ cp -r ~/myna ~/backups/myna-$(date +%Y%m%d)
 
 ## Where Data Lives
 
-All meeting data is stored locally at:
+All meeting data is stored locally under one **data root** (default `~/myna/`):
 
 ```
-~/myna/meetings/<id>/
+<data-root>/meetings/<id>/
 ├── meeting.json              # Metadata and transcript
 ├── audio.wav                 # Recording (16 kHz, 16-bit mono)
 └── summaries/
@@ -151,11 +151,21 @@ All meeting data is stored locally at:
     └── decisions.md
 ```
 
+The data root also holds `preferences.json` and `folders.json` — the whole root moves together.
+
 **Nothing is uploaded to the cloud.** Your recordings and summaries stay on your machine.
+
+### Change Storage Location (Settings)
+
+Open **Settings** (cogwheel) → **Storage** → **Change**, pick a folder, choose **Move** (checked by default: migrate existing meetings) or uncheck to **Stay** (start empty at the new location, old folder left untouched), confirm the source→destination text, and restart Myna when prompted. iCloud Drive locations (under `~/Library/Mobile Documents/`) are accepted. **Reset** returns to `~/myna/` (restart required) and asks the same move-vs-stay choice.
+
+- Changing location is disabled while recording, stopping, importing, or summarizing — stop first.
+- If the custom folder goes missing (unplugged drive, deleted folder), Myna shows an error with a **Reset** option instead of silently using `~/myna/` — so your library never splits across two places.
+- Model weights (~5.4 GB) stay fixed at `~/myna/models` (`MYNA_MODELS_DIR` only override); they never migrate with meetings, migration skips top-level `models/`, and `MYNA_DATA_DIR` never affects models.
 
 ### Override Data Location (Development)
 
-For testing or development, set the `MYNA_DATA_DIR` environment variable:
+`MYNA_DATA_DIR` wins over the Settings pointer for meetings only (precedence: `MYNA_DATA_DIR` env > stored Settings location > `~/myna` fallback; models stay fixed at `~/myna/models` — `MYNA_DATA_DIR` never affects models):
 
 ```bash
 export MYNA_DATA_DIR=/tmp/myna-test

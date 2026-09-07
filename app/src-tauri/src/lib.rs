@@ -5,6 +5,7 @@
 //! models, templates) read from and write to.
 
 pub mod commands;
+pub mod diarize_judge;
 pub mod domain;
 pub mod dto;
 pub mod error;
@@ -17,11 +18,13 @@ pub mod recovery;
 pub mod session;
 pub mod session_manifest;
 pub mod state;
+pub mod storage_prefs;
 pub mod store;
 pub mod summary_prefs;
 pub mod template_prefs;
 pub mod update_prefs;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -30,6 +33,30 @@ use crate::model_init::ModelDownloadManager;
 use crate::state::AppState;
 use crate::store::folder_store::FsFolderStore;
 use crate::store::fs_store::FsMeetingStore;
+
+/// Logs a loud boot warning when complete model weights are stranded under
+/// the effective data root while the fixed `~/myna/models` is missing or
+/// incomplete — i.e. a pre-skip migration dragged them along. Read-only:
+/// `models_status` keeps reporting the fixed path, stranded weights are
+/// never read back silently.
+fn log_stranded_models(root: &Path) {
+    if let Some(stranded) = paths::stranded_models_at(root) {
+        let fixed = paths::default_data_root()
+            .map(|dir| {
+                dir.join(paths::MODELS_DIR_NAME)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .unwrap_or_else(|_| "~/myna/models".to_string());
+        eprintln!(
+            "myna-app: WARNING: complete model weights found stranded at {} \
+             while the fixed models root ({fixed}) is missing or incomplete — \
+             models load from the fixed root only; move the weights back to \
+             {fixed} or re-download them there",
+            stranded.display()
+        );
+    }
+}
 
 /// Build and run the Tauri application.
 pub fn run() {
@@ -46,10 +73,15 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let root = paths::data_root()?;
+            let root = paths::effective_data_root_for_app(app.handle())?;
             if let Err(err) = paths::harden_existing_data_root(&root) {
                 eprintln!("failed to harden pre-existing data root permissions: {err}");
             }
+            // A pre-skip migration may have dragged the multi-GB weights
+            // under a custom storage location: flag it loudly (read-only —
+            // `models_status` keeps reporting the fixed path, stranded
+            // weights are never read back silently).
+            log_stranded_models(&root);
             let store = FsMeetingStore::new(root.clone());
             // ADR 0011: every `session.json` manifest found at this point is
             // an orphan — no session can exist yet in this process. Fold each
@@ -82,6 +114,7 @@ pub fn run() {
             commands::recording::cancel_recording,
             commands::recording::recording_state,
             commands::recording::get_live_transcript,
+            commands::recording::edit_live_transcript_segment,
             commands::import::import_audio,
             commands::import::retranscribe_meeting,
             commands::import::cancel_import,
@@ -119,6 +152,9 @@ pub fn run() {
             commands::summary::delete_summary,
             commands::summary::get_summary_guidelines,
             commands::summary::set_summary_guidelines,
+            commands::storage::get_storage_location,
+            commands::storage::set_storage_location,
+            commands::storage::reset_storage_location,
             commands::models::models_status,
             commands::models::start_model_download,
             commands::models::start_diarization_download,

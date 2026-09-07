@@ -11,11 +11,13 @@ wiring, per docs/stack-proposal.md.
     `opener` plugins. The invoke handler is intentionally empty; the typed
     `#[tauri::command]` surface is added in a later phase.
   - `src/main.rs` — binary entry point.
-  - `src/paths.rs` — resolves on-disk locations: the user's data root
-    (`~/myna` by default, overridable via `MYNA_DATA_DIR`), the meetings
-    directory, and the models/templates resource directories (repo-relative
-    in dev, bundled resources in release; overridable via `MYNA_MODELS_DIR`
-    / `MYNA_TEMPLATES_DIR`).
+  - `src/paths.rs` — resolves on-disk locations: the meetings data root
+    (`~/myna` by default; `MYNA_DATA_DIR` > Settings pointer > `~/myna`,
+    meetings/preferences/folders only — `MYNA_DATA_DIR` never affects
+    models), the meetings directory, and the fixed models/templates
+    resource directories (repo-relative in dev, bundled resources in
+    release; models fixed at `~/myna/models`, `MYNA_MODELS_DIR` only
+    override; templates overridable via `MYNA_TEMPLATES_DIR`).
   - `tauri.conf.json` — window, CSP, and bundle configuration.
   - `capabilities/default.json` — the main window's permission set
     (`core:default`, `dialog:allow-save`, `opener:allow-open-url`). No

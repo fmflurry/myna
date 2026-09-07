@@ -114,11 +114,13 @@ fn reports_all_present_with_complete_artifacts() {
     );
 }
 
-/// [`paths::resolve_models_root`] takes its `MYNA_MODELS_DIR` /
-/// `MYNA_DATA_DIR` overrides and debug-vs-release as explicit parameters
-/// (rather than reading real process env vars), so precedence is
-/// exercised here without mutating process-global state — which would
-/// otherwise require `unsafe`, forbidden workspace-wide.
+/// [`paths::resolve_models_root`] takes its `MYNA_MODELS_DIR` override and
+/// debug-vs-release as explicit parameters (rather than reading real process
+/// env vars), so precedence is exercised here without mutating
+/// process-global state — which would otherwise require `unsafe`, forbidden
+/// workspace-wide. Models never consult the data-dir override or the
+/// persisted storage pointer: meetings follow the effective data root,
+/// models stay pinned to the fixed `~/myna/models`.
 #[test]
 fn models_root_override_wins_regardless_of_debug_or_release() {
     // Arrange
@@ -126,24 +128,27 @@ fn models_root_override_wins_regardless_of_debug_or_release() {
 
     // Act / Assert
     assert_eq!(
-        paths::resolve_models_root(Some(override_dir.path().to_path_buf()), None, true),
+        paths::resolve_models_root(Some(override_dir.path().to_path_buf()), true),
         override_dir.path()
     );
     assert_eq!(
-        paths::resolve_models_root(Some(override_dir.path().to_path_buf()), None, false),
+        paths::resolve_models_root(Some(override_dir.path().to_path_buf()), false),
         override_dir.path()
     );
 }
 
 #[test]
-fn models_root_release_build_resolves_under_data_root() {
-    // Arrange: no MYNA_MODELS_DIR override; a data-root override standing
-    // in for the packaged app's `~/myna` default.
-    let data_root = tempfile::tempdir().expect("tempdir");
+fn models_root_release_build_resolves_to_fixed_models_root() {
+    // Arrange: no MYNA_MODELS_DIR override — the release path is the fixed
+    // `~/myna/models`, never under a custom data root.
 
     // Act
-    let resolved = paths::resolve_models_root(None, Some(data_root.path().to_path_buf()), false);
+    let resolved = paths::resolve_models_root(None, false);
 
-    // Assert
-    assert_eq!(resolved, data_root.path().join("models"));
+    // Assert: pinned to the fixed location (ends in `models`, not under a
+    // caller-supplied data root).
+    assert_eq!(
+        resolved.file_name().expect("file name").to_string_lossy(),
+        "models"
+    );
 }

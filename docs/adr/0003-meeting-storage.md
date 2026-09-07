@@ -7,7 +7,7 @@
 ## Decision
 
 Use **filesystem JSON** for meeting storage:
-- **Data root**: `~/myna/` (user's home directory). Override via `MYNA_DATA_DIR` environment variable for development and tests.
+- **Data root**: `~/myna/` (user's home directory) for meetings/preferences/folders. Override via `MYNA_DATA_DIR` environment variable for development and tests. Models are fixed at `~/myna/models` (`MYNA_MODELS_DIR` only override) — `MYNA_DATA_DIR` never affects models.
 - **Layout**:
   ```
   ~/myna/

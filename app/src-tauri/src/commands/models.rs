@@ -80,10 +80,11 @@ pub struct ModelsStatusDto {
     /// silero ONLY. Deliberately does NOT include `diarization` — see that
     /// field's docs.
     pub all_present: bool,
-    /// The real, resolved directory the app is looking in for models (e.g.
-    /// `~/myna/models`, or the `MYNA_MODELS_DIR` override), so onboarding
-    /// can tell the user exactly where models are expected rather than an
-    /// invisible internal path.
+    /// The real, resolved directory the app is looking in for models (the
+    /// fixed `~/myna/models`, or the `MYNA_MODELS_DIR` override), so
+    /// onboarding can tell the user exactly where models are expected
+    /// rather than an invisible internal path. Meetings follow the
+    /// effective data root; models never do.
     pub models_root: String,
 }
 

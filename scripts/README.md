@@ -11,7 +11,9 @@ Qwen2.5-7B-Instruct GGUF (Q4_K_M, two shards), and the silero VAD ONNX model —
 any artifact already present.
 
 Override the destination with `MYNA_MODELS_DIR` (same env var the app
-honours) or `--dest <dir>`.
+honours) or `--dest <dir>`. Models are fixed at `~/myna/models`
+(`MYNA_MODELS_DIR` only override): `MYNA_DATA_DIR` and the Settings storage
+location never affect this destination — they move meetings/preferences/folders only.
 
 Downloads use `curl` against each artifact's Hugging Face `resolve/main` URL
 directly (the Qwen model is fetched as its two GGUF shards); no `hf` CLI is
