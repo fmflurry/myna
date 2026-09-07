@@ -34,4 +34,8 @@ Every template file matches `schema.json` (JSON Schema draft 2020-12):
 
 ## Extending
 
-Drop a new `*.json` file matching `schema.json` into this directory; it is picked up automatically by `myna-llm::template::list_templates` (sorted by `name`). `schema.json` itself is skipped by discovery. Files that fail to parse or fail validation are skipped individually rather than aborting discovery of the other templates.
+Drop a new `*.json` file matching `schema.json` into this directory; it is picked up automatically by `myna-llm::template::list_templates` (sorted by `name`). `schema.json` itself is skipped by discovery. Files that fail to parse or fail validation are skipped individually rather than aborting discovery of the other templates. Adding a type needs no recompile — same files drive both the CLI and the GUI.
+
+## Per-Template Prompt Overrides
+
+Users can replace any template's `prompt` at runtime from the GUI (per-tab cogwheel) without editing these files. Overrides are stored in `<data_root>/preferences.json` under the `"template_prompts"` key (`~/myna` by default, `MYNA_DATA_DIR` override; each capped at 12000 Unicode scalars) and apply to future summaries of that type globally — not per meeting. Validation matches the file rules above: non-empty, `{transcript}` required, no unknown `{...}` tokens, and a template without `{language}` gets the `Write your entire response in <Label>.` directive appended automatically. When both exist, the override wins; deleting the `*.json` file hides the tab even if a stored override remains. See [Custom Template Prompts](../docs/custom-template-prompts.md).

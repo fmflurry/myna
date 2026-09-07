@@ -31,6 +31,7 @@ use crate::session::guard_not_recording;
 use crate::state::AppState;
 use crate::store::MeetingStore;
 use crate::summary_prefs;
+use crate::template_prefs;
 
 /// Seconds in one minute, used by [`format_duration`].
 const SECONDS_PER_MINUTE: u32 = 60;
@@ -544,10 +545,26 @@ fn run_inference(
 /// Loads `template_name` from the templates root by discovering every valid
 /// template rather than trusting the name as a path segment.
 fn load_template(app: &AppHandle, template_name: &str) -> Result<Template, AppError> {
-    myna_llm::list_templates(&paths::templates_root(app))?
+    let builtin = myna_llm::list_templates(&paths::templates_root(app))?
         .into_iter()
         .find(|candidate| candidate.name == template_name)
-        .ok_or_else(|| AppError::NotFound(format!("template '{template_name}'")))
+        .ok_or_else(|| AppError::NotFound(format!("template '{template_name}'")))?;
+    let Ok(root) = paths::data_root() else {
+        return Ok(builtin);
+    };
+    let prefs = template_prefs::load(&root);
+    let Some(override_prompt) = prefs.get(template_name) else {
+        return Ok(builtin);
+    };
+    let mut effective = builtin.clone();
+    effective.prompt = override_prompt.to_string();
+    if let Err(err) = effective.validate() {
+        eprintln!(
+            "myna-app: skipping corrupt prompt override for template '{template_name}': {err}"
+        );
+        return Ok(builtin);
+    }
+    Ok(effective)
 }
 
 /// Builds the render context from `meeting`'s transcript, the resolved

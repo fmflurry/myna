@@ -236,7 +236,9 @@ pub fn restart_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), App
         let bundle = current_exe.as_ref().and_then(|exe| relaunch_target(exe));
         if let Some(bundle) = bundle {
             let args: Vec<String> = std::env::args().skip(1).collect();
-            eprintln!("myna-app: restart_app current_exe={current_exe:?} bundle={bundle:?} args={args:?}");
+            eprintln!(
+                "myna-app: restart_app current_exe={current_exe:?} bundle={bundle:?} args={args:?}"
+            );
             // Release Tauri resources before leaving this process behind —
             // the relaunched bundle is a NEW process, so no Tauri API may
             // run after this point.

@@ -18,6 +18,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
 }
 
 .status {
@@ -77,7 +79,8 @@
 .summary-input {
   display: block;
   width: 100%;
-  max-width: var(--measure-reading);
+  max-width: 100%;
+  min-width: 0;
   resize: none;
   overflow: hidden;
   font-family: var(--font-sans);
@@ -119,15 +122,94 @@
 
 .markdown {
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   font-family: var(--font-sans);
   font-size: 0.95rem;
   line-height: var(--line-height-relaxed);
-  max-width: var(--measure-reading);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-4);
   margin: 0;
+
+  h1,
+  h2,
+  h3 {
+    margin: 0 0 var(--space-2);
+    font-size: 0.95rem;
+    line-height: var(--line-height-relaxed);
+    font-weight: 700;
+  }
+
+  p {
+    margin: 0 0 var(--space-2);
+    font-size: 0.95rem;
+    line-height: var(--line-height-relaxed);
+  }
+
+  ul,
+  ol {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-4);
+    font-size: 0.95rem;
+    line-height: var(--line-height-relaxed);
+  }
+
+  li {
+    margin: 0 0 var(--space-1);
+  }
+
+  strong {
+    font-weight: 700;
+  }
+
+  em {
+    font-style: italic;
+  }
+
+  code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85rem;
+    background: var(--color-background, transparent);
+    border-radius: var(--radius-sm);
+    padding: 0.1em 0.3em;
+  }
+
+  pre {
+    margin: 0 0 var(--space-2);
+    padding: var(--space-3);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    line-height: var(--line-height-relaxed);
+  }
+
+  blockquote {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-3);
+    border-left: 3px solid var(--color-border);
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+    line-height: var(--line-height-relaxed);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 var(--space-2);
+    font-size: 0.95rem;
+    line-height: var(--line-height-relaxed);
+  }
+
+  a {
+    color: var(--color-accent);
+    text-decoration: underline;
+  }
 }
 
 .empty {
@@ -142,4 +224,80 @@
   background: var(--color-surface);
   color: var(--color-text-muted);
   font-size: 0.85rem;
+}
+
+/*
+ * Find-in-summary overlay bar: sticky to the top of the panel so it stays
+ * visible over long summaries without covering content on small screens.
+ */
+.search-bar {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.search-input {
+  min-width: 0;
+  flex: 1;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.search-input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.search-count {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.search-hint {
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.search-prev,
+.search-next,
+.search-close {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.search-prev:disabled,
+.search-next:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.markdown mark[data-search-mark] {
+  background: var(--color-mark, #fff3a3);
+  border-radius: 2px;
+  color: inherit;
+}
+
+.markdown mark[data-search-mark].current,
+.markdown mark[data-search-mark][aria-current='true'] {
+  background: var(--color-mark-current, #ffc53d);
+  outline: 1px solid var(--color-accent);
+  color: inherit;
 }

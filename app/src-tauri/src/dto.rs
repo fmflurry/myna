@@ -301,6 +301,20 @@ impl From<Meeting> for MeetingDto {
     }
 }
 
+/// One playable segment of a meeting's audio, IPC-facing.
+///
+/// Mirrors the UI's `get_meeting_audio_chunks` wire shape (`camelCase`):
+/// an absolute filesystem `path` plus its position on the meeting's global
+/// timeline (`start_sec`) and its length (`duration_sec`; `0.0` when the
+/// backend could not determine it — see the UI's `AudioChunk` port).
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioChunkDto {
+    pub path: String,
+    pub start_sec: f32,
+    pub duration_sec: f32,
+}
+
 /// A [`Folder`], IPC-facing.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

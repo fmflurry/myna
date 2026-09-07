@@ -13,7 +13,7 @@ use time::{Month, OffsetDateTime};
 
 use crate::commands::recording::lock_session;
 use crate::domain::MeetingId;
-use crate::dto::{MeetingDto, TranscriptDto, TranscriptSegmentInput};
+use crate::dto::{AudioChunkDto, MeetingDto, TranscriptDto, TranscriptSegmentInput};
 use crate::error::AppError;
 use crate::ingest;
 use crate::session::guard_not_recording;
@@ -139,6 +139,136 @@ pub async fn get_meeting_audio_path(
             "get_meeting_audio_path worker thread panicked".to_string(),
         ))
     })
+}
+
+/// Ordered playable chunks of a meeting's `audio.wav` recording for
+/// seamless multipart WAV playback.
+///
+/// Enumerates the base `audio.wav` plus its sequential
+/// `audio.part-0002.wav` companions (see `SegmentedWavRecorder`'s naming),
+/// in backend order with global-timeline offsets. A legacy single-file
+/// meeting yields exactly one chunk; a meeting with no audio yields an
+/// empty array. A chunk whose duration cannot be determined still yields
+/// its path with `duration_sec: 0.0` (see the UI's `AudioChunk` port).
+#[tauri::command]
+pub async fn get_meeting_audio_chunks(
+    app: AppHandle,
+    id: String,
+) -> Result<Vec<AudioChunkDto>, AppError> {
+    let meeting_id = parse_meeting_id(&id)?;
+    let store = app.state::<AppState>().store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = store.audio_path(meeting_id);
+        if !base.exists() {
+            return Ok(Vec::new());
+        }
+        let mut chunks = Vec::new();
+        let mut start_sec = 0.0_f32;
+        let mut part_number = 1_usize;
+        loop {
+            let part_path = segmented_part_path(&base, part_number);
+            if !part_path.exists() {
+                break;
+            }
+            let duration_sec = wav_duration_sec(&part_path).unwrap_or(0.0);
+            let path = part_path
+                .canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| part_path.to_string_lossy().into_owned());
+            chunks.push(AudioChunkDto {
+                path,
+                start_sec,
+                duration_sec,
+            });
+            start_sec += duration_sec;
+            part_number += 1;
+            if part_number > 9999 {
+                break;
+            }
+        }
+        Ok(chunks)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(AppError::Store(
+            "get_meeting_audio_chunks worker thread panicked".to_string(),
+        ))
+    })
+}
+
+/// Resolves the on-disk path of part `part_number` of a segmented WAV
+/// recording rooted at `base_path`: part 1 is the base file itself, parts
+/// 2+ are `{stem}.part-{NNNN}.wav` beside it — the same naming as
+/// `SegmentedWavRecorder` and `myna_stt::wav::read_wav_parts_to_f32`.
+fn segmented_part_path(base_path: &std::path::Path, part_number: usize) -> std::path::PathBuf {
+    if part_number <= 1 {
+        return base_path.to_path_buf();
+    }
+    let stem = base_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("audio");
+    let parent = base_path.parent();
+    let file_name = format!("{stem}.part-{part_number:04}.wav");
+    match parent {
+        Some(dir) => dir.join(file_name),
+        None => std::path::PathBuf::from(file_name),
+    }
+}
+
+/// Reads a WAV file's duration in seconds from its RIFF header using only
+/// `std` (the app crate has no runtime `hound` dependency). Parses the
+/// `fmt ` chunk for the sample rate / channels / bit depth and the `data`
+/// chunk for the payload size; returns `None` when the file is missing,
+/// truncated, or not a decodable PCM WAV — callers degrade to `0.0`.
+fn wav_duration_sec(path: &std::path::Path) -> Option<f32> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut offset = 12_usize;
+    let mut sample_rate: Option<u32> = None;
+    let mut channels: Option<u16> = None;
+    let mut bits_per_sample: Option<u16> = None;
+    let mut data_bytes: Option<u32> = None;
+    while offset + 8 <= bytes.len() {
+        let chunk_id = &bytes[offset..offset + 4];
+        let chunk_len = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().ok()?) as usize;
+        let body_start = offset + 8;
+        let body_end = body_start.checked_add(chunk_len)?;
+        if body_end > bytes.len() {
+            return None;
+        }
+        if chunk_id == b"fmt " {
+            if chunk_len < 16 {
+                return None;
+            }
+            channels = Some(u16::from_le_bytes(
+                bytes[body_start + 2..body_start + 4].try_into().ok()?,
+            ));
+            sample_rate = Some(u32::from_le_bytes(
+                bytes[body_start + 4..body_start + 8].try_into().ok()?,
+            ));
+            bits_per_sample = Some(u16::from_le_bytes(
+                bytes[body_start + 14..body_start + 16].try_into().ok()?,
+            ));
+        } else if chunk_id == b"data" {
+            data_bytes = Some(chunk_len as u32);
+        }
+        offset = body_end + (chunk_len % 2);
+    }
+    let sample_rate = sample_rate?;
+    let channels = u32::from(channels?);
+    let bits = u32::from(bits_per_sample?);
+    let data_bytes = data_bytes? as f32;
+    if sample_rate == 0 || channels == 0 || bits == 0 {
+        return None;
+    }
+    let bytes_per_sec = sample_rate as f32 * channels as f32 * bits as f32 / 8.0;
+    if bytes_per_sec <= 0.0 {
+        return None;
+    }
+    Some(data_bytes / bytes_per_sec)
 }
 
 /// Renames a meeting.

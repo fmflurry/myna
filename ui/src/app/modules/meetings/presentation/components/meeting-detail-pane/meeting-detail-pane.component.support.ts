@@ -1,3 +1,5 @@
+// Scoped cap: per-template prompt helpers must sit beside computeActiveTemplateLabel by tab-strip ownership; prefer extracting over raising.
+/* eslint max-lines: ["error", 470] */
 import { DEFAULT_SUMMARY_INSTRUCTIONS_DRAFT } from '../../../application/stores/summary-instructions-preferences.util';
 import type { SummaryCacheEntry, SummarizingKey } from '../../../application/stores/meetings.store';
 import { summaryCacheKey } from '../../../application/stores/meetings.store';
@@ -393,6 +395,72 @@ export const computeMetaLine = (
 export const computeActiveTemplateLabel = (templates: readonly SummaryTemplate[], tab: string): string => {
   const template = templates.find((candidate) => candidate.name === tab);
   return template ? formatTemplateLabel(template) : tab;
+};
+
+/** Placeholders recognized inside a template prompt — mirrors `myna-llm` `PLACEHOLDERS`. */
+export const TEMPLATE_PROMPT_PLACEHOLDERS: readonly string[] = [
+  '{transcript}',
+  '{duration}',
+  '{title}',
+  '{language}',
+];
+
+/**
+ * Effective prompt for `name`: the persisted override when one exists,
+ * otherwise the built-in template's prompt. Falls back to `''` when no
+ * built-in template carries that name. Pure — no framework deps.
+ */
+export const computeEffectivePrompt = (
+  templates: readonly SummaryTemplate[],
+  overrides: ReadonlyMap<string, string>,
+  name: string,
+): string => {
+  const override = overrides.get(name);
+  if (override !== undefined) {
+    return override;
+  }
+  return templates.find((candidate) => candidate.name === name)?.prompt ?? '';
+};
+
+/** Scans `prompt` for `{...}` tokens and returns the first one outside {@link TEMPLATE_PROMPT_PLACEHOLDERS}, if any. */
+const firstUnknownPlaceholder = (prompt: string): string | undefined => {
+  let searchFrom = 0;
+  while (searchFrom < prompt.length) {
+    const start = prompt.indexOf('{', searchFrom);
+    if (start === -1) {
+      return undefined;
+    }
+    const end = prompt.indexOf('}', start + 1);
+    if (end === -1) {
+      return undefined;
+    }
+    const token = prompt.slice(start, end + 1);
+    if (!TEMPLATE_PROMPT_PLACEHOLDERS.includes(token)) {
+      return token;
+    }
+    searchFrom = end + 1;
+  }
+  return undefined;
+};
+
+/**
+ * Client-side mirror of the Rust `set_template_prompt` prompt rules
+ * (`Template::validate`): non-empty, contains the `{transcript}`
+ * placeholder, and contains no unknown `{...}` placeholders. Returns an
+ * error message, or `undefined` when the text is valid. Pure.
+ */
+export const validatePromptText = (prompt: string): string | undefined => {
+  if (prompt.trim() === '') {
+    return 'Prompt must not be empty.';
+  }
+  if (!prompt.includes('{transcript}')) {
+    return 'Prompt must contain the {transcript} placeholder.';
+  }
+  const unknown = firstUnknownPlaceholder(prompt);
+  if (unknown !== undefined) {
+    return `Prompt contains unknown placeholder '${unknown}'.`;
+  }
+  return undefined;
 };
 
 /** Label of the selected summary language; falls back to the raw code when the list hasn't loaded. */

@@ -82,6 +82,14 @@ export interface MeetingsStoreConfig {
   PARTIAL_TEXT_OTHERS: string;
   LEVEL: AudioLevel;
   TEMPLATES: readonly SummaryTemplate[];
+  /**
+   * Per-template prompt overrides keyed by template name; the server (via
+   * `TemplateRepositoryPort`) is the source of truth — this slot is a cache.
+   * Absent = built-in (see the matching `TEMPLATES` entry's prompt).
+   */
+  TEMPLATE_PROMPTS: ReadonlyMap<string, string>;
+  /** Names with an in-flight prompt load/save/reset; empty = idle. */
+  TEMPLATE_PROMPT_LOADING: ReadonlySet<string>;
   MODELS_STATUS: ModelsStatus;
   MODEL_DOWNLOAD: ModelDownloadState;
   SUMMARY_STREAM: string;

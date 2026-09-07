@@ -11,12 +11,19 @@ use myna_stt::TranscriptSegment;
 
 use crate::domain::MeetingId;
 use crate::dto::AudioSourceDto;
+use crate::dto::MeetingDto;
 use crate::session::RecordingState;
 
 /// Emitted whenever the recording state machine transitions.
 pub const RECORDING_STATE: &str = "recording://state";
 /// Emitted periodically while recording, carrying the current input level.
 pub const RECORDING_LEVEL: &str = "recording://level";
+/// Emitted with fine-grained progress while a stop/cancel drains.
+pub const RECORDING_STOP_PROGRESS: &str = "recording://stop-progress";
+/// Emitted once a recording finalizes, carrying the durable meeting row.
+pub const RECORDING_COMPLETED: &str = "recording://completed";
+/// Emitted mid-recording when a durability concern is detected.
+pub const RECORDING_HEALTH: &str = "recording://health";
 /// Emitted with a live, not-yet-final transcript hypothesis.
 pub const TRANSCRIPT_PARTIAL: &str = "transcript://partial";
 /// Emitted once a transcript segment is finalized.
@@ -92,6 +99,67 @@ pub fn emit_recording_state(
 pub struct LevelPayload {
     pub rms: f32,
     pub dbfs: f32,
+}
+
+/// Phase an in-flight stop/cancel is currently in, carried by
+/// [`StopProgressPayload`]. Serialized kebab-case to match the UI's
+/// `StopPhase` union (`recording-lifecycle.model.ts`).
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum StopPhase {
+    StoppingCapture,
+    FinalizingTranscript,
+    Saving,
+    Discarding,
+    Recovering,
+    Completed,
+    Failed,
+}
+
+/// Payload for [`RECORDING_STOP_PROGRESS`].
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StopProgressPayload {
+    pub phase: StopPhase,
+}
+
+/// Payload for [`RECORDING_COMPLETED`]: the finalized, durable meeting row.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingCompletedPayload {
+    pub meeting: MeetingDto,
+}
+
+/// Which recording durability concern a [`RECORDING_HEALTH`] event reports
+/// on. Serialized kebab-case to match the UI's `RecordingHealthCategory`.
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingHealthCategory {
+    WavWrite,
+    Journal,
+    DecodeDrop,
+    TapRebuild,
+    Disk,
+}
+
+/// Escalation level of a [`RECORDING_HEALTH`] event. Serialized lowercase
+/// to match the UI's `RecordingHealthSeverity`.
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordingHealthSeverity {
+    Warning,
+    Error,
+    Fatal,
+}
+
+/// Payload for [`RECORDING_HEALTH`]: the latest durability issue seen
+/// mid-recording.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingHealthPayload {
+    pub category: RecordingHealthCategory,
+    pub severity: RecordingHealthSeverity,
+    pub message: String,
 }
 
 /// Payload for [`TRANSCRIPT_PARTIAL`].

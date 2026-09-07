@@ -99,7 +99,9 @@ describe('MeetingDetailPaneComponent — summary tab order', () => {
     });
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('app-summary-panel pre')?.textContent).toBe('# Notes');
+    expect(fixture.nativeElement.querySelector('app-summary-panel .markdown')?.textContent).toContain(
+      'Notes',
+    );
     const tabs: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.tab-row .tab'));
     expect(tabs.find((tab) => tab.textContent?.includes('Notes'))?.classList.contains('active')).toBe(true);
   });

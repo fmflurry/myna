@@ -77,6 +77,43 @@
   font-weight: 600;
 }
 
+/* Sibling wrapper around each template tab + its cog button: keeps the tab
+   row's `.tab` selectors intact while reserving the cog's fixed slot, so
+   revealing it never shifts tab widths. */
+.tab-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.template-settings {
+  border: none;
+  background: transparent;
+  padding: var(--space-1);
+  margin: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* Opacity-only reveal (never display/visibility): the fixed-size slot is
+   always reserved and the button stays keyboard-focusable while hidden. */
+.tab-wrap:hover .template-settings,
+.tab-wrap:focus-within .template-settings,
+.tab-wrap.is-active .template-settings,
+.template-settings:focus-visible {
+  opacity: 1;
+}
+
+.template-settings:hover {
+  color: var(--color-accent-text);
+}
+
 .actions-row {
   flex-shrink: 0;
   display: flex;

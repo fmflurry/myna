@@ -19,6 +19,7 @@ pub mod session_manifest;
 pub mod state;
 pub mod store;
 pub mod summary_prefs;
+pub mod template_prefs;
 pub mod update_prefs;
 
 use std::sync::Arc;
@@ -90,6 +91,7 @@ pub fn run() {
             commands::meetings::delete_meeting,
             commands::meetings::get_transcript,
             commands::meetings::get_meeting_audio_path,
+            commands::meetings::get_meeting_audio_chunks,
             commands::meetings::rename_meeting,
             commands::meetings::set_meeting_archived,
             commands::meetings::edit_transcript_segment,
@@ -106,6 +108,9 @@ pub fn run() {
             commands::folders::set_meeting_folder,
             commands::placement::set_meeting_placement,
             commands::templates::list_templates,
+            commands::templates::get_template_prompt,
+            commands::templates::set_template_prompt,
+            commands::templates::reset_template_prompt,
             commands::languages::list_summary_languages,
             commands::summary::summarize_meeting,
             commands::summary::cancel_summarization,

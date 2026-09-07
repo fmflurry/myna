@@ -16,6 +16,53 @@
       Generated from a previous transcript — regenerate for up-to-date results.
     </p>
   }
+  @if (searchOpen() && canSearch() && markdown()) {
+    <div class="search-bar" role="search">
+      <input
+        #searchInput
+        type="search"
+        class="search-input"
+        aria-label="Search summary"
+        [value]="searchQuery()"
+        [attr.aria-invalid]="noSearchMatch()"
+        (input)="onSearchInput($event)"
+        (keydown)="onSearchKeydown($event)"
+      />
+      <span class="search-count" aria-live="polite">{{ matchLabel() }}</span>
+      @if (noSearchMatch()) {
+        <span class="search-hint">No matches found</span>
+      }
+      <button
+        type="button"
+        class="search-prev"
+        aria-label="Previous"
+        title="Previous match (Shift+Enter)"
+        [disabled]="matchCount() === 0"
+        (click)="prevMatch()"
+      >
+        <span aria-hidden="true">&uarr;</span>
+      </button>
+      <button
+        type="button"
+        class="search-next"
+        aria-label="Next"
+        title="Next match (Enter)"
+        [disabled]="matchCount() === 0"
+        (click)="nextMatch()"
+      >
+        <span aria-hidden="true">&darr;</span>
+      </button>
+      <button
+        type="button"
+        class="search-close"
+        aria-label="Close"
+        title="Close search (Esc)"
+        (click)="closeSearch()"
+      >
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+  }
   @if (editing()) {
     <div class="summary-editor">
       <textarea
@@ -33,7 +80,7 @@
       </div>
     </div>
   } @else if (markdown()) {
-    <pre class="markdown">{{ markdown() }}</pre>
+    <div class="markdown" #markdownContainer [innerHTML]="renderedMarkdown()"></div>
   } @else if (!generating() && !loading()) {
     <p class="empty">No summary yet. Pick a template to generate one.</p>
   }

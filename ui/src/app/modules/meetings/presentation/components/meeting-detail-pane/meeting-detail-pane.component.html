@@ -52,17 +52,29 @@
       </button>
     }
     @for (template of displayTemplates(); track template.name) {
-      <button
-        type="button"
-        role="tab"
-        class="tab"
-        [class.active]="summarySelectionTab() === template.name"
-        [attr.aria-selected]="summarySelectionTab() === template.name"
-        [title]="template.description"
-        (click)="selectTab(template.name)"
-      >
-        {{ templateLabel(template) }}
-      </button>
+      <span class="tab-wrap" [class.is-active]="summarySelectionTab() === template.name">
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          [class.active]="summarySelectionTab() === template.name"
+          [attr.aria-selected]="summarySelectionTab() === template.name"
+          [title]="template.description"
+          (click)="selectTab(template.name)"
+        >
+          {{ templateLabel(template) }}
+        </button>
+        <button
+          type="button"
+          class="template-settings"
+          [attr.data-template]="template.name"
+          [title]="'Customize ' + templateLabel(template) + ' prompt'"
+          [attr.aria-label]="'Customize ' + templateLabel(template) + ' prompt'"
+          (click)="$event.stopPropagation(); openTemplateSettings(template.name)"
+        >
+          <span aria-hidden="true">⚙️</span>
+        </button>
+      </span>
     }
   </nav>
 
@@ -267,6 +279,15 @@
             >
               Edit
             </button>
+            <button
+              type="button"
+              class="search-summary"
+              title="Search summary (Ctrl+F)"
+              aria-label="Search summary"
+              (click)="summaryPanel()?.toggleSearch()"
+            >
+              <span aria-hidden="true">🔍</span>
+            </button>
           }
           <button
             type="button"
@@ -355,6 +376,20 @@
           />
         }
       </div>
+    }
+    @if (templateSettingsOpen(); as settingsName) {
+      <app-template-prompt-dialog
+        [templateName]="settingsName"
+        [templateLabel]="templateSettingsLabel()"
+        [templateDescription]="templateSettingsDescription()"
+        [builtinPrompt]="templateSettingsBuiltin()"
+        [effectivePrompt]="templateSettingsEffective()"
+        [confirmDisabled]="templateSettingsLoading()"
+        [error]="templatePromptError()"
+        (saved)="onTemplatePromptSaved($event)"
+        (resetRequested)="onTemplatePromptReset()"
+        (cancelled)="closeTemplateSettings()"
+      />
     }
   </ng-template>
 }

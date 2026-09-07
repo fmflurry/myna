@@ -1,3 +1,4 @@
+/* eslint max-lines: ["error", 440] */
 import { Injectable, computed, inject, type InjectionToken, type Signal } from '@angular/core';
 import { Store } from 'flurryx';
 
@@ -109,6 +110,10 @@ export class MeetingsStore {
   readonly partialTextOthers: Signal<string> = computed(() => this.slots.get('PARTIAL_TEXT_OTHERS')().data ?? '');
   readonly level: Signal<AudioLevel | undefined> = computed(() => this.slots.get('LEVEL')().data);
   readonly templates: Signal<readonly SummaryTemplate[]> = computed(() => this.slots.get('TEMPLATES')().data ?? []);
+  /** Override cache for per-template prompts; absent = built-in — see `TEMPLATES`. Never mutated in place. */
+  readonly templatePrompts: Signal<ReadonlyMap<string, string>> = computed(() => this.slots.get('TEMPLATE_PROMPTS')().data ?? new Map());
+  /** Names with an in-flight prompt load/save/reset; empty = idle. Never mutated in place. */
+  readonly templatePromptLoading: Signal<ReadonlySet<string>> = computed(() => this.slots.get('TEMPLATE_PROMPT_LOADING')().data ?? new Set());
   readonly modelsStatus: Signal<ModelsStatus | undefined> = computed(() => this.slots.get('MODELS_STATUS')().data);
   readonly summaryStream: Signal<string> = computed(() => this.slots.get('SUMMARY_STREAM')().data ?? '');
   readonly error: Signal<MeetingsErrorInfo | undefined> = computed(() => this.slots.get('ERROR')().data);
@@ -217,6 +222,40 @@ export class MeetingsStore {
   }
 
   setTemplates(templates: readonly SummaryTemplate[]): void { this.slots.update('TEMPLATES', { data: templates, status: 'Success', isLoading: false }); }
+
+  /** Caches `prompt` as `name`'s override; never mutates in place. */
+  setTemplatePrompt(name: string, prompt: string): void {
+    const next = new Map(this.templatePrompts());
+    next.set(name, prompt);
+    this.slots.update('TEMPLATE_PROMPTS', { data: next, status: 'Success', isLoading: false });
+  }
+
+  /** Drops `name`'s override so it falls back to built-in; never mutates in place. */
+  removeTemplatePrompt(name: string): void {
+    const next = new Map(this.templatePrompts());
+    next.delete(name);
+    this.slots.update('TEMPLATE_PROMPTS', { data: next, status: 'Success', isLoading: false });
+  }
+
+  /** Tracks `name`'s in-flight prompt load/save/reset; never mutates in place. */
+  setTemplatePromptLoading(name: string, loading: boolean): void {
+    const next = new Set(this.templatePromptLoading());
+    if (loading) {
+      next.add(name);
+    } else {
+      next.delete(name);
+    }
+    this.slots.update('TEMPLATE_PROMPT_LOADING', { data: next, status: 'Success', isLoading: false });
+  }
+
+  /**
+   * Patches the matching `TEMPLATES` entry's prompt so tabs/dialogs refresh
+   * without a full `list()` round-trip; unknown names leave the list untouched.
+   * Never mutates in place.
+   */
+  updateTemplatePrompt(name: string, prompt: string): void {
+    this.setTemplates(this.templates().map((template) => (template.name === name ? { ...template, prompt } : template)));
+  }
 
   setModelsStatus(status: ModelsStatus): void { this.slots.update('MODELS_STATUS', { data: status, status: 'Success', isLoading: false }); }
 

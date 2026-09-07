@@ -220,12 +220,12 @@ describe('MeetingDetailPaneComponent', () => {
     fixture.componentInstance.selectTab('key-points');
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('app-summary-panel pre').textContent).toBe('# FR Points');
+    expect(fixture.nativeElement.querySelector('app-summary-panel .markdown').textContent).toContain('FR Points');
 
     fixture.componentRef.setInput('selectedSummaryLanguage', 'en');
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('app-summary-panel pre').textContent).toBe('# EN Points');
+    expect(fixture.nativeElement.querySelector('app-summary-panel .markdown').textContent).toContain('EN Points');
   });
 
   it('emits summaryLanguageSelected with the chosen language code', () => {
@@ -379,7 +379,7 @@ describe('MeetingDetailPaneComponent', () => {
       fixture.componentInstance.selectTab('key-points');
       fixture.detectChanges();
 
-      expect(fixture.nativeElement.querySelector('app-summary-panel pre').textContent).toBe('# Restored');
+      expect(fixture.nativeElement.querySelector('app-summary-panel .markdown').textContent).toContain('Restored');
     });
 
     it('shows the empty "Generate" state only once the cache resolves to empty', () => {

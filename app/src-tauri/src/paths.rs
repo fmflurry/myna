@@ -76,11 +76,13 @@ pub fn meetings_root() -> Result<PathBuf, PathError> {
 /// `~/myna/models` by default) in release builds, downloaded there by
 /// `scripts/download-models.sh`.
 ///
-/// In dev builds, resolves the repo-relative `models/` directory (so the
-/// existing CLI/integration-test workflow keeps working) unless that
-/// directory is absent and `<data_root>/models` already exists, in which
-/// case the latter is preferred so a dev build behaves sanely against
-/// models fetched via the release-style flow.
+/// In dev builds, resolves the downloader's canonical directory
+/// (`<data_root>/models`, i.e. `~/myna/models` by default) so `npx tauri
+/// dev` checks the same place `scripts/download-models.sh` writes. The
+/// repo-relative `models/` directory is only a legacy fallback, honoured
+/// when it holds actual weights (a subdirectory) but the user directory
+/// does not exist yet — a git-kept placeholder (README only) must never
+/// shadow a populated `~/myna/models`.
 ///
 /// Honours `MYNA_MODELS_DIR` as an override, which takes precedence over
 /// both of the above.
@@ -123,21 +125,43 @@ pub fn templates_root(app: &tauri::AppHandle) -> PathBuf {
     resolve_resource_dir(app, TEMPLATES_DIR_ENV, TEMPLATES_DIR_NAME)
 }
 
-/// Dev-mode models root: prefers `repo_models` (the repo's `models/`
-/// directory in production use); falls back to the user data root's
-/// `models/` directory when `repo_models` is absent but the user one
-/// already exists on disk. Takes `repo_models` as a parameter so the
-/// repo-present and repo-absent branches are both unit-testable without
-/// touching the real (multi-GB) repo `models/` directory.
+/// Dev-mode models root: prefers the user data root's `models/`
+/// directory (the downloader's canonical destination) when it exists;
+/// falls back to the repo's `models/` directory only when that holds
+/// actual weights (a subdirectory — not the git-kept README placeholder)
+/// and the user directory does not exist yet; otherwise returns the
+/// (possibly not-yet-existing) user path so fresh downloads land in the
+/// canonical location. Takes `repo_models` as a parameter so each branch
+/// is unit-testable without touching the real (multi-GB) repo `models/`
+/// directory.
 fn resolve_dev_models_root(repo_models: PathBuf, data_dir_override: Option<PathBuf>) -> PathBuf {
-    if repo_models.exists() {
+    let user_models = resolve_user_models_dir(data_dir_override);
+    if let Some(ref user) = user_models {
+        if user.exists() {
+            return user.clone();
+        }
+    }
+
+    if repo_models.exists() && dir_contains_subdirectory(&repo_models) {
         return repo_models;
     }
 
-    match resolve_user_models_dir(data_dir_override) {
-        Some(user_models) if user_models.exists() => user_models,
-        _ => repo_models,
-    }
+    user_models.unwrap_or(repo_models)
+}
+
+/// Whether `dir` contains at least one subdirectory — i.e. actual model
+/// weights rather than the git-kept placeholder files (`README.md`) that
+/// keep an otherwise-empty `models/` directory checked in. Unreadable
+/// directories conservatively report no content so callers fall through
+/// to the canonical user path.
+fn dir_contains_subdirectory(dir: &Path) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        })
+        .unwrap_or(false)
 }
 
 /// Release-mode models root: `<data_root>/models`. The directory itself is
@@ -556,10 +580,11 @@ mod tests {
     }
 
     #[test]
-    fn dev_build_prefers_repo_models_dir_when_present() {
-        // Arrange: the repo's real `models/` directory exists on this
-        // machine, so it is preferred even when a data-root override with
-        // its own `models/` dir is also supplied.
+    fn dev_build_prefers_user_models_dir_when_both_exist() {
+        // Arrange: the user data root has its own `models/` dir (the
+        // downloader's canonical destination) while the repo checkout also
+        // has one — the user dir wins so `npx tauri dev` checks the same
+        // place `scripts/download-models.sh` writes.
         let data_root = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(data_root.path().join(MODELS_DIR_NAME)).expect("create user models");
 
@@ -567,19 +592,51 @@ mod tests {
         let resolved = resolve_models_root(None, Some(data_root.path().to_path_buf()), true);
 
         // Assert
-        assert_eq!(resolved, repo_root().join(MODELS_DIR_NAME));
+        assert_eq!(resolved, data_root.path().join(MODELS_DIR_NAME));
     }
 
     #[test]
-    fn resolve_dev_models_root_prefers_repo_dir_when_present() {
-        // Arrange
+    fn resolve_dev_models_root_prefers_repo_dir_when_it_holds_weights() {
+        // Arrange: a repo models dir holding actual weights (a
+        // subdirectory) while the user dir does not exist — the legacy
+        // pre-migration layout is honoured so existing checkouts are not
+        // forced to re-download ~5.4 GB.
         let repo_models = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(repo_models.path().join("parakeet-tdt-0.6b-v3-int8"))
+            .expect("create weights subdir");
+        let isolated_root = tempfile::tempdir().expect("tempdir");
+        let missing_data_root = isolated_root.path().join("does-not-exist-data-root");
 
         // Act
-        let resolved = resolve_dev_models_root(repo_models.path().to_path_buf(), None);
+        let resolved =
+            resolve_dev_models_root(repo_models.path().to_path_buf(), Some(missing_data_root));
 
         // Assert
         assert_eq!(resolved, repo_models.path());
+    }
+
+    #[test]
+    fn resolve_dev_models_root_ignores_git_kept_placeholder_repo_dir() {
+        // Arrange: a repo models dir with only placeholder files (the
+        // checked-in `README.md`, no weights subdirectories) while the user
+        // dir exists with real models — the placeholder must never shadow
+        // the populated `~/myna/models`. This is the reported bug: `npx
+        // tauri dev` showed every model missing because the always-present
+        // repo `models/` dir won over the populated user dir.
+        let repo_models = tempfile::tempdir().expect("tempdir");
+        fs::write(repo_models.path().join("README.md"), b"placeholder").expect("write placeholder");
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let user_models = data_root.path().join(MODELS_DIR_NAME);
+        fs::create_dir_all(&user_models).expect("create user models dir");
+
+        // Act
+        let resolved = resolve_dev_models_root(
+            repo_models.path().to_path_buf(),
+            Some(data_root.path().to_path_buf()),
+        );
+
+        // Assert
+        assert_eq!(resolved, user_models);
     }
 
     #[test]
@@ -600,18 +657,20 @@ mod tests {
     }
 
     #[test]
-    fn resolve_dev_models_root_falls_back_to_repo_path_when_neither_exists() {
-        // Arrange: neither the repo models dir nor the user data root exists.
+    fn resolve_dev_models_root_falls_back_to_user_path_when_neither_exists() {
+        // Arrange: neither the repo models dir nor the user models dir
+        // exists (the user data root itself is also absent).
         let isolated_root = tempfile::tempdir().expect("tempdir");
         let missing_repo_models = isolated_root.path().join("does-not-exist-repo-models");
         let missing_data_root = isolated_root.path().join("does-not-exist-data-root");
 
         // Act
         let resolved =
-            resolve_dev_models_root(missing_repo_models.clone(), Some(missing_data_root));
+            resolve_dev_models_root(missing_repo_models.clone(), Some(missing_data_root.clone()));
 
-        // Assert: falls back to the (non-existent) repo path since nothing
-        // else is available.
-        assert_eq!(resolved, missing_repo_models);
+        // Assert: falls back to the (not-yet-existing) canonical user path
+        // so a fresh download lands where `scripts/download-models.sh`
+        // writes by default — not the legacy repo path.
+        assert_eq!(resolved, missing_data_root.join(MODELS_DIR_NAME));
     }
 }

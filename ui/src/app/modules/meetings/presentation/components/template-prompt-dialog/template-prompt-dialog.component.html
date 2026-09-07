@@ -1,0 +1,55 @@
+<div
+  class="template-prompt-backdrop"
+  role="button"
+  tabindex="0"
+  aria-label="Cancel and close dialog"
+  (click)="onBackdropClick($event)"
+  (keydown)="onBackdropKeydown($event)"
+>
+  <div
+    class="template-prompt-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="template-prompt-title"
+    aria-describedby="template-prompt-description"
+  >
+    <h2 id="template-prompt-title">
+      Customize {{ templateLabel() === '' ? templateName() : templateLabel() }} prompt
+    </h2>
+
+    @if (templateDescription() !== '') {
+      <p id="template-prompt-description" class="meta">{{ templateDescription() }}</p>
+    }
+
+    <label class="prompt-label" for="template-prompt-input">Prompt</label>
+    <textarea
+      id="template-prompt-input"
+      class="prompt-input"
+      rows="12"
+      [value]="draft()"
+      (input)="onInput($event)"
+    ></textarea>
+
+    <p class="hint">{{ helpText() }}</p>
+    <p class="char-count">{{ charCount() }} / {{ maxChars }} characters</p>
+
+    @if (inlineError(); as invalid) {
+      <p class="error" role="alert">{{ invalid }}</p>
+    }
+    @if (error() !== '') {
+      <p class="server-error" role="alert">{{ error() }}</p>
+    }
+
+    <p class="note">Applies to future summaries; existing summaries are unchanged.</p>
+
+    <div class="actions">
+      <button type="button" class="confirm" (click)="save()" [disabled]="saveDisabled()">
+        Save
+      </button>
+      <button type="button" class="reset" (click)="requestReset()" [disabled]="resetDisabled()">
+        Reset to built-in
+      </button>
+      <button type="button" class="cancel" (click)="cancel()">Cancel</button>
+    </div>
+  </div>
+</div>

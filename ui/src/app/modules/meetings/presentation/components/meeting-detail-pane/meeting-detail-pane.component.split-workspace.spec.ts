@@ -88,7 +88,9 @@ describe('MeetingDetailPaneComponent — split-workspace layout', () => {
     });
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('app-summary-panel pre')?.textContent).toBe('# Points');
+    expect(fixture.nativeElement.querySelector('app-summary-panel .markdown')?.textContent).toContain(
+      'Points',
+    );
     const tabs: HTMLElement[] = Array.from(fixture.nativeElement.querySelectorAll('.tab-row .tab'));
     expect(tabs.find((tab) => tab.textContent?.includes('Key Points'))?.classList.contains('active')).toBe(true);
   });

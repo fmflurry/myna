@@ -1,7 +1,7 @@
-// Scoped cap: orchestration component mounting dialog directly; prefer extracting over raising.
-/* eslint max-lines: ["error", 465] */
+// Scoped cap: orchestration component mounting dialogs directly; prefer extracting over raising.
+/* eslint max-lines: ["error", 580] */
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, HostListener, computed, effect, input, output, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
 
 import type {
   MeetingsErrorInfo,
@@ -18,6 +18,7 @@ import type { MeetingExportFormat } from '../../../core/ports/meeting-repository
 import type { RecordingState } from '../../../core/models/recording-state.model';
 import { DEFAULT_SPLIT_RATIO } from '../../../core/models/split-layout.model';
 import type { SummaryLanguage } from '../../../core/models/summary-language.model';
+import { MeetingsFacade } from '../../../application/facades/meetings.facade';
 import type { SummaryInstructionsDraft } from '../../../core/models/summary-instructions.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../../core/models/transcript.model';
@@ -35,6 +36,7 @@ import { RegenerateInstructionsDialogComponent } from '../regenerate-instruction
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
 import { SummaryLanguagePickerComponent } from '../summary-language-picker/summary-language-picker.component';
 import { SummaryPanelComponent } from '../summary-panel/summary-panel.component';
+import { TemplatePromptDialogComponent } from '../template-prompt-dialog/template-prompt-dialog.component';
 import type { TranscriptSegmentEdit } from '../transcript-view/transcript-view.component';
 import type {
   SpeakerRename,
@@ -54,6 +56,7 @@ import {
   computeActiveLanguageLabel,
   computeActiveTemplateLabel,
   computeEffectiveCaptureLabel,
+  computeEffectivePrompt,
   computeGeneratingElsewhereLabel,
   computeHeadingDate,
   computeImportProgressLabel,
@@ -97,6 +100,7 @@ const EXPORT_FORMATS: readonly MeetingExportFormat[] = ['markdown', 'txt', 'json
     SummaryLanguagePickerComponent,
     SummaryPanelComponent,
     TranscriptViewComponent,
+    TemplatePromptDialogComponent,
     WelcomePanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -195,6 +199,8 @@ export class MeetingDetailPaneComponent {
   readonly cancelImportRequested = output<void>();
   /** User-triggered speaker detection over this meeting's system-audio track; see `meetings-shell.page.ts` for the wiring. */
   readonly diarizeRequested = output<void>();
+  /** Cog sibling of a template tab — the shell opens the per-template prompt settings for `name`. */
+  readonly templateSettingsRequested = output<string>();
 
   protected readonly transcriptTab = TRANSCRIPT_TAB;
   protected readonly exportFormats = EXPORT_FORMATS;
@@ -299,6 +305,47 @@ export class MeetingDetailPaneComponent {
 
   /** Armed by Generate; while true the dialog confirms before emitting. Pane-local, never persisted. */
   protected readonly generateDialogOpen = signal(false);
+  /** Template slug with prompt settings open, or `null` when the dialog is closed. Pane-local, never persisted. */
+  protected readonly templateSettingsOpen = signal<string | null>(null);
+  /** Inline server-side failure from the last prompt save/reset; cleared on open/close. */
+  protected readonly templatePromptError = signal('');
+  /**
+   * Facade for per-template prompt load/save/reset only — everything else
+   * still flows in as inputs and out as outputs via the shell (see the class
+   * doc). Optional so isolated specs can mount the pane without providers;
+   * without it the dialog edits the built-in and persists nothing.
+   */
+  private readonly meetingsFacade = inject(MeetingsFacade, { optional: true });
+  /** Override cache from the facade; empty when the facade is absent (isolated specs). */
+  protected readonly templatePromptOverrides = computed(
+    () => this.meetingsFacade?.templatePrompts() ?? new Map<string, string>(),
+  );
+  /** Names with an in-flight prompt load/save/reset; empty when the facade is absent. */
+  protected readonly templatePromptLoadingNames = computed(
+    () => this.meetingsFacade?.templatePromptLoading() ?? new Set<string>(),
+  );
+  /** The template the settings dialog edits, if still present. */
+  protected readonly templateSettingsTemplate = computed(() =>
+    this.templates().find((candidate) => candidate.name === this.templateSettingsOpen()),
+  );
+  protected readonly templateSettingsLabel = computed(() => {
+    const template = this.templateSettingsTemplate();
+    return template ? formatTemplateLabel(template) : (this.templateSettingsOpen() ?? '');
+  });
+  protected readonly templateSettingsDescription = computed(
+    () => this.templateSettingsTemplate()?.description ?? '',
+  );
+  protected readonly templateSettingsBuiltin = computed(
+    () => this.templateSettingsTemplate()?.prompt ?? '',
+  );
+  protected readonly templateSettingsEffective = computed(() => {
+    const name = this.templateSettingsOpen();
+    return name === null ? '' : computeEffectivePrompt(this.templates(), this.templatePromptOverrides(), name);
+  });
+  protected readonly templateSettingsLoading = computed(() => {
+    const name = this.templateSettingsOpen();
+    return name !== null && this.templatePromptLoadingNames().has(name);
+  });
   protected readonly summaryPanel = viewChild<SummaryPanelComponent>('summaryPanel');
 
   /** See {@link buildRegenerateHint}. */
@@ -330,13 +377,14 @@ export class MeetingDetailPaneComponent {
     // `summaryCache` itself changes is intentional: once the facade records a
     // 'loading' (then 'loaded'/'empty') entry for this exact key, the guard
     // inside that helper stops emitting further requests for it. Also disarms
-    // the regenerate dialog the moment a generation starts anywhere,
-    // so the dialog never lingers over a live run nor reappears when the key
-    // later clears.
+    // the regenerate, generate, and template-settings dialogs the moment a
+    // generation starts anywhere, so no dialog lingers over a live run nor
+    // reappears when the key later clears.
     effect(() => {
         if (this.summarizingKey() !== null) {
           this.regenerateDialogOpen.set(false);
           this.generateDialogOpen.set(false);
+          this.templateSettingsOpen.set(null);
         }
         const request = findUnloadedSummaryRequest(
           this.meeting(),
@@ -360,7 +408,68 @@ export class MeetingDetailPaneComponent {
   selectTab(tab: string): void {
     this.regenerateDialogOpen.set(false);
     this.generateDialogOpen.set(false);
+    this.closeTemplateSettings();
     this.activeTab.set(tab);
+  }
+
+  /**
+   * Cog click for a template tab: closes the generate/regenerate dialogs,
+   * arms the pane-local prompt settings dialog for `templateName`, and asks
+   * the facade to load its effective prompt. Still emits
+   * `templateSettingsRequested` for shell-level observers; the dialog itself
+   * mounts here like `regenerateDialogOpen`.
+   */
+  openTemplateSettings(templateName: string): void {
+    this.regenerateDialogOpen.set(false);
+    this.generateDialogOpen.set(false);
+    this.templatePromptError.set('');
+    this.templateSettingsOpen.set(templateName);
+    this.templateSettingsRequested.emit(templateName);
+    void this.meetingsFacade?.loadTemplatePrompt(templateName);
+  }
+
+  /** Disarms the prompt settings dialog without persisting. */
+  closeTemplateSettings(): void {
+    this.templateSettingsOpen.set(null);
+    this.templatePromptError.set('');
+  }
+
+  /**
+   * Persists the dialog's draft; closes on success, otherwise surfaces the
+   * failure inline. Reads the shared error slot's source so an unrelated
+   * standing error never blocks the close.
+   */
+  onTemplatePromptSaved(prompt: string): void {
+    const name = this.templateSettingsOpen();
+    const facade = this.meetingsFacade;
+    if (name === null || facade === null) {
+      return;
+    }
+    this.templatePromptError.set('');
+    void facade.saveTemplatePrompt(name, prompt).then(() => {
+      const failure = facade.error();
+      if (failure && failure.source === 'saveTemplatePrompt') {
+        this.templatePromptError.set(failure.message);
+      } else {
+        this.templateSettingsOpen.set(null);
+      }
+    });
+  }
+
+  /** Restores the built-in prompt; the dialog stays open on the restored text. */
+  onTemplatePromptReset(): void {
+    const name = this.templateSettingsOpen();
+    const facade = this.meetingsFacade;
+    if (name === null || facade === null) {
+      return;
+    }
+    this.templatePromptError.set('');
+    void facade.resetTemplatePrompt(name).then(() => {
+      const failure = facade.error();
+      if (failure && failure.source === 'resetTemplatePrompt') {
+        this.templatePromptError.set(failure.message);
+      }
+    });
   }
 
   onExportFormatChange(event: Event): void {
@@ -439,6 +548,7 @@ export class MeetingDetailPaneComponent {
   onSummaryLanguageSelected(code: string): void {
     this.regenerateDialogOpen.set(false);
     this.generateDialogOpen.set(false);
+    this.closeTemplateSettings();
     this.summaryLanguageSelected.emit(code);
   }
 

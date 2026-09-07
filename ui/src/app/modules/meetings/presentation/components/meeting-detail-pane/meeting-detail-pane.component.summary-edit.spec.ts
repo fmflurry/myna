@@ -1,8 +1,10 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 
 import type { Meeting } from '../../../core/models/meeting.model';
 import { toMeetingId } from '../../../core/models/meeting.model';
 import type { SummaryTemplate } from '../../../core/models/summary-template.model';
+import { SummaryPanelComponent } from '../summary-panel/summary-panel.component';
 import { MeetingDetailPaneComponent } from './meeting-detail-pane.component';
 
 /**
@@ -119,5 +121,37 @@ describe('MeetingDetailPaneComponent — summary edit re-emit', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('.pane-toolbar-summary .edit-summary')).toBeNull();
+  });
+
+  it('shows a Search magnifier in the summary toolbar that forwards to the panel toggleSearch', () => {
+    const fixture = createFixture();
+    fixture.componentInstance.selectTab('key-points');
+    fixture.detectChanges();
+    const toggleSpy = vi.spyOn(SummaryPanelComponent.prototype, 'toggleSearch');
+    try {
+      const searchButton: HTMLButtonElement = fixture.nativeElement.querySelector(
+        '.pane-toolbar-summary .search-summary',
+      );
+      expect(searchButton).toBeTruthy();
+      expect(searchButton.getAttribute('aria-label')).toBe('Search summary');
+
+      searchButton.click();
+      fixture.detectChanges();
+
+      expect(toggleSpy).toHaveBeenCalledTimes(1);
+      expect(fixture.nativeElement.querySelector('app-summary-panel .search-bar')).toBeTruthy();
+    } finally {
+      toggleSpy.mockRestore();
+    }
+  });
+
+  it('hides the Search button while the active tab is generating (parity with Edit)', () => {
+    const fixture = createFixture();
+    fixture.componentInstance.selectTab('key-points');
+    fixture.componentRef.setInput('summarizing', true);
+    fixture.componentRef.setInput('summarizingKey', { template: 'key-points', language: 'en' });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.pane-toolbar-summary .search-summary')).toBeNull();
   });
 });

@@ -72,6 +72,9 @@ export const COMMAND_NAMES = [
   'check_for_update',
   'install_update',
   'restart_app',
+  'get_template_prompt',
+  'set_template_prompt',
+  'reset_template_prompt',
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -188,6 +191,15 @@ export interface CommandSignatures {
   };
   readonly get_transcript: { args: { readonly id: string }; result: TranscriptDto | null };
   readonly list_templates: { args: NoArgs; result: readonly TemplateDto[] };
+  /** Effective prompt for a template: the persisted override when one exists, otherwise the built-in prompt. */
+  readonly get_template_prompt: { args: { readonly name: string }; result: string };
+  /** Persists a per-template prompt override; resolves the normalized prompt. */
+  readonly set_template_prompt: {
+    args: { readonly name: string; readonly prompt: string };
+    result: string;
+  };
+  /** Deletes a per-template prompt override, restoring the built-in prompt. Idempotent. */
+  readonly reset_template_prompt: { args: { readonly name: string }; result: void };
   readonly list_summary_languages: { args: NoArgs; result: readonly SummaryLanguageDto[] };
   readonly summarize_meeting: {
     args: {

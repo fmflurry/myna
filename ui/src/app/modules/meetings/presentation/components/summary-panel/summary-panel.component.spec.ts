@@ -255,4 +255,133 @@ describe('SummaryPanelComponent', () => {
     delete (HTMLTextAreaElement.prototype as { scrollHeight?: unknown }).scrollHeight;
     fixture.nativeElement.remove();
   });
+
+  describe('markdown viewer — view formatted / edit raw (RED)', () => {
+    it('view renders a heading element, not the raw marker', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Key points');
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      expect(view).toBeTruthy();
+      expect(view.querySelector('h1')).toBeTruthy();
+      expect(view.querySelector('h1')?.textContent).toContain('Key points');
+      expect(view.textContent).not.toContain('# Key points');
+    });
+
+    it('view renders list items and strong, not markers', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '- one\n- **two**');
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      const items = view.querySelectorAll('li');
+      expect(items.length).toBe(2);
+      expect(view.querySelector('strong')?.textContent).toContain('two');
+      expect(view.textContent).not.toContain('**two**');
+    });
+
+    it('edit mode shows the raw markdown in the textarea and hides the formatted view', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Points\n- **one**');
+      fixture.componentRef.setInput('editable', true);
+      fixture.detectChanges();
+
+      fixture.componentInstance.beginEdit();
+      fixture.detectChanges();
+
+      const textarea: HTMLTextAreaElement =
+        fixture.nativeElement.querySelector('.summary-input');
+      expect(textarea.value).toBe('# Points\n- **one**');
+      expect(fixture.nativeElement.querySelector('.markdown')).toBeNull();
+    });
+
+    it('Done round-trips the raw draft, and the updated view renders formatted', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Original');
+      fixture.componentRef.setInput('editable', true);
+      fixture.detectChanges();
+      const emitted: string[] = [];
+      fixture.componentInstance.summaryEdited.subscribe((markdown) => emitted.push(markdown));
+
+      fixture.componentInstance.beginEdit();
+      fixture.detectChanges();
+      const textarea: HTMLTextAreaElement =
+        fixture.nativeElement.querySelector('.summary-input');
+      textarea.value = '# Edited **bold**';
+      textarea.dispatchEvent(new Event('input'));
+      fixture.nativeElement.querySelector('.done').click();
+      fixture.detectChanges();
+
+      expect(emitted).toEqual(['# Edited **bold**']);
+      fixture.componentRef.setInput('markdown', emitted[0]);
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      expect(view.querySelector('h1')).toBeTruthy();
+      expect(view.querySelector('strong')?.textContent).toContain('bold');
+      expect(view.textContent).not.toContain('**bold**');
+    });
+
+    it('Cancel discards the draft and returns to the formatted view', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Points');
+      fixture.componentRef.setInput('editable', true);
+      fixture.detectChanges();
+
+      fixture.componentInstance.beginEdit();
+      fixture.detectChanges();
+      const textarea: HTMLTextAreaElement =
+        fixture.nativeElement.querySelector('.summary-input');
+      textarea.value = '# Discarded';
+      textarea.dispatchEvent(new Event('input'));
+      fixture.nativeElement.querySelector('.discard').click();
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      expect(view.querySelector('h1')?.textContent).toContain('Points');
+      expect(view.textContent).not.toContain('# Discarded');
+    });
+
+    it('Escape discards the draft and returns to the formatted view', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Points');
+      fixture.componentRef.setInput('editable', true);
+      fixture.detectChanges();
+
+      fixture.componentInstance.beginEdit();
+      fixture.detectChanges();
+      const textarea: HTMLTextAreaElement =
+        fixture.nativeElement.querySelector('.summary-input');
+      textarea.value = '# Discarded';
+      textarea.dispatchEvent(new Event('input'));
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      expect(view.querySelector('h1')?.textContent).toContain('Points');
+    });
+
+    it('strips script tags while still rendering surrounding markdown', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '# Title\n<script>alert(1)</script>');
+      fixture.detectChanges();
+
+      const view: HTMLElement = fixture.nativeElement.querySelector('.markdown');
+      expect(view.querySelector('h1')?.textContent).toContain('Title');
+      expect(view.querySelector('script')).toBeNull();
+      expect(view.innerHTML).not.toContain('<script>');
+    });
+
+    it('neutralizes javascript: link targets', () => {
+      const fixture = TestBed.createComponent(SummaryPanelComponent);
+      fixture.componentRef.setInput('markdown', '[click me](javascript:alert(1))');
+      fixture.detectChanges();
+
+      const anchor: HTMLAnchorElement | null =
+        fixture.nativeElement.querySelector('.markdown a');
+      expect(anchor).toBeTruthy();
+      expect(anchor?.getAttribute('href')?.toLowerCase().startsWith('javascript:')).toBe(false);
+    });
+  });
 });

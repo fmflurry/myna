@@ -1,3 +1,4 @@
+/* eslint max-lines: ["error", 460] */
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 
@@ -28,6 +29,7 @@ import { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from '../use-cases/get-app-version.usecase';
 import { GetSummaryGuidelinesUseCase } from '../use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
+import { GetTemplatePromptUseCase } from '../use-cases/get-template-prompt.usecase';
 import { ImportAudioUseCase } from '../use-cases/import-audio.usecase';
 import { ListAudioSourcesUseCase } from '../use-cases/list-audio-sources.usecase';
 import { ListFoldersUseCase } from '../use-cases/list-folders.usecase';
@@ -38,10 +40,12 @@ import { OpenMeetingUseCase } from '../use-cases/open-meeting.usecase';
 import { PlaceMeetingUseCase } from '../use-cases/place-meeting.usecase';
 import { RenameFolderUseCase } from '../use-cases/rename-folder.usecase';
 import { RenameMeetingUseCase } from '../use-cases/rename-meeting.usecase';
+import { ResetTemplatePromptUseCase } from '../use-cases/reset-template-prompt.usecase';
 import { RetranscribeMeetingUseCase } from '../use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from '../use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from '../use-cases/set-meeting-folder.usecase';
 import { SetSummaryGuidelinesUseCase } from '../use-cases/set-summary-guidelines.usecase';
+import { SetTemplatePromptUseCase } from '../use-cases/set-template-prompt.usecase';
 import { StartRecordingUseCase } from '../use-cases/start-recording.usecase';
 import { StopRecordingUseCase } from '../use-cases/stop-recording.usecase';
 import { SummarizeMeetingUseCase } from '../use-cases/summarize-meeting.usecase';
@@ -109,6 +113,9 @@ export class MeetingsFacade {
   private readonly listSummaryLanguagesUseCase = inject(ListSummaryLanguagesUseCase);
   private readonly getSummaryGuidelinesUseCase = inject(GetSummaryGuidelinesUseCase);
   private readonly setSummaryGuidelinesUseCase = inject(SetSummaryGuidelinesUseCase);
+  private readonly getTemplatePromptUseCase = inject(GetTemplatePromptUseCase);
+  private readonly setTemplatePromptUseCase = inject(SetTemplatePromptUseCase);
+  private readonly resetTemplatePromptUseCase = inject(ResetTemplatePromptUseCase);
   private readonly getSummaryUseCase = inject(GetSummaryUseCase);
   private readonly getAppVersionUseCase = inject(GetAppVersionUseCase);
   private readonly importAudioUseCase = inject(ImportAudioUseCase);
@@ -157,6 +164,10 @@ export class MeetingsFacade {
   readonly summaryLanguages = this.store.summaryLanguages;
   readonly selectedSummaryLanguage = this.store.selectedSummaryLanguage;
   readonly summaryGuidelines = this.store.summaryGuidelines;
+  /** Override cache for per-template prompts; absent = built-in — see `templates`. Failures surface via `error`; in-flight names via `templatePromptLoading`. */
+  readonly templatePrompts = this.store.templatePrompts;
+  /** Names with an in-flight prompt load/save/reset; empty = idle. */
+  readonly templatePromptLoading = this.store.templatePromptLoading;
   readonly summaryCache = this.store.summaryCache;
   readonly appVersion = this.store.appVersion;
   readonly audioSources = this.store.audioSources;
@@ -336,6 +347,52 @@ export class MeetingsFacade {
   /** Persists general guidelines server-side; the slot updates ONLY once the port write succeeds — never optimistic. */
   setSummaryGuidelines = (text: string): Promise<void> =>
     runSetSummaryGuidelines(this.store, this.setSummaryGuidelinesUseCase, text);
+
+  /** Fetches `name`'s effective prompt (override or built-in) into the override cache; failures land in `error`, never in the cache. */
+  loadTemplatePrompt = (name: string): Promise<void> =>
+    this.guarded(async () => {
+      this.store.setTemplatePromptLoading(name, true);
+      try {
+        this.store.setTemplatePrompt(name, await this.getTemplatePromptUseCase.get(name));
+      } finally {
+        this.store.setTemplatePromptLoading(name, false);
+      }
+    }, 'loadTemplatePrompt');
+
+  /**
+   * Persists `name`'s prompt override; on success updates BOTH the override
+   * cache AND the matching `templates` entry so tabs/dialogs refresh without
+   * a full `list()` round-trip — never optimistic, mirroring `setSummaryGuidelines`.
+   */
+  saveTemplatePrompt = (name: string, prompt: string): Promise<void> =>
+    this.guarded(async () => {
+      this.store.setTemplatePromptLoading(name, true);
+      try {
+        const normalized = await this.setTemplatePromptUseCase.set(name, prompt);
+        this.store.setTemplatePrompt(name, normalized);
+        this.store.updateTemplatePrompt(name, normalized);
+      } finally {
+        this.store.setTemplatePromptLoading(name, false);
+      }
+    }, 'saveTemplatePrompt');
+
+  /**
+   * Deletes `name`'s prompt override; on success drops the cache entry
+   * (absent = built-in) and restores the matching `templates` entry to the
+   * freshly-fetched built-in — never optimistic, mirroring `saveTemplatePrompt`.
+   */
+  resetTemplatePrompt = (name: string): Promise<void> =>
+    this.guarded(async () => {
+      this.store.setTemplatePromptLoading(name, true);
+      try {
+        await this.resetTemplatePromptUseCase.reset(name);
+        const restored = await this.getTemplatePromptUseCase.get(name);
+        this.store.removeTemplatePrompt(name);
+        this.store.updateTemplatePrompt(name, restored);
+      } finally {
+        this.store.setTemplatePromptLoading(name, false);
+      }
+    }, 'resetTemplatePrompt');
 
   /** Reads the (meeting, template) focus draft; defaults to empty text with general guidelines included. */
   summaryInstructionDraft = (id: MeetingId, template: string): SummaryInstructionsDraft => this.store.summaryInstructionDraft(id, template);
