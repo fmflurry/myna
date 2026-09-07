@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-09-07
+
+### Added
+
+- **Custom per-template prompts** — get/set/reset a custom prompt per
+  summary template via new commands, with persisted preferences and a
+  template-prompt dialog.
+- **Summary search and markdown rendering** — search within a summary
+  and view it rendered as markdown.
+
 ## [0.2.6] — 2026-09-04
 
 ### Fixed
