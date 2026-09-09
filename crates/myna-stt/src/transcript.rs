@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::suspect::SuspectReason;
+
 /// Who spoke a transcript segment, stored flat as `"unknown"`, `"me"`,
 /// `"others"`, or `"others:<id>"`.
 ///
@@ -146,6 +148,26 @@ pub struct TranscriptSegment {
     /// meeting that fails to parse.
     #[serde(default)]
     pub speaker_pinned: bool,
+    /// Audit hints from the pure [`crate::suspect::score_segment`] scorer,
+    /// attached at `Final` emission time. Empty for clean segments and for
+    /// offline decodes predating the scorer; presence means "worth review",
+    /// never "definitely wrong".
+    ///
+    /// `#[serde(default)]` is load-bearing for the same reason as
+    /// `speaker_pinned` above: legacy journal lines without this key must
+    /// still deserialize.
+    #[serde(default)]
+    pub suspect_reasons: Vec<SuspectReason>,
+    /// The decoder's original text before any human correction. `None`
+    /// until the first edit; preserved across further edits so reviewers
+    /// can always diff back to what the model actually produced.
+    #[serde(default)]
+    pub original_text: Option<String>,
+    /// `true` once a human has manually corrected this segment's `text`.
+    /// Set by a future user-driven command alongside `original_text`;
+    /// this crate never sets it `true` itself.
+    #[serde(default)]
+    pub edited: bool,
 }
 
 /// An ordered collection of transcript segments.
@@ -156,12 +178,25 @@ pub struct Transcript {
 
 impl Transcript {
     /// Concatenates every segment's text, space-separated.
+    ///
+    /// Single pass with one allocation: the output length is exactly the
+    /// sum of the segment lengths plus one separator per gap, so the
+    /// capacity is reserved up front instead of going through an
+    /// intermediate `Vec<&str>`.
     pub fn full_text(&self) -> String {
-        self.segments
+        let total = self
+            .segments
             .iter()
-            .map(|segment| segment.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+            .map(|segment| segment.text.len() + 1)
+            .sum::<usize>();
+        let mut out = String::with_capacity(total.saturating_sub(1));
+        for (index, segment) in self.segments.iter().enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            out.push_str(&segment.text);
+        }
+        out
     }
 
     /// Returns the transcript's total duration, measured from zero to the
@@ -335,6 +370,24 @@ mod tests {
         assert!(!segment.speaker_pinned);
     }
 
+    // ---- TranscriptSegment: suspect/edited audit fields default on legacy JSON ---
+
+    #[test]
+    fn transcript_segment_without_audit_keys_deserializes_to_clean_unedited() {
+        let json =
+            r#"{"start_sec": 0.0, "end_sec": 1.5, "text": "hello team", "speaker": "others"}"#;
+
+        let segment: TranscriptSegment = serde_json::from_str(json).expect(
+            "a legacy journal line missing `suspect_reasons`/`original_text`/`edited` \
+             must still deserialize (fs_store::read_meeting_file silently drops meetings \
+             that fail to parse)",
+        );
+
+        assert!(segment.suspect_reasons.is_empty());
+        assert_eq!(segment.original_text, None);
+        assert!(!segment.edited);
+    }
+
     // ---- Transcript::attributed_text() -------------------------------------
 
     #[test]
@@ -346,6 +399,9 @@ mod tests {
                 text: "hello".to_string(),
                 speaker: Speaker::me(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             })
             .with_segment(TranscriptSegment {
                 start_sec: 1.0,
@@ -353,6 +409,9 @@ mod tests {
                 text: "team".to_string(),
                 speaker: Speaker::me(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             })
             .with_segment(TranscriptSegment {
                 start_sec: 2.0,
@@ -360,6 +419,9 @@ mod tests {
                 text: "hi there".to_string(),
                 speaker: Speaker::others(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             })
             .with_segment(TranscriptSegment {
                 start_sec: 3.0,
@@ -367,6 +429,9 @@ mod tests {
                 text: "how are you".to_string(),
                 speaker: Speaker::parse("others:2"),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             });
 
         let attributed = transcript.attributed_text();
@@ -386,6 +451,9 @@ mod tests {
                 text: "hello".to_string(),
                 speaker: Speaker::unknown(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             })
             .with_segment(TranscriptSegment {
                 start_sec: 1.0,
@@ -393,6 +461,9 @@ mod tests {
                 text: "team".to_string(),
                 speaker: Speaker::unknown(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             });
 
         let attributed = transcript.attributed_text();

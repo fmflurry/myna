@@ -36,7 +36,8 @@
 //! level-event throttling logic can be unit tested without a real audio
 //! device.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -60,6 +61,7 @@ use crate::events::{
     emit_recording_state, FinalPayload, LevelPayload, PartialPayload, RECORDING_LEVEL,
     TRANSCRIPT_FINAL, TRANSCRIPT_PARTIAL,
 };
+use crate::paths;
 use crate::session_manifest::JournalWriter;
 
 /// Minimum spacing between [`RECORDING_LEVEL`] emissions, in milliseconds.
@@ -288,6 +290,102 @@ pub fn announce_resolved_system_source(
     emit(Some(resolved));
 }
 
+/// Maximum length, in Unicode scalar values, a live transcript segment edit
+/// may carry. Mirrors
+/// [`crate::commands::meetings::MAX_SEGMENT_TEXT_LENGTH`] (duplicated rather
+/// than imported: that module depends on this one for [`guard_not_recording`],
+/// so importing it back would invert the layering) so a live correction and
+/// a persisted correction accept the same text.
+pub const MAX_LIVE_SEGMENT_TEXT_LENGTH: usize = 2000;
+
+/// Patches one segment of a live (journal-backed) transcript with
+/// user-corrected `text`, returning the patched transcript.
+///
+/// Pure: never touches the store or the journal file itself — the caller (the
+/// live-edit command) owns the read-modify-write. `index` addresses the
+/// journal-replay order (ascending `start_sec`, as produced by
+/// [`crate::session_manifest::read_journal`]), matching the order the UI
+/// renders. `start_sec`, `end_sec`, `speaker`, and `speaker_pinned` are
+/// preserved verbatim — the UI dedupes live events against its journal query
+/// by `(startSec, endSec, speaker)` (ADR 0011), so changing that triple would
+/// fork the segment into a duplicate.
+///
+/// The corrected segment is stamped `edited = true`, its decoder-original
+/// text is kept in `original_text` (first edit wins — a re-edit preserves the
+/// very first `original_text` so reviewers can always diff back to what the
+/// model actually produced), and `suspect_reasons` is cleared: a human has
+/// now reviewed this segment, so decode-time "worth review" hints no longer
+/// apply.
+///
+/// Yields [`AppError::NotFound`] when `index` is out of range, when the
+/// trimmed `text` is empty, or when it matches the segment's current text —
+/// the backend half of the UI `EditableSegment` commit guard, which never
+/// sends those inputs, but the command must still refuse to journal or emit
+/// a no-op edit.
+pub fn apply_live_segment_edit(
+    transcript: &Transcript,
+    index: usize,
+    text: &str,
+) -> Result<Transcript, AppError> {
+    let current = transcript
+        .segments
+        .get(index)
+        .ok_or_else(|| AppError::NotFound(format!("segment {index}")))?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let normalized: String = trimmed.chars().take(MAX_LIVE_SEGMENT_TEXT_LENGTH).collect();
+    if normalized == current.text {
+        return Err(AppError::NotFound(format!("segment {index}")));
+    }
+    let mut segments = transcript.segments.clone();
+    segments[index] = TranscriptSegment {
+        text: normalized,
+        suspect_reasons: Vec::new(),
+        original_text: Some(
+            current
+                .original_text
+                .clone()
+                .unwrap_or_else(|| current.text.clone()),
+        ),
+        edited: true,
+        ..current.clone()
+    };
+    Ok(Transcript { segments })
+}
+
+/// Atomically rewrites the transcript journal at `path` with `transcript`'s
+/// segments (one snake_case JSON object per line, exactly as
+/// [`JournalWriter::append`] writes them), using the same tmp+rename `0600`
+/// discipline as [`crate::session_manifest::write_manifest`].
+///
+/// The live-edit command rewrites rather than appends: the patched segment
+/// keeps its `(start_sec, end_sec, speaker)` triple, so replay order is
+/// unchanged and the UI's live-event-vs-journal dedupe still holds. A crash
+/// mid-rewrite leaves either the old or the new journal (never a splice),
+/// and the tolerant [`crate::session_manifest::read_journal`] reader skips a
+/// truncated trailing line either way.
+pub fn rewrite_journal(path: &Path, transcript: &Transcript) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        paths::create_dir_all_0700(parent)?;
+    }
+    let mut contents = Vec::new();
+    for segment in &transcript.segments {
+        let mut line =
+            serde_json::to_vec(segment).map_err(|err| AppError::Store(err.to_string()))?;
+        line.push(b'\n');
+        contents.extend_from_slice(&line);
+    }
+    let tmp = path.with_extension("jsonl.tmp");
+    paths::write_0600(&tmp, &contents)?;
+    if let Err(err) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(AppError::from(err));
+    }
+    Ok(())
+}
+
 /// Bounded capacity, in audio chunks, of the handoff channel between the
 /// audio callback and the decode worker.
 ///
@@ -487,6 +585,15 @@ impl RecordingSession {
             }
         };
 
+        // Two `SimulatedStreamer`s, hence two `VadSegmenter`s (one ONNX load
+        // each): sharing a single segmenter across tracks is unsound — a
+        // `VadSegmenter` holds per-stream detector state (`detected` latch,
+        // internal ring buffer, sample offsets), so interleaving two
+        // independent audio streams into one instance would corrupt both
+        // tracks' utterance boundaries. Each instance is bounded by
+        // `VAD_BUFFER_SECS` (60 s ring, `VAD_WINDOW` 512, `NUM_THREADS` 1),
+        // so dual-track capture costs exactly 2x that bounded ring — never
+        // an unbounded buffer.
         let mic_streamer = source_has_mic(source)
             .then(|| SimulatedStreamer::new(Arc::clone(&engine), vad_cfg))
             .transpose()?;
@@ -631,7 +738,11 @@ fn run_worker(
     system_source: Arc<Mutex<Option<SystemAudioSource>>>,
 ) -> Result<(Transcript, u32), AppError> {
     let (decode_tx, decode_rx) = sync_channel::<(Track, Vec<f32>)>(DECODE_CHANNEL_CAPACITY);
-    let decode_channel = DecodeChannel::new(decode_tx);
+    // One pool shared by the callback (acquire in `send_slice`) and the
+    // decode worker (release after `push`), so handoff buffers are
+    // recycled instead of malloc'd per callback per track.
+    let buffer_pool = DecodeBufferPool::new();
+    let decode_channel = DecodeChannel::with_pool(decode_tx, buffer_pool.clone());
     let dropped_counter = decode_channel.dropped_handle();
     let decode_worker = spawn_decode_worker(
         app.clone(),
@@ -640,6 +751,7 @@ fn run_worker(
         mic_streamer,
         system_streamer,
         decode_rx,
+        buffer_pool,
         Arc::clone(&stop),
     );
 
@@ -791,6 +903,12 @@ fn create_playback_wav(
 /// never the realtime audio callback. A journal write failure is logged to
 /// stderr and ignored — it must never abort capture or drop the transcript
 /// the user is watching live.
+///
+/// `buffer_pool` is the [`DecodeBufferPool`] shared with the callback's
+/// [`DecodeChannel`]: every received chunk is returned to it once
+/// `push(&samples)` no longer needs the samples, completing the recycle
+/// loop that keeps the realtime callback malloc-free in steady state.
+#[allow(clippy::too_many_arguments)]
 fn spawn_decode_worker(
     app: AppHandle,
     meeting_id: MeetingId,
@@ -798,6 +916,7 @@ fn spawn_decode_worker(
     mut mic_streamer: Option<SimulatedStreamer>,
     mut system_streamer: Option<SimulatedStreamer>,
     rx: Receiver<(Track, Vec<f32>)>,
+    buffer_pool: DecodeBufferPool,
     stop: Arc<AtomicBool>,
 ) -> JoinHandle<Result<Transcript, AppError>> {
     thread::spawn(move || {
@@ -810,10 +929,12 @@ fn spawn_decode_worker(
                 Track::System => system_streamer.as_mut(),
             };
             let Some(streamer) = streamer else {
+                buffer_pool.release(samples);
                 continue;
             };
             match streamer.push(&samples) {
                 Ok(events) => {
+                    buffer_pool.release(samples);
                     for event in events {
                         apply_event(
                             &app,
@@ -861,6 +982,57 @@ fn spawn_decode_worker(
     })
 }
 
+/// Reusable handoff buffers for the realtime audio callback.
+///
+/// `Vec<f32>` chunks handed to the decode worker are recycled through this
+/// pool instead of being freshly allocated per callback (`to_vec()` per
+/// track per block): the callback pops a buffer (reusing its capacity —
+/// steady-state zero allocator calls), copies the block in with
+/// `extend_from_slice`, and the decode worker returns the buffer via
+/// [`DecodeBufferPool::release`] once `push(&samples)` no longer needs it.
+/// Copying the samples is unavoidable — the channel must own its payload —
+/// but reusing the allocation removes the per-callback malloc/free churn
+/// (energy + RAM fragmentation) on the realtime thread.
+///
+/// Bounded: at most [`DECODE_BUFFER_POOL_SIZE`] idle buffers are retained;
+/// any excess is dropped (freed) rather than hoarded.
+#[derive(Debug, Clone, Default)]
+pub struct DecodeBufferPool {
+    inner: Arc<Mutex<Vec<Vec<f32>>>>,
+}
+
+/// Maximum idle buffers retained by [`DecodeBufferPool`]: two live chunks
+/// (mic + system) plus headroom for a contested handoff, without hoarding
+/// 16 kHz blocks indefinitely.
+const DECODE_BUFFER_POOL_SIZE: usize = 8;
+
+impl DecodeBufferPool {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn acquire(&self) -> Vec<f32> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.pop())
+            .unwrap_or_default()
+    }
+
+    /// Returns `buf` for reuse, cleared but capacity-retained. Excess
+    /// buffers beyond [`DECODE_BUFFER_POOL_SIZE`] are dropped (freed).
+    pub fn release(&self, mut buf: Vec<f32>) {
+        buf.clear();
+        if let Ok(mut guard) = self.inner.lock() {
+            if guard.len() < DECODE_BUFFER_POOL_SIZE {
+                guard.push(buf);
+            }
+        }
+    }
+}
+
 /// Bounded, non-blocking handoff from the real-time audio callback to the
 /// decode worker thread.
 ///
@@ -875,6 +1047,7 @@ pub struct DecodeChannel {
     sender: SyncSender<(Track, Vec<f32>)>,
     dropped: Arc<AtomicUsize>,
     warned: Arc<AtomicBool>,
+    pool: DecodeBufferPool,
 }
 
 impl DecodeChannel {
@@ -883,6 +1056,19 @@ impl DecodeChannel {
             sender,
             dropped: Arc::new(AtomicUsize::new(0)),
             warned: Arc::new(AtomicBool::new(false)),
+            pool: DecodeBufferPool::new(),
+        }
+    }
+
+    /// Builds a channel sharing `pool` with the decode worker, so handoff
+    /// buffers are recycled instead of allocated per callback — see
+    /// [`DecodeBufferPool`].
+    pub fn with_pool(sender: SyncSender<(Track, Vec<f32>)>, pool: DecodeBufferPool) -> Self {
+        Self {
+            sender,
+            dropped: Arc::new(AtomicUsize::new(0)),
+            warned: Arc::new(AtomicBool::new(false)),
+            pool,
         }
     }
 
@@ -900,6 +1086,34 @@ impl DecodeChannel {
                          behind live audio; further overflows are counted but not logged"
                     );
                 }
+            }
+        }
+    }
+
+    /// Callback-fast path: copies `samples` into a pooled buffer (reusing
+    /// its allocation — steady-state zero mallocs) and hands it off without
+    /// ever blocking. On overflow the pooled buffer is returned to the pool
+    /// and the drop is counted, exactly like [`DecodeChannel::send`].
+    ///
+    /// This is what the realtime callback uses; [`DecodeChannel::send`]
+    /// stays for owned buffers and tests.
+    pub fn send_slice(&self, track: Track, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+        let mut buf = self.pool.acquire();
+        buf.extend_from_slice(samples);
+        match self.sender.try_send((track, buf)) {
+            Ok(()) => {}
+            Err(TrySendError::Full((_, buf)) | TrySendError::Disconnected((_, buf))) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                if !self.warned.swap(true, Ordering::Relaxed) {
+                    eprintln!(
+                        "myna-app: decode channel overflow — the decode worker is falling \
+                         behind live audio; further overflows are counted but not logged"
+                    );
+                }
+                self.pool.release(buf);
             }
         }
     }
@@ -934,10 +1148,12 @@ fn unwrap_worker_state(worker_state: Arc<Mutex<WorkerState>>) -> Result<WorkerSt
 /// Does only cheap, bounded work per block: up to three `write_all`s (mic,
 /// system, native-rate stereo playback — see [`write_tracks`]), the
 /// throttled level meter over the mono sum, and up to two non-blocking
-/// [`DecodeChannel::send`]s — never a decode, never an allocation beyond
-/// what a `write` itself needs. The `worker_state` lock is held only across
+/// [`DecodeChannel::send_slice`]s — never a decode, never a per-callback
+/// allocation in steady state (`mix_buffer` is reused across calls and the
+/// decode handoff reuses [`DecodeBufferPool`] buffers, allocating only on
+/// first use or growth). The `worker_state` lock is held only across
 /// the WAV writes and level throttle, and is released (see the explicit
-/// `drop` below) before either `decode_channel.send`, which never blocks
+/// `drop` below) before either handoff, which never blocks
 /// regardless.
 ///
 /// On a WAV write error, records it and requests an early stop rather
@@ -991,10 +1207,10 @@ fn build_sample_callback(
         drop(state);
 
         if let Some(mic) = block.mic {
-            decode_channel.send(Track::Mic, mic.to_vec());
+            decode_channel.send_slice(Track::Mic, mic);
         }
         if let Some(system) = block.system {
-            decode_channel.send(Track::System, system.to_vec());
+            decode_channel.send_slice(Track::System, system);
         }
     }
 }
@@ -1116,7 +1332,7 @@ fn emit_partial(app: &AppHandle, meeting_id: MeetingId, text: String, speaker: S
     let _ = app.emit(TRANSCRIPT_PARTIAL, payload);
 }
 
-fn emit_final(app: &AppHandle, meeting_id: MeetingId, segment: TranscriptSegment) {
+pub(crate) fn emit_final(app: &AppHandle, meeting_id: MeetingId, segment: TranscriptSegment) {
     let payload = FinalPayload {
         meeting_id: meeting_id.to_string(),
         segment,

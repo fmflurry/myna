@@ -228,6 +228,9 @@ fn two_segment_transcript() -> Transcript {
             text: "hello team".to_string(),
             speaker: myna_stt::Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 1.5,
@@ -235,6 +238,9 @@ fn two_segment_transcript() -> Transcript {
             text: "let's begin".to_string(),
             speaker: myna_stt::Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
 }
 
@@ -322,6 +328,9 @@ mod transcript_structure {
             text: text.to_string(),
             speaker,
             speaker_pinned: pinned,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }
     }
 

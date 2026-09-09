@@ -744,6 +744,9 @@ fn final_event(start_sec: f32, text: &str) -> SttEvent {
             text: text.to_string(),
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         },
     }
 }
@@ -820,4 +823,131 @@ fn fold_track_event_result_groups_attributed_text_by_chronological_adjacency() {
         transcript.attributed_text(),
         "Others: Pirapolis c'est fini\nMe: Yeah. Allo, allo, c'est un test."
     );
+}
+
+// --- live-edit journal rewrite + read_journal round-trip --------------------
+
+/// The live-edit command rewrites the journal rather than appending: the
+/// patched segment keeps its `(start_sec, end_sec, speaker)` triple, so
+/// replay order is unchanged and the UI's live-event-vs-journal dedupe
+/// still holds. This drives the exact read → patch → rewrite → read
+/// sequence `edit_live_transcript_segment` performs and asserts the
+/// corrected text, the first-wins `original_text`, the cleared suspect
+/// flags, and the preserved timing/speaker all survive the round-trip —
+/// an edited line lost on reload (e.g. a rewrite that dropped the audit
+/// fields, or a reader that re-sorted by line order) fails here.
+#[test]
+fn live_edit_rewrite_round_trips_correction_and_audit_flags_through_read_journal() {
+    // Arrange: a two-line journal as the decode worker left it, written in
+    // decode-completion (not chronological) order — line 0 still carries a
+    // decode-time suspect hint. (`TranscriptSegment` has no rename
+    // attribute, so the journal is snake_case throughout.)
+    let dir = tempfile::tempdir().expect("tempdir");
+    let journal_path = dir.path().join("transcript-journal.jsonl");
+    std::fs::write(
+        &journal_path,
+        concat!(
+            "{\"start_sec\":2.0,\"end_sec\":3.0,\"text\":\"second\",\"speaker\":\"others\",",
+            "\"speaker_pinned\":false,\"suspect_reasons\":[],\"original_text\":null,",
+            "\"edited\":false}\n",
+            "{\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"hello\",\"speaker\":\"me\",",
+            "\"speaker_pinned\":false,\"suspect_reasons\":[\"RepetitionLoop\"],",
+            "\"original_text\":null,\"edited\":false}\n",
+        ),
+    )
+    .expect("write journal fixture");
+
+    // Act: index addresses journal-replay order (ascending `start_sec`), so
+    // index 0 is "hello" despite being the second line on disk. The padded
+    // whitespace also proves the trim guard survives the rewrite.
+    let journal = myna_app::session_manifest::read_journal(&journal_path).expect("read journal");
+    let patched = myna_app::session::apply_live_segment_edit(&journal, 0, "  hello, corrected  ")
+        .expect("patch");
+    myna_app::session::rewrite_journal(&journal_path, &patched).expect("rewrite journal");
+    // A second correction must keep the FIRST decoder-original text.
+    let journal_again =
+        myna_app::session_manifest::read_journal(&journal_path).expect("re-read journal");
+    let patched_again =
+        myna_app::session::apply_live_segment_edit(&journal_again, 0, "hello, corrected again")
+            .expect("re-patch");
+    myna_app::session::rewrite_journal(&journal_path, &patched_again)
+        .expect("rewrite journal again");
+    let round_tripped =
+        myna_app::session_manifest::read_journal(&journal_path).expect("round-trip read");
+
+    // Assert
+    assert_eq!(round_tripped.segments.len(), 2);
+    let edited = &round_tripped.segments[0];
+    assert_eq!(
+        edited.text, "hello, corrected again",
+        "the latest correction wins, trimmed"
+    );
+    assert_eq!(
+        edited.original_text.as_deref(),
+        Some("hello"),
+        "first edit wins: reviewers can always diff back to the decoder original"
+    );
+    assert!(edited.edited, "the correction must stay stamped");
+    assert!(
+        edited.suspect_reasons.is_empty(),
+        "a human has reviewed this segment, so decode-time hints no longer apply"
+    );
+    assert_eq!(edited.start_sec, 0.0);
+    assert_eq!(edited.end_sec, 1.0);
+    assert_eq!(
+        edited.speaker,
+        Speaker::me(),
+        "the (start, end, speaker) triple must be preserved verbatim for dedupe"
+    );
+    assert_eq!(
+        round_tripped.segments[1].text, "second",
+        "replay order must stay ascending by start_sec, not line order"
+    );
+    assert!(
+        !dir.path().join("transcript-journal.jsonl.tmp").exists(),
+        "the atomic tmp file must be consumed by the rename"
+    );
+}
+
+/// A crash that lands mid-append AFTER an edit leaves a truncated trailing
+/// line behind the rewritten journal — the reader must still replay the
+/// edited line and drop only the tail.
+#[test]
+fn edited_journal_still_replays_after_a_crash_appends_a_truncated_tail() {
+    // Arrange: one edited segment rewritten to disk, then the kill -9
+    // signature (a half-written line with no trailing newline).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let journal_path = dir.path().join("transcript-journal.jsonl");
+    let transcript = myna_app::session_manifest::read_journal(&journal_path)
+        .expect("a missing journal reads as empty");
+    assert!(transcript.segments.is_empty());
+    let edited = Transcript {
+        segments: vec![TranscriptSegment {
+            start_sec: 0.0,
+            end_sec: 1.0,
+            text: "hello, corrected".to_string(),
+            speaker: Speaker::me(),
+            speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: Some("hello".to_string()),
+            edited: true,
+        }],
+    };
+    myna_app::session::rewrite_journal(&journal_path, &edited).expect("rewrite journal");
+    std::fs::write(&journal_path, {
+        let mut raw = std::fs::read(&journal_path).expect("read rewritten journal");
+        raw.extend_from_slice(br#"{"start_sec":5.0,"end"#);
+        raw
+    })
+    .expect("append truncated tail");
+
+    // Act
+    let replayed =
+        myna_app::session_manifest::read_journal(&journal_path).expect("tail must be tolerated");
+
+    // Assert: the edited line replays verbatim; only the tail is dropped.
+    assert_eq!(replayed.segments.len(), 1);
+    assert_eq!(replayed.segments[0].text, "hello, corrected");
+    assert!(replayed.segments[0].edited);
+    assert_eq!(replayed.segments[0].original_text.as_deref(), Some("hello"));
 }

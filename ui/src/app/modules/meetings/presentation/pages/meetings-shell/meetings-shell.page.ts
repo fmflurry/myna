@@ -30,8 +30,9 @@ import { SidebarSplitterComponent } from '../../components/sidebar-splitter/side
 import { UpdateBannerComponent } from '../../components/update-banner/update-banner.component';
 import { UpdateConsentDialogComponent } from '../../components/update-consent-dialog/update-consent-dialog.component';
 import type { SpeakerRename, TranscriptSectionDelete, TranscriptSelectionSpeakerAssignment, TranscriptSegmentEdit, TranscriptSegmentGroupSpeakerReassign, TranscriptSegmentSpeakerReassign } from '../../components/transcript-view/transcript-view.component';
+import type { LiveTranscriptSegmentEdit } from '../../components/live-transcript/live-transcript.component';
 import { formatMmSs } from '../../utils/format-display.util';
-import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createLayoutControls, createSettingsControls, createSidebarNarrowControls, createSummaryInstructionControls, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runMeetingDeleted, runMeetingMoveRequested, runSummarize } from './meetings-shell.page.support';
+import { buildExportFilename, CHECKING_SYSTEM_AUDIO, createLayoutControls, createSettingsControls, createSidebarNarrowControls, createSummaryInstructionControls, createUpdateHandlers, describeLatestSpeakerUndo, describeLatestTranscriptUndo, loadUpdatesOnLaunch, MeetingOpQueue, runErrorRetry, runLiveSegmentEdited, runMeetingDeleted, runMeetingMoveRequested, runSegmentEdited, runSummarize } from './meetings-shell.page.support';
 
 /**
  * The single window: a persistent title bar (brand + always-visible record
@@ -212,13 +213,8 @@ export class MeetingsShellPage implements OnInit {
     void this.facade.renameMeeting(meeting.id, title);
   }
 
-  onSegmentEdited(edit: TranscriptSegmentEdit): void {
-    const meeting = this.facade.selectedMeeting();
-    if (!meeting) {
-      return;
-    }
-    void this.facade.editTranscriptSegment(meeting.id, edit.index, edit.text);
-  }
+  onSegmentEdited(edit: TranscriptSegmentEdit): void { runSegmentEdited(this.facade, this.facade.selectedMeeting(), edit); }
+  onLiveSegmentEdited(edit: LiveTranscriptSegmentEdit): void { runLiveSegmentEdited(this.facade, this.recordingMeetingId(), this.facade.selectedMeeting()?.id, edit); }
 
   /** Chip-menu rename; the backend rewrites EVERY occurrence of `label`, never just the clicked segment. */
   onSpeakerRenamed(rename: SpeakerRename): void {

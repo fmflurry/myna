@@ -38,6 +38,27 @@ export class InMemoryTranscriberFake extends TranscriberPort {
     return this.transcript;
   }
 
+  override async editLiveSegment(id: MeetingId, index: number, text: string): Promise<Transcript> {
+    // Mirrors the backend patch: timing/speaker preserved, `edited`
+    // stamped, the first `originalText` kept, `suspectReasons` cleared.
+    void id;
+    const segment = this.transcript.segments[index];
+    if (segment === undefined) {
+      throw new Error(`no live segment at index ${index}`);
+    }
+    const patched = {
+      ...segment,
+      text,
+      edited: true,
+      originalText: segment.originalText ?? segment.text,
+      suspectReasons: [],
+    };
+    this.transcript = {
+      segments: this.transcript.segments.map((entry, i) => (i === index ? patched : entry)),
+    };
+    return this.transcript;
+  }
+
   /** Test helper: push a synthetic in-flight partial transcript. */
   emitPartial(partial: TranscriptPartial): void {
     this.partialSubject.next(partial);

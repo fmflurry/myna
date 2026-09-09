@@ -11,6 +11,7 @@ import type { SummaryLanguage } from '../../core/models/summary-language.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
 import type { TranscriptSegment } from '../../core/models/transcript.model';
 import type { ImportProgress } from '../../core/ports/audio-import.port';
+import type { StorageLocation } from '../../core/ports/storage-location.port';
 import type { SummaryCacheEntry } from './summary-cache.model';
 import type { SummarizingKey } from './summarizing-key.model';
 import type { SpeakerOp } from './speaker-history.model';
@@ -133,4 +134,10 @@ export interface MeetingsStoreConfig {
   SPEAKER_HISTORY: readonly SpeakerOp[];
   /** Session-scoped single-slot inverse for the last transcript structural op — see `transcript-history.model.ts`. */
   TRANSCRIPT_UNDO: TranscriptOp | null;
+  /**
+   * The effective storage location (data root), plus whether applying it
+   * still needs an app restart. The server (via `StorageLocationPort`) is
+   * the source of truth — this slot is a cache, never persisted.
+   */
+  STORAGE_LOCATION: StorageLocation;
 }

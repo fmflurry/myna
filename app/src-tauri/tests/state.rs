@@ -13,8 +13,8 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use myna_app::state::{
-    clamp_thread_count, AppState, ModelSlot, STT_ENGINE_THREADS_FALLBACK, STT_ENGINE_THREADS_MAX,
-    STT_ENGINE_THREADS_MIN,
+    clamp_thread_count, guard_import_vs_summary, guard_summary_vs_import, AppState, ModelSlot,
+    IDLE_MODEL_TTL, STT_ENGINE_THREADS_FALLBACK, STT_ENGINE_THREADS_MAX, STT_ENGINE_THREADS_MIN,
 };
 use myna_app::store::folder_store::FsFolderStore;
 use myna_app::store::fs_store::FsMeetingStore;
@@ -299,6 +299,43 @@ fn stt_evict_guard_refuses_while_recording_or_importing() {
 }
 
 #[test]
+fn idle_model_ttl_is_four_minutes() {
+    // 4 minutes: covers record→stop→retranscribe reuse (each reload is a
+    // seconds-scale Parakeet load) while returning idle RSS toward baseline
+    // on a measure-friendly timescale. Change deliberately, not casually:
+    // longer holds ~1 GB of ONNX weights after every meeting, shorter
+    // churns reloads across back-to-back operations.
+    assert_eq!(IDLE_MODEL_TTL, Duration::from_secs(4 * 60));
+}
+
+#[test]
+fn stt_evict_boundary_allows_after_ttl_and_refuses_while_busy() {
+    // TTL boundary pinned against the real `IDLE_MODEL_TTL`, not an
+    // arbitrary constant: a just-used slot must refuse under the
+    // production TTL, allow once the TTL is treated as elapsed, and never
+    // evict under a live holder regardless of the TTL.
+    let slot: ModelSlot<FakeModel> = ModelSlot::new();
+    let arc = slot.get_or_load(|| Ok(Arc::new(FakeModel))).expect("load");
+    let weak = slot.weak().expect("populated");
+
+    // Freshly used + production TTL: not evicted.
+    assert!(!slot.evict_if_idle(IDLE_MODEL_TTL));
+    assert!(weak.upgrade().is_some());
+
+    // TTL elapsed but a live operation still holds the model: refused.
+    assert!(
+        !slot.evict_if_idle(Duration::ZERO),
+        "eviction must refuse while a live reference exists, even past the TTL"
+    );
+    assert!(weak.upgrade().is_some());
+
+    // Holder gone + TTL elapsed: evicted and actually dropped.
+    drop(arc);
+    assert!(slot.evict_if_idle(Duration::ZERO));
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
 fn app_state_release_and_evict_are_safe_on_fresh_state() {
     let dir = tempfile::tempdir().expect("tempdir");
     let state = fresh_state(dir.path());
@@ -320,6 +357,75 @@ fn app_state_release_and_evict_are_safe_on_fresh_state() {
     // An import in flight likewise refuses.
     state.begin_import().expect("begin_import");
     assert!(!state.evict_stt_if_idle());
+}
+
+// --- summarize vs import/diarize cross guards ---------------------------------
+//
+// STT + diarizer + LLM must never be co-resident: `summarize_meeting`
+// refuses while an import/diarize holds the STT side, and
+// import/re-transcribe/diarize refuse while a summarization holds the LLM.
+
+#[test]
+fn guard_summary_vs_import_allows_when_idle_and_refuses_while_import_busy() {
+    assert!(guard_summary_vs_import(false).is_ok());
+    let err = guard_summary_vs_import(true).expect_err("import busy must refuse summary");
+    assert!(matches!(err, myna_app::error::AppError::Busy(_)));
+    assert!(err.to_string().to_lowercase().contains("import"));
+}
+
+#[test]
+fn guard_import_vs_summary_allows_when_idle_and_refuses_while_summary_busy() {
+    assert!(guard_import_vs_summary(false).is_ok());
+    let err = guard_import_vs_summary(true).expect_err("summary busy must refuse import");
+    assert!(matches!(err, myna_app::error::AppError::Busy(_)));
+    assert!(
+        err.to_string().to_lowercase().contains("summar"),
+        "conflict message must name the summarization, got: {err}"
+    );
+}
+
+#[test]
+fn concurrent_summarize_and_import_refuse_each_other() {
+    // Arrange: an import in flight blocks the summary direction.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = fresh_state(dir.path());
+    state.begin_import().expect("begin_import");
+
+    // Act / Assert: summarize refuses while import_busy().
+    let err = guard_summary_vs_import(state.import_busy()).expect_err("summary must be Busy");
+    assert!(matches!(err, myna_app::error::AppError::Busy(_)));
+    state.end_import();
+
+    // Arrange: a summarization in flight blocks the import direction.
+    state.begin_summarization().expect("begin_summarization");
+
+    // Act / Assert: import refuses while summary_busy().
+    let err = guard_import_vs_summary(state.summary_busy()).expect_err("import must be Busy");
+    assert!(matches!(err, myna_app::error::AppError::Busy(_)));
+    state.end_summarization();
+
+    // Both idle again: both directions allow.
+    assert!(guard_summary_vs_import(state.import_busy()).is_ok());
+    assert!(guard_import_vs_summary(state.summary_busy()).is_ok());
+}
+
+#[test]
+fn repeated_acquire_release_loop_leaves_no_model_resident() {
+    // Conceptual RSS-growth check: 5x import→diarize→summarize loop over
+    // evictable slots must drop every model (`weak.upgrade().is_none()`)
+    // after each op instead of accumulating residents.
+    for _ in 0..5 {
+        let slot: ModelSlot<FakeModel> = ModelSlot::new();
+        let arc = slot.get_or_load(|| Ok(Arc::new(FakeModel))).expect("load");
+        let weak: Weak<FakeModel> = slot.weak().expect("populated");
+        assert!(weak.upgrade().is_some());
+        drop(arc);
+        assert!(slot.release_if_last());
+        assert!(
+            weak.upgrade().is_none(),
+            "each loop iteration must drop its model"
+        );
+    }
 }
 
 // --- model-gated: real Summarizer reload + RSS release ---------------------

@@ -74,6 +74,9 @@ fn promote_and_persist_retranscribe_leaves_audio_byte_identical_to_the_old_file_
             text: "old segment describing the OLD audio".to_string(),
             speaker: Speaker::unknown(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }],
     };
     let meeting = Meeting::new("desync-repro").with_transcript(old_transcript.clone());
@@ -109,6 +112,9 @@ fn promote_and_persist_retranscribe_leaves_audio_byte_identical_to_the_old_file_
             text: "new segment describing the NEW audio".to_string(),
             speaker: Speaker::unknown(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }],
     };
     let updated = meeting.with_transcript(new_transcript);
@@ -178,6 +184,9 @@ fn promote_and_persist_retranscribe_promotes_the_staged_audio_and_persists_the_n
             text: "old segment".to_string(),
             speaker: Speaker::unknown(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }],
     };
     let meeting = Meeting::new("promote-success").with_transcript(old_transcript.clone());
@@ -199,6 +208,9 @@ fn promote_and_persist_retranscribe_promotes_the_staged_audio_and_persists_the_n
             text: "new segment".to_string(),
             speaker: Speaker::unknown(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }],
     };
     let updated = meeting.with_transcript(new_transcript.clone());

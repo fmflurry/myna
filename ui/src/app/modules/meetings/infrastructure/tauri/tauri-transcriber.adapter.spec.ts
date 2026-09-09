@@ -47,7 +47,17 @@ describe('TauriTranscriberAdapter', () => {
     });
 
     expect(results).toEqual([
-      { meetingId: toMeetingId('m-1'), segment: { startSec: 0, endSec: 2, text: 'hello', speaker: 'unknown' } },
+      {
+        meetingId: toMeetingId('m-1'),
+        segment: {
+          startSec: 0,
+          endSec: 2,
+          text: 'hello',
+          speaker: 'unknown',
+          suspectReasons: [],
+          edited: false,
+        },
+      },
     ]);
   });
 
@@ -61,7 +71,9 @@ describe('TauriTranscriberAdapter', () => {
     const transcript = await adapter.transcriptFor(toMeetingId('m-1'));
 
     expect(receivedArgs).toEqual({ id: 'm-1' });
-    expect(transcript).toEqual({ segments: [{ startSec: 0, endSec: 1, text: 'hi', speaker: 'unknown' }] });
+    expect(transcript).toEqual({
+      segments: [{ startSec: 0, endSec: 1, text: 'hi', speaker: 'unknown', suspectReasons: [], edited: false }],
+    });
   });
 
   it('transcriptFor() returns an empty transcript when the Rust side has none yet', async () => {

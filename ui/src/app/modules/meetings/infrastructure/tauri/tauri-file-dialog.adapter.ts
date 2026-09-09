@@ -28,4 +28,9 @@ export class TauriFileDialogAdapter extends FileDialogPort {
     });
     return Array.isArray(result) ? (result[0] ?? null) : result;
   }
+
+  override async selectDirectory(): Promise<string | null> {
+    const result = await open({ multiple: false, directory: true });
+    return Array.isArray(result) ? (result[0] ?? null) : result;
+  }
 }

@@ -10,7 +10,30 @@
       @if (hasSpeakerLabel(segment.speaker)) {
         <span class="speaker-label {{ speakerAccentClass(segment.speaker) }}">{{ speakerLabel(segment.speaker) }}</span>
       }
-      <span class="text">{{ segment.text }}</span>
+      @if (isSuspectSegment(segment)) {
+        <span
+          class="suspect-badge"
+          role="img"
+          aria-label="Possibly mis-transcribed"
+          [title]="suspectTooltip(segment)"
+        >⚠</span>
+      }
+      @if (isEditedSegment(segment)) {
+        <span
+          class="edited-badge"
+          [title]="editedTooltip(segment)"
+        >Edited</span>
+      }
+      @if (editableLive()) {
+        <app-editable-segment
+          class="text"
+          [text]="segment.text"
+          [editable]="true"
+          (textChanged)="onLiveSegmentEdited(windowStart() + $index, $event)"
+        />
+      } @else {
+        <span class="text">{{ segment.text }}</span>
+      }
     </p>
   }
   @if (partialTextMe()) {

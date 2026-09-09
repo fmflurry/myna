@@ -19,11 +19,13 @@ pub struct SummaryRef {
     #[serde(default = "default_summary_language")]
     pub language: String,
     /// Whether this summary was generated from a transcript that has since
-    /// been replaced (e.g. by a re-transcribe). The markdown itself is
-    /// never deleted when this flips to `true` — only the flag changes, so
-    /// the UI can warn without silently destroying user-visible content.
-    /// Defaults to `false` when deserializing a `meeting.json` written
-    /// before this field existed.
+    /// been replaced (e.g. by a re-transcribe, which marks every existing
+    /// summary via `Meeting::with_all_summaries_stale`). The markdown
+    /// itself is never deleted when this flips to `true` — only the flag
+    /// changes, so the UI can warn without silently destroying
+    /// user-visible content. Defaults to `false` when deserializing a
+    /// `meeting.json` written before this field existed. Mirrors
+    /// `SummaryRefDto.stale`.
     #[serde(default)]
     pub stale: bool,
 }

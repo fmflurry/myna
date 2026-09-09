@@ -19,6 +19,10 @@ export class InMemoryFileDialogFake extends FileDialogPort {
     return this.nextPath;
   }
 
+  override async selectDirectory(): Promise<string | null> {
+    return this.nextPath;
+  }
+
   /** Test helper: control the next save()/open() result (a path, or null to simulate cancel). */
   seed(path: string | null): void {
     this.nextPath = path;

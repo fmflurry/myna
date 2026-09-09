@@ -31,6 +31,7 @@ import { AudioPlayerComponent } from '../audio-player/audio-player.component';
 import { EditableTitleComponent } from '../editable-title/editable-title.component';
 import { ErrorStateComponent } from '../error-state/error-state.component';
 import { LiveTranscriptComponent } from '../live-transcript/live-transcript.component';
+import type { LiveTranscriptSegmentEdit } from '../live-transcript/live-transcript.component';
 import { OnboardingPanelComponent } from '../onboarding-panel/onboarding-panel.component';
 import { RegenerateInstructionsDialogComponent } from '../regenerate-instructions-dialog/regenerate-instructions-dialog.component';
 import { SplitWorkspaceComponent } from '../split-workspace/split-workspace.component';
@@ -159,6 +160,8 @@ export class MeetingDetailPaneComponent {
 
   readonly renameRequested = output<string>();
   readonly segmentEdited = output<TranscriptSegmentEdit>();
+  /** Re-emitted from `app-live-transcript`'s inline edits of finalized live segments; see `meetings-shell.page.ts` for the facade wiring. */
+  readonly liveSegmentEdited = output<LiveTranscriptSegmentEdit>();
   /** Re-emitted from `app-transcript-view`'s chip-menu ops; see `meetings-shell.page.ts` for the facade wiring. */
   readonly speakerRenamed = output<SpeakerRename>();
   readonly speakerRemoved = output<string>();

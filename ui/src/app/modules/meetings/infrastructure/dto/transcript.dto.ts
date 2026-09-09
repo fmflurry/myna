@@ -16,6 +16,19 @@ export interface TranscriptSegmentDto {
   readonly text: string;
   /** Absent on older/incomplete payloads; the mapper defaults it to `'unknown'`. */
   readonly speaker?: string;
+  /**
+   * Audit hints as `SuspectReason` Debug variant names (e.g. `"RepetitionLoop"`).
+   * Always present on current payloads; absent on older ones — the mapper
+   * defaults a missing value to `[]` and never fabricates flags.
+   */
+  readonly suspectReasons?: readonly string[];
+  /** Absent on older payloads; the mapper defaults a missing value to `false`. */
+  readonly edited?: boolean;
+  /**
+   * Rust `Option` serializes `None` as `null`; absent on legacy payloads.
+   * The mapper defaults both `null` and missing to `undefined`.
+   */
+  readonly originalText?: string | null;
 }
 
 /** Snake-case segment shape, unique to the `transcript://final` event. */
@@ -25,6 +38,16 @@ export interface RawTranscriptSegmentDto {
   readonly text: string;
   /** Absent on older/incomplete payloads; the mapper defaults it to `'unknown'`. */
   readonly speaker?: string;
+  /**
+   * Snake-case counterpart of {@link TranscriptSegmentDto.suspectReasons} —
+   * `myna_stt::TranscriptSegment` serializes verbatim. Absent on older
+   * payloads; the mapper defaults a missing value to `[]`.
+   */
+  readonly suspect_reasons?: readonly string[];
+  /** Absent on older payloads; the mapper defaults a missing value to `false`. */
+  readonly edited?: boolean;
+  /** Rust `None` serializes as `null`; absent on legacy payloads. Mapper → `undefined`. */
+  readonly original_text?: string | null;
 }
 
 /** Mirrors the Rust `TranscriptDto` (`#[serde(rename_all = "camelCase")]`). */

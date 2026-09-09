@@ -212,4 +212,142 @@ describe('MeetingsShellPage settings modal', () => {
 
     expect(selectLanguage).toHaveBeenCalledWith('fr');
   });
+
+  describe('storage location', () => {
+    const openStorageSection = async () => {
+      const facade = TestBed.inject(MeetingsFacade);
+      const fixture = await createFixture();
+      menu.requestSettings();
+      fixture.detectChanges();
+      await flushMicrotasks();
+      fixture.detectChanges();
+      // Opening the modal refreshes `loadStorageLocation` against the real
+      // Tauri adapter (no stub here) — clear any load failure so each test
+      // asserts only on its own browse/reset round-trip.
+      facade.clearError();
+      return { facade, fixture };
+    };
+
+    it('a cancelled directory dialog issues no facade call and no error', async () => {
+      const { facade, fixture } = await openStorageSection();
+      (TestBed.inject(FileDialogPort) as InMemoryFileDialogFake).seed(null);
+      const setStorage = vi.spyOn(facade, 'setStorageLocation').mockResolvedValue(undefined);
+
+      (fixture.nativeElement.querySelector('.change-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(setStorage).not.toHaveBeenCalled();
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('Change… forwards the chosen directory to setStorageLocation', async () => {
+      const { facade, fixture } = await openStorageSection();
+      (TestBed.inject(FileDialogPort) as InMemoryFileDialogFake).seed('/tmp/new-root');
+      const setStorage = vi.spyOn(facade, 'setStorageLocation').mockResolvedValue(undefined);
+
+      (fixture.nativeElement.querySelector('.change-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(setStorage).toHaveBeenCalledWith('/tmp/new-root', true);
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('Reset to default calls resetStorageLocation', async () => {
+      const { facade, fixture } = await openStorageSection();
+      const resetStorage = vi.spyOn(facade, 'resetStorageLocation').mockResolvedValue(undefined);
+
+      (fixture.nativeElement.querySelector('.reset-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(resetStorage).toHaveBeenCalledTimes(1);
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('Reset forwards the Move choice (true) by default', async () => {
+      const { facade, fixture } = await openStorageSection();
+      const resetStorage = vi.spyOn(facade, 'resetStorageLocation').mockResolvedValue(undefined);
+
+      (fixture.nativeElement.querySelector('.reset-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(resetStorage).toHaveBeenCalledWith(true);
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('Change… with Stay forwards the chosen directory with moveExisting false', async () => {
+      const { facade, fixture } = await openStorageSection();
+      (TestBed.inject(FileDialogPort) as InMemoryFileDialogFake).seed('/tmp/stay-root');
+      const setStorage = vi.spyOn(facade, 'setStorageLocation').mockResolvedValue(undefined);
+
+      const checkbox = fixture.nativeElement.querySelector('.storage-move-toggle') as HTMLInputElement;
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('.change-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(setStorage).toHaveBeenCalledWith('/tmp/stay-root', false);
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('Reset with Stay forwards moveExisting false', async () => {
+      const { facade, fixture } = await openStorageSection();
+      const resetStorage = vi.spyOn(facade, 'resetStorageLocation').mockResolvedValue(undefined);
+
+      const checkbox = fixture.nativeElement.querySelector('.storage-move-toggle') as HTMLInputElement;
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('.reset-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(resetStorage).toHaveBeenCalledWith(false);
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('a Stay dialog cancel issues no facade call and no error', async () => {
+      const { facade, fixture } = await openStorageSection();
+      (TestBed.inject(FileDialogPort) as InMemoryFileDialogFake).seed(null);
+      const setStorage = vi.spyOn(facade, 'setStorageLocation').mockResolvedValue(undefined);
+
+      const checkbox = fixture.nativeElement.querySelector('.storage-move-toggle') as HTMLInputElement;
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      (fixture.nativeElement.querySelector('.change-storage') as HTMLButtonElement).click();
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(setStorage).not.toHaveBeenCalled();
+      expect(facade.error()).toBeUndefined();
+    });
+
+    it('an undefined choice falls back to the pending signal and a cancel still issues no call', async () => {
+      const { facade, fixture } = await openStorageSection();
+      (TestBed.inject(FileDialogPort) as InMemoryFileDialogFake).seed(null);
+      const setStorage = vi.spyOn(facade, 'setStorageLocation').mockResolvedValue(undefined);
+      // `settings` is protected on the page — reach the controls through a
+      // narrow cast so the spec pins the `choice ?? moveExistingChoice()`
+      // fallback without widening the component API.
+      const controls = (fixture.componentInstance as unknown as {
+        settings: { onBrowseStorage: (choice?: boolean) => void };
+      }).settings;
+
+      controls.onBrowseStorage(undefined);
+      await flushMicrotasks();
+      fixture.detectChanges();
+
+      expect(setStorage).not.toHaveBeenCalled();
+      expect(facade.error()).toBeUndefined();
+    });
+  });
 });

@@ -31,4 +31,14 @@ export abstract class TranscriberPort {
    * empty transcript when `id` is not the active recording.
    */
   abstract liveTranscriptFor(id: MeetingId): Promise<Transcript>;
+  /**
+   * Corrects the text of a live (still-recording) journal segment — the
+   * port half of the Rust `edit_live_transcript_segment` command. The
+   * backend preserves the segment's timing/speaker triple (so live-event
+   * vs journal dedupe still holds), stamps `edited`, keeps the first
+   * `originalText`, and clears `suspectReasons`. Resolves with the patched
+   * live transcript; rejects when `id` is not the active recording or
+   * `index` is out of range.
+   */
+  abstract editLiveSegment(id: MeetingId, index: number, text: string): Promise<Transcript>;
 }

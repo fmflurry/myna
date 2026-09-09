@@ -1,4 +1,4 @@
-/* eslint max-lines: ["error", 460] */
+/* eslint max-lines: ["error", 480] */
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 
@@ -27,6 +27,7 @@ import { DiarizeMeetingUseCase } from '../use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from '../use-cases/edit-summary.usecase';
 import { ExportMeetingUseCase } from '../use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from '../use-cases/get-app-version.usecase';
+import { GetStorageLocationUseCase } from '../use-cases/get-storage-location.usecase';
 import { GetSummaryGuidelinesUseCase } from '../use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from '../use-cases/get-summary.usecase';
 import { GetTemplatePromptUseCase } from '../use-cases/get-template-prompt.usecase';
@@ -44,6 +45,7 @@ import { ResetTemplatePromptUseCase } from '../use-cases/reset-template-prompt.u
 import { RetranscribeMeetingUseCase } from '../use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from '../use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from '../use-cases/set-meeting-folder.usecase';
+import { SetStorageLocationUseCase } from '../use-cases/set-storage-location.usecase';
 import { SetSummaryGuidelinesUseCase } from '../use-cases/set-summary-guidelines.usecase';
 import { SetTemplatePromptUseCase } from '../use-cases/set-template-prompt.usecase';
 import { StartRecordingUseCase } from '../use-cases/start-recording.usecase';
@@ -118,6 +120,8 @@ export class MeetingsFacade {
   private readonly resetTemplatePromptUseCase = inject(ResetTemplatePromptUseCase);
   private readonly getSummaryUseCase = inject(GetSummaryUseCase);
   private readonly getAppVersionUseCase = inject(GetAppVersionUseCase);
+  private readonly getStorageLocationUseCase = inject(GetStorageLocationUseCase);
+  private readonly setStorageLocationUseCase = inject(SetStorageLocationUseCase);
   private readonly importAudioUseCase = inject(ImportAudioUseCase);
   private readonly retranscribeMeetingUseCase = inject(RetranscribeMeetingUseCase);
   private readonly diarizeMeetingUseCase = inject(DiarizeMeetingUseCase);
@@ -170,6 +174,8 @@ export class MeetingsFacade {
   readonly templatePromptLoading = this.store.templatePromptLoading;
   readonly summaryCache = this.store.summaryCache;
   readonly appVersion = this.store.appVersion;
+  /** Effective storage location; `undefined` until `loadStorageLocation` runs. `restartRequired` is true while a move still needs an app restart. */
+  readonly storageLocation = this.store.storageLocation;
   readonly audioSources = this.store.audioSources;
   readonly selectedAudioSource = this.store.selectedAudioSource;
   readonly effectiveSystemSource = this.store.effectiveSystemSource;
@@ -253,6 +259,8 @@ export class MeetingsFacade {
   /** Persists a manual correction to one transcript segment; see `TranscriptEditingFacade.editTranscriptSegment`. */
   editTranscriptSegment = (id: MeetingId, index: number, text: string): Promise<void> =>
     this.transcriptEditingFacade.editTranscriptSegment(id, index, text);
+  editLiveTranscriptSegment = (id: MeetingId, index: number, text: string): Promise<void> =>
+    this.transcriptEditingFacade.editLiveTranscriptSegment(id, index, text);
 
   /** Persists an edited summary's markdown; never optimistic — see `runEditSummary`. */
   editSummary = (id: MeetingId, template: string, language: string, markdown: string): Promise<void> =>
@@ -407,6 +415,18 @@ export class MeetingsFacade {
 
   loadAppVersion = (): Promise<void> =>
     this.guarded(async () => this.store.setAppVersion(await this.getAppVersionUseCase.version()), 'loadAppVersion');
+
+  /** Fetches the server-side storage location into the store slot; mirrors `loadAppVersion`. A fresh read never needs a restart, so `restartRequired` is seeded false. */
+  loadStorageLocation = (): Promise<void> =>
+    this.guarded(async () => this.store.setStorageLocation({ path: await this.getStorageLocationUseCase.get(), restartRequired: false }), 'loadStorageLocation');
+
+  /** Moves the archive to `path`; never optimistic — a rejected move leaves the previous location on screen for retry. */
+  setStorageLocation = (path: string, moveExisting = true): Promise<void> =>
+    this.guarded(async () => this.store.setStorageLocation(await this.setStorageLocationUseCase.set(path, moveExisting)), 'setStorageLocation');
+
+  /** Moves the archive back to the default root; never optimistic, mirroring `setStorageLocation`. */
+  resetStorageLocation = (moveExisting = true): Promise<void> =>
+    this.guarded(async () => this.store.setStorageLocation(await this.setStorageLocationUseCase.reset(moveExisting)), 'resetStorageLocation');
 
   /** Persists the transcript/summary split ratio for the NEXT session too, via the store. */
   setSplitRatio(ratio: number): void { this.store.setSplitRatio(ratio); }

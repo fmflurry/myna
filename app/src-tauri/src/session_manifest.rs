@@ -210,12 +210,15 @@ fn open_append_0600(path: &Path) -> std::io::Result<fs::File> {
 /// yet has nothing to replay). A truncated trailing line — the expected
 /// shape of a crash that landed mid-append — is tolerated and skipped;
 /// any *interior* parse failure is real corruption and surfaces as an
-/// error. Segments are inserted via
-/// [`crate::ingest::insert_final_segment`] so the result is ordered
-/// ascending by `start_sec` regardless of the order the two tracks'
-/// segments finished decoding (journal lines are written in
-/// decode-completion order, which is not chronological order across
-/// tracks).
+/// error. Segments are appended in file order and sorted once at the end
+/// via [`crate::ingest::sort_transcript_segments`] (O(n log n) total, not
+/// O(n²) for per-segment sorted inserts over a thousands-long journal),
+/// so the result is ordered ascending by `start_sec` regardless of the
+/// order the two tracks' segments finished decoding (journal lines are
+/// written in decode-completion order, which is not chronological order
+/// across tracks). The sort is stable, so equal `start_sec` keeps journal
+/// order — identical to the old per-segment [`crate::ingest::insert_final_segment`]
+/// replay.
 pub fn read_journal(path: &Path) -> Result<Transcript, AppError> {
     let raw = match fs::read(path) {
         Ok(raw) => raw,
@@ -232,7 +235,7 @@ pub fn read_journal(path: &Path) -> Result<Transcript, AppError> {
         .peekable();
     while let Some(line) = lines.next() {
         match serde_json::from_slice::<TranscriptSegment>(line) {
-            Ok(segment) => crate::ingest::insert_final_segment(&mut transcript, segment),
+            Ok(segment) => crate::ingest::push_final_segment(&mut transcript, segment),
             Err(err) => {
                 if lines.peek().is_none() {
                     // Truncated trailing line from a crash mid-append: the
@@ -245,6 +248,7 @@ pub fn read_journal(path: &Path) -> Result<Transcript, AppError> {
             }
         }
     }
+    crate::ingest::sort_transcript_segments(&mut transcript);
     Ok(transcript)
 }
 
@@ -260,6 +264,9 @@ mod tests {
             text: text.to_string(),
             speaker,
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         }
     }
 

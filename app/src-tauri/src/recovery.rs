@@ -60,7 +60,7 @@ fn meetings_root(store: &FsMeetingStore) -> Option<PathBuf> {
     Some(probe.parent()?.parent()?.to_path_buf())
 }
 
-/// Scans `<root>/meetings/*/` and runs both startup passes over each
+/// Scans `<root>/meetings/*/` and runs the startup passes over each
 /// meeting directory:
 ///
 /// - a surviving `session.json` manifest marks an orphaned recording
@@ -68,6 +68,11 @@ fn meetings_root(store: &FsMeetingStore) -> Option<PathBuf> {
 ///   process), salvaged via [`salvage_meeting_from_disk`];
 /// - no manifest triggers the legacy pass, [`recover_legacy_orphan`],
 ///   which repairs pre-ADR-0011 crashes that never wrote one.
+/// - every meeting directory is then swept for import/retranscribe staging
+///   scratch (`*.wav.staged` / `*.wav.tmp`) via [`sweep_staged_files`]
+///   with no live owner — a kill -9/panic between
+///   [`crate::ingest::convert_to_canonical_wav`]'s tmp write and the staged
+///   file's promote-or-discard leaves exactly this shape behind.
 ///
 /// Directories whose names are not meeting ids are foreign and skipped
 /// silently; every other failure is logged and skipped, leaving that
@@ -120,6 +125,99 @@ pub fn recover_orphaned_sessions(store: &FsMeetingStore) {
             Err(err) => eprintln!(
                 "myna-app: failed to recover orphaned recording for meeting {meeting_id}: \
                  {err} — leaving it untouched for a later run"
+            ),
+        }
+    }
+
+    // Staging sweep, last: `convert_to_canonical_wav` cleans its tmp file on
+    // every returned `Err`, but a kill -9/panic between the convert and the
+    // staged file's promote-or-discard leaves `*.wav.staged` / `*.wav.tmp`
+    // scratch with no owner. This runs in `setup` before any import can
+    // exist in-process, so there is no live `import_busy` owner by
+    // construction — pass `false`. (The tmp+rename pattern itself is
+    // `FsMeetingStore::save`'s `meeting.json.tmp`; see
+    // `store/fs_store.rs`.)
+    sweep_staged_files(store, false);
+}
+
+/// Sweeps import/retranscribe staging scratch (`*.wav.staged` /
+/// `*.wav.tmp`) out of every meeting directory.
+///
+/// `import_busy` is the live-owner check: when `true` an import,
+/// re-transcribe, or diarization is in flight in this process and may still
+/// be writing its staged file, so everything is kept for that owner (its
+/// own convert/transcribe error paths already delete their scratch on
+/// failure — this sweeper is only for ownerless leftovers). When `false`
+/// every staged file is an orphan of a dead process and is deleted + logged.
+/// Startup recovery ([`recover_orphaned_sessions`]) always passes `false`:
+/// it runs before any import can exist in this process.
+///
+/// Never returns an error and never panics on bad data, like the rest of
+/// recovery: per-file failures are logged and skipped, foreign directories
+/// are skipped silently.
+pub fn sweep_staged_files(store: &FsMeetingStore, import_busy: bool) {
+    if import_busy {
+        eprintln!("myna-app: recovery: import in flight — keeping staged audio for the live owner");
+        return;
+    }
+    let Some(meetings_root) = meetings_root(store) else {
+        return;
+    };
+    let entries = match fs::read_dir(&meetings_root) {
+        Ok(entries) => entries,
+        // A missing meetings root simply means nothing has ever recorded.
+        Err(err) if err.kind() == ErrorKind::NotFound => return,
+        Err(err) => {
+            eprintln!("myna-app: recovery: failed to scan {meetings_root:?}: {err}");
+            return;
+        }
+    };
+
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Some(name) = dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if MeetingId::from_str(name).is_err() {
+            continue;
+        }
+        sweep_meeting_staged_files(&dir);
+    }
+}
+
+/// Deletes the `*.wav.staged` / `*.wav.tmp` scratch files inside one meeting
+/// directory. Covers both staging shapes [`crate::ingest`] produces: the
+/// retranscribe `audio.wav.staged` replacement (and its convert tmp) plus
+/// the direct `audio.wav.tmp` conversion tmp. A per-file delete failure is
+/// logged and skipped — it must never block boot.
+fn sweep_meeting_staged_files(dir: &std::path::Path) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            eprintln!("myna-app: recovery: failed to scan {dir:?}: {err}");
+            return;
+        }
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let is_staged = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".wav.staged") || name.ends_with(".wav.tmp"));
+        if !is_staged {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => eprintln!("myna-app: recovery: removed orphan staged file {path:?}"),
+            Err(err) => eprintln!(
+                "myna-app: recovery: failed to remove orphan staged file {path:?}: {err} — \
+                 leaving it for a later run"
             ),
         }
     }
@@ -359,4 +457,59 @@ pub fn salvage_recording_after_stop_failure(
     let meeting = salvage_meeting_from_disk(store, meeting_id, elapsed_sec)?;
     emit_error(recording_ended_error_payload(original_error));
     Ok(meeting)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orphan_staged_files_are_removed_by_startup_recovery() {
+        // Arrange: a meeting with leftover retranscribe/import scratch — the
+        // kill -9/panic shape `run_retranscribe` leaves behind (a staged
+        // replacement never promoted, a convert tmp never renamed).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("Staged sweep check").expect("create");
+        let staged = store.audio_path(meeting.id).with_extension("wav.staged");
+        let tmp = store.audio_path(meeting.id).with_extension("wav.tmp");
+        fs::write(&staged, b"orphan staged").expect("write staged fixture");
+        fs::write(&tmp, b"orphan tmp").expect("write tmp fixture");
+
+        // Act: the startup pass — no import can be live at boot, so every
+        // staged file is an orphan.
+        recover_orphaned_sessions(&store);
+
+        // Assert: scratch gone, the meeting itself untouched.
+        assert!(
+            !staged.exists(),
+            "orphan .wav.staged must be swept on recovery"
+        );
+        assert!(!tmp.exists(), "orphan .wav.tmp must be swept on recovery");
+        assert!(
+            store.get(meeting.id).is_ok(),
+            "the sweep must not touch the meeting itself"
+        );
+    }
+
+    #[test]
+    fn staged_files_are_kept_while_an_import_owns_them() {
+        // Arrange: the same scratch, but a live import holds the guard.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsMeetingStore::new(dir.path());
+        let meeting = store.create("Live owner check").expect("create");
+        let staged = store.audio_path(meeting.id).with_extension("wav.staged");
+        fs::write(&staged, b"live staged").expect("write staged fixture");
+
+        // Act: sweep with a live owner.
+        sweep_staged_files(&store, true);
+
+        // Assert: kept for the live import — its own convert/transcribe
+        // error paths delete their scratch on failure; the sweeper only
+        // handles ownerless leftovers.
+        assert!(
+            staged.exists(),
+            "a staged file with a live import_busy owner must be kept"
+        );
+    }
 }

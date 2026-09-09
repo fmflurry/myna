@@ -104,6 +104,16 @@ const segmentIdentityKey = (segment: TranscriptSegment): string =>
   `${segment.startSec}|${segment.endSec}|${segment.speaker}|${segment.text}`;
 
 /**
+ * Timing/speaker triple identifying a live segment across edits. The backend
+ * `edit_live_transcript_segment` preserves `(start_sec, end_sec, speaker)` so
+ * the patched `transcript://final` still dedupes against the journal — text
+ * is deliberately EXCLUDED here (unlike `segmentIdentityKey`, which keeps
+ * text so a same-timing different-text re-decode is never dropped).
+ */
+const segmentReplaceKey = (segment: TranscriptSegment): string =>
+  `${segment.startSec}|${segment.endSec}|${segment.speaker}`;
+
+/**
  * Returns a NEW chronologically-sorted array with every segment from `incoming`
  * that `existing` doesn't already hold inserted at its sorted position — never
  * mutates `existing`. This is the SINGLE merge both the journal seed (ADR 0011
@@ -112,6 +122,14 @@ const segmentIdentityKey = (segment: TranscriptSegment): string =>
  * in either order), so routing both through here suppresses duplicates in BOTH
  * orderings. Segments are deduped by `segmentIdentityKey` — timing, speaker,
  * AND text — so a same-timing different-text segment is kept, not dropped.
+ * The one exception is an edit-involved triple match: a PATCHED final (`edited`,
+ * from `edit_live_transcript_segment`) shares its `(startSec, endSec, speaker)`
+ * triple with the segment it corrects by backend contract, so it REPLACES that
+ * entry in place (preserving order) instead of inserting a duplicate — and a
+ * clean segment landing on an edited triple (e.g. the optimistic-rollback inverse)
+ * replaces back the same way. Two CLEAN same-triple segments still coexist (re-decode).
+ * Flags (`edited`, `originalText`, `suspectReasons`) land verbatim either way,
+ * since whole segment objects are stored.
  */
 export function mergeFinalizedSegments(
   existing: readonly TranscriptSegment[],
@@ -125,6 +143,23 @@ export function mergeFinalizedSegments(
       continue;
     }
     seen.add(key);
+    if (segment.edited === true || segment.originalText !== undefined) {
+      const replaceKey = segmentReplaceKey(segment);
+      const replaceIndex = merged.findIndex((entry) => segmentReplaceKey(entry) === replaceKey);
+      if (replaceIndex !== -1) {
+        merged = [...merged.slice(0, replaceIndex), segment, ...merged.slice(replaceIndex + 1)];
+        continue;
+      }
+    } else {
+      const replaceKey = segmentReplaceKey(segment);
+      const editedIndex = merged.findIndex(
+        (entry) => (entry.edited === true || entry.originalText !== undefined) && segmentReplaceKey(entry) === replaceKey,
+      );
+      if (editedIndex !== -1) {
+        merged = [...merged.slice(0, editedIndex), segment, ...merged.slice(editedIndex + 1)];
+        continue;
+      }
+    }
     merged = insertSegmentSorted(merged, segment);
   }
   return merged;

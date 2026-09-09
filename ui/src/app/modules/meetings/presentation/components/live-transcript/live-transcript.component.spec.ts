@@ -365,4 +365,11 @@ describe('LiveTranscriptComponent', () => {
     flushPendingFrames();
     expect(scrollHeightReads).toBe(0);
   });
+
+  /**
+   * Live flags + inline editing (suspect/edited badges, `editableLive`
+   * editors, `liveSegmentEdited` emission) live in
+   * `live-transcript.component.live-editing.spec.ts` to keep this file
+   * under the project's max-lines limit.
+   */
 });

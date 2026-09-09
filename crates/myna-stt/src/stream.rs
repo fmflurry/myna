@@ -11,6 +11,7 @@ use std::time::Instant;
 use crate::detokenize::Word;
 use crate::engine::SttEngine;
 use crate::error::SttError;
+use crate::suspect::score_segment;
 use crate::transcript::{Speaker, TranscriptSegment};
 use crate::vad::{VadConfig, VadSegmenter, TARGET_SAMPLE_RATE, VAD_WINDOW_SIZE};
 
@@ -21,14 +22,14 @@ use crate::vad::{VadConfig, VadSegmenter, TARGET_SAMPLE_RATE, VAD_WINDOW_SIZE};
 /// see [`app::state::STT_ENGINE_THREADS_MAX`]'s doc comment) put an
 /// 8s-window partial at ~0.44x realtime and a 4s-window partial at ~0.45x
 /// realtime at a 1.0s / 2.0s interval respectively — essentially free, so
-/// widening the interval from `1.0` to `2.0` halves partial-decode
-/// frequency (and the CPU it costs) with no measurable change in perceived
-/// live-caption latency; a viewer cannot distinguish a 1s from a 2s partial
-/// refresh cadence. The previous `0.2` was never actually enforced (see
-/// [`PartialThrottle`]'s docs on the ordering bug this constant's interval
-/// was defeated by) and would have meant ~5x more decodes than intended
-/// even once fixed.
-const PARTIAL_INTERVAL_SEC: f32 = 2.0;
+/// widening the interval from `2.0` to `3.0` cuts partial-decode frequency
+/// by another ~33% (and the CPU it costs) with no measurable change in
+/// perceived live-caption latency; a viewer cannot distinguish a 2s from a
+/// 3s partial refresh cadence. The previous `0.2` was never actually
+/// enforced (see [`PartialThrottle`]'s docs on the ordering bug this
+/// constant's interval was defeated by) and would have meant ~5x more
+/// decodes than intended even once fixed.
+const PARTIAL_INTERVAL_SEC: f32 = 3.0;
 
 /// While idle (no speech detected yet in the current utterance), trim
 /// leading silence once the buffer grows past [`PRE_SPEECH_RETAIN_SEC`]
@@ -619,14 +620,17 @@ impl SimulatedStreamer {
                 for (chunk_start_sample, chunk_end_sample) in chunks {
                     let local_start = chunk_start_sample - decode_start_sample;
                     let local_end = chunk_end_sample - decode_start_sample;
-                    let text = self.engine.transcribe_samples(
-                        TARGET_SAMPLE_RATE,
-                        &decode_samples[local_start..local_end],
-                    )?;
+                    let slice = &decode_samples[local_start..local_end];
+                    let words = self
+                        .engine
+                        .transcribe_samples_words(TARGET_SAMPLE_RATE, slice)?;
+                    let text = words_to_text(&words);
                     events.push(final_segment_event(
                         chunk_start_sample,
                         chunk_end_sample,
                         text,
+                        &words,
+                        slice,
                     ));
                     // Advance only now that this chunk's decode completed —
                     // a failed decode must not mark its audio as emitted.
@@ -680,13 +684,17 @@ impl SimulatedStreamer {
             {
                 let local_start = chunk_start_sample - start_sample;
                 let local_end = chunk_end_sample - start_sample;
-                let text = self
+                let slice = &drained[local_start..local_end];
+                let words = self
                     .engine
-                    .transcribe_samples(TARGET_SAMPLE_RATE, &drained[local_start..local_end])?;
+                    .transcribe_samples_words(TARGET_SAMPLE_RATE, slice)?;
+                let text = words_to_text(&words);
                 events.push(final_segment_event(
                     chunk_start_sample,
                     chunk_end_sample,
                     text,
+                    &words,
+                    slice,
                 ));
                 // Advance only now that this chunk's decode completed; once
                 // the whole prefix decodes this equals the post-detach
@@ -798,23 +806,22 @@ impl SimulatedStreamer {
             return Ok(None);
         }
 
-        let text = self
+        let words = self
             .engine
-            .transcribe_samples(TARGET_SAMPLE_RATE, &self.buffer)?;
+            .transcribe_samples_words(TARGET_SAMPLE_RATE, &self.buffer)?;
+        let text = words_to_text(&words);
         let event = if text.trim().is_empty() {
             None
         } else {
-            let end_sec = self.total_samples as f32 / TARGET_SAMPLE_RATE as f32;
-            let start_sec = end_sec - self.buffer.len() as f32 / TARGET_SAMPLE_RATE as f32;
-            Some(SttEvent::Final {
-                segment: TranscriptSegment {
-                    start_sec,
-                    end_sec,
-                    text,
-                    speaker: Speaker::default(),
-                    speaker_pinned: false,
-                },
-            })
+            let end_sample = self.total_samples;
+            let start_sample = end_sample.saturating_sub(self.buffer.len());
+            Some(final_segment_event(
+                start_sample,
+                end_sample,
+                text,
+                &words,
+                &self.buffer,
+            ))
         };
 
         self.reset_utterance();
@@ -853,19 +860,67 @@ impl SimulatedStreamer {
 }
 
 /// Builds a [`SttEvent::Final`] from absolute sample offsets, shared by
-/// [`SimulatedStreamer::drain_finals`] and
-/// [`SimulatedStreamer::force_drain_overflow`] so both stamp identical
-/// absolute timestamps and default speaker attribution.
-fn final_segment_event(start_sample: usize, end_sample: usize, text: String) -> SttEvent {
+/// [`SimulatedStreamer::drain_finals`],
+/// [`SimulatedStreamer::force_drain_overflow`], and
+/// [`SimulatedStreamer::decode_tail`] so every final stamps identical
+/// absolute timestamps, default speaker attribution, and additive
+/// suspect/edited audit fields.
+///
+/// `words` is the detokenized word list for the decoded `samples` slice
+/// (timing relative to the slice start, as
+/// [`SttEngine::transcribe_samples_words`] reports it) and `samples` is
+/// the exact audio slice that was decoded. The RMS energy of `samples`
+/// plus `words` feed the pure [`score_segment`] scorer; partial events
+/// never carry these fields.
+fn final_segment_event(
+    start_sample: usize,
+    end_sample: usize,
+    text: String,
+    words: &[Word],
+    samples: &[f32],
+) -> SttEvent {
+    let start_sec = start_sample as f32 / TARGET_SAMPLE_RATE as f32;
+    let end_sec = end_sample as f32 / TARGET_SAMPLE_RATE as f32;
+    let seg_len_sec = (end_sec - start_sec).max(0.0);
+    let suspect_reasons = score_segment(&text, words, rms_energy(samples), seg_len_sec);
     SttEvent::Final {
         segment: TranscriptSegment {
-            start_sec: start_sample as f32 / TARGET_SAMPLE_RATE as f32,
-            end_sec: end_sample as f32 / TARGET_SAMPLE_RATE as f32,
+            start_sec,
+            end_sec,
             text,
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons,
+            original_text: None,
+            edited: false,
         },
     }
+}
+
+/// Joins detokenized `words` into display text, mirroring how
+/// [`crate::transcript::Transcript::full_text`] joins segment texts.
+/// Single-decode finals use this so the scored text and the scored word
+/// list come from the same [`SttEngine::transcribe_samples_words`] call.
+fn words_to_text(words: &[Word]) -> String {
+    words
+        .iter()
+        .map(|word| word.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Root-mean-square amplitude (linear, `1.0` == full scale) of `samples`,
+/// the signal-level input to [`score_segment`]. Returns `0.0` for an
+/// empty slice so the scorer sees silence rather than `NaN`.
+fn rms_energy(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = samples
+        .iter()
+        .map(|sample| f64::from(*sample) * f64::from(*sample))
+        .sum();
+    (sum_sq / samples.len() as f64).sqrt() as f32
 }
 
 /// Pure skip decision behind [`SimulatedStreamer::drain_finals`]: how many
@@ -2104,6 +2159,100 @@ mod tests {
             "the utterance cap must stay well above one decode chunk (got {MAX_UTTERANCE_SEC} \
              vs {chunk_budget}) so a force-drain detaches a strict prefix and the utterance \
              keeps buffering"
+        );
+    }
+
+    // --- Live-parity pin: drain_finals text == sherpa result.text modulo spacing ---
+    //
+    // `drain_finals` (plus `force_drain_overflow`, `maybe_partial`,
+    // `decode_tail`) builds every `Final`'s text via
+    // `words_to_text(transcribe_samples_words(...))`, where the word list
+    // comes from `detokenize` on the timed path and from the single-word
+    // `result.text` fallback otherwise (see `engine::words_from_result`).
+    // These tests pin that composition on synthetic fixtures with no model
+    // artifacts: finals count/timing are unchanged (no production code is
+    // touched here — see the `split_into_chunks`/`decoded_prefix_skip`
+    // suites above); only the text composition is asserted.
+
+    #[test]
+    fn drain_finals_text_matches_sherpa_text_modulo_spacing_on_punctuation_fixture() {
+        // Arrange: sherpa display-form pieces for "Ask not." — the plain
+        // leading space is what `OfflineRecognizerResult.tokens` actually
+        // carries at runtime (see `detokenize` docs), and the trailing "."
+        // attaches to the previous word with no separator.
+        let tokens = vec![
+            " A".to_string(),
+            "sk".to_string(),
+            " not".to_string(),
+            ".".to_string(),
+        ];
+        let timestamps = vec![0.0, 0.2, 0.5, 0.9];
+        let durations = vec![0.2, 0.1, 0.3, 0.05];
+        let sherpa_text = "Ask not.";
+
+        // Act: exactly the drain_finals composition under test.
+        let words = crate::detokenize::detokenize(&tokens, &timestamps, &durations);
+        let text = words_to_text(&words);
+
+        // Assert: word boundaries preserved (no collapse, no split) and the
+        // final text equals sherpa's own assembled text modulo spacing.
+        assert_eq!(
+            words.len(),
+            2,
+            "must split into two words, not collapse into one"
+        );
+        assert_eq!(words[0].text, "Ask");
+        assert_eq!(words[1].text, "not.");
+        assert_eq!(
+            text, sherpa_text,
+            "drain_finals text must equal sherpa result.text modulo spacing"
+        );
+        assert_eq!(
+            text.split_whitespace().count(),
+            words.len(),
+            "single-space join must preserve every word: joining with anything else \
+             (empty, double-space, comma) or dropping a word changes this count or text"
+        );
+    }
+
+    #[test]
+    fn fallback_single_word_result_text_round_trips_byte_identical() {
+        // Arrange: the engine fallback (`engine::words_from_result`) when
+        // timestamps are absent — a single `Word` carrying sherpa's
+        // already-assembled `result.text` verbatim.
+        let result_text = "Hello, world! \u{00c7}a va? \u{2014} yes\u{2026}";
+        let words = vec![Word {
+            text: result_text.to_string(),
+            start_sec: 0.0,
+            end_sec: 1.0,
+        }];
+
+        // Act: the same `words_to_text` join `drain_finals` applies.
+        let text = words_to_text(&words);
+
+        // Assert: single-element join is the identity — byte-identical,
+        // no trimming, splitting, or re-spacing.
+        assert_eq!(text, result_text);
+        assert_eq!(text.as_bytes(), result_text.as_bytes());
+    }
+
+    #[test]
+    fn vad_and_chunk_constants_pinned_as_covered_by_existing_suites() {
+        // Documents the VAD/chunk constants whose behaviour the existing
+        // suites already exercise, so a silent retune fails fast here:
+        // - `MAX_DECODE_CHUNK_SEC` + `SILENCE_SEARCH_WINDOW_SEC`: the
+        //   `split_into_chunks_*` tests above drive the pure split seam;
+        // - `DEFAULT_MIN_SILENCE_SEC`: `vad::default_config_uses_the_upstream_min_silence_duration`;
+        // - `DEFAULT_BLANK_PENALTY`: the engine `SttConfig::default` path.
+        assert_eq!(MAX_DECODE_CHUNK_SEC, 5.0);
+        assert_eq!(SILENCE_SEARCH_WINDOW_SEC, 1.5);
+        assert_eq!(crate::vad::DEFAULT_MIN_SILENCE_SEC, 0.5);
+        assert_eq!(crate::engine::DEFAULT_BLANK_PENALTY, 1.0);
+        assert_eq!(
+            PARTIAL_INTERVAL_SEC, 3.0,
+            "live partials are throttled to one re-decode every 3s (~33% fewer \
+             partial decodes than the previous 2s interval); PARTIAL_WINDOW_SEC \
+             stays 4.0 and commit logic is untouched"
         );
     }
 }

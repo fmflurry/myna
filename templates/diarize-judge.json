@@ -1,0 +1,20 @@
+{
+  "$schema": "./schema.json",
+  "name": "diarize-judge",
+  "description": "Speaker-label judge: maps VAD segment indexes to remote-speaker labels as index-to-label JSON only, with no transcript text. Local Summarizer only (temperature 0.0, max_tokens 256). Not a summary template: it takes diarization JSON rather than transcript text, so summary-template discovery skips it by design.",
+  "prompt": "You are a speaker-label judge for a meeting recording. There are {num_speakers} remote speaker(s) in addition to the local user. You are given VAD speech segments and a diarization hypothesis below. Assign every segment index exactly one label: \"others\" when there is a single remote speaker, or one of \"others:1\" through \"others:{num_speakers}\" when there are several. Return ONLY the JSON object {\"labels\": {\"<segment index>\": \"<label>\"}} with one entry per segment index. No transcript text, no explanation, no markdown, no extra keys.\n\nSegments:\n{segments_json}\n\nDiarization hypothesis:\n{diar_json}\n\nLabels JSON:",
+  "section_schema": {
+    "type": "object",
+    "required": ["labels"],
+    "properties": {
+      "labels": {
+        "type": "object",
+        "description": "Map of segment index (as a string) to speaker label ('others' or 'others:<1..N>').",
+        "additionalProperties": {
+          "type": "string",
+          "pattern": "^others(:[1-9][0-9]*)?$"
+        }
+      }
+    }
+  }
+}

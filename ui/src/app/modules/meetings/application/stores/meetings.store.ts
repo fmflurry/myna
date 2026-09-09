@@ -1,4 +1,4 @@
-/* eslint max-lines: ["error", 440] */
+/* eslint max-lines: ["error", 452] */
 import { Injectable, computed, inject, type InjectionToken, type Signal } from '@angular/core';
 import { Store } from 'flurryx';
 
@@ -20,6 +20,7 @@ import type { TranscriptSegment } from '../../core/models/transcript.model';
 import { AudioImportPort, type ImportProgress } from '../../core/ports/audio-import.port';
 import { PreferencesPort } from '../../core/ports/preferences.port';
 import { RecorderPort } from '../../core/ports/recorder.port';
+import type { StorageLocation } from '../../core/ports/storage-location.port';
 import { SummarizerPort } from '../../core/ports/summarizer.port';
 import { TranscriberPort } from '../../core/ports/transcriber.port';
 import {
@@ -173,6 +174,8 @@ export class MeetingsStore {
   readonly outputDevices: Signal<readonly AudioDevice[]> = computed(() => this.slots.get('OUTPUT_DEVICES')().data ?? []);
   readonly defaultDevice: Signal<AudioDevice | null> = computed(() => this.slots.get('DEFAULT_DEVICE')().data ?? null);
   readonly defaultOutputDevice: Signal<AudioDevice | null> = computed(() => this.slots.get('DEFAULT_OUTPUT_DEVICE')().data ?? null);
+  /** Effective storage location; `undefined` until `loadStorageLocation` runs. The server is the source of truth — this slot is a cache, never persisted. */
+  readonly storageLocation: Signal<StorageLocation | undefined> = computed(() => this.slots.get('STORAGE_LOCATION')().data);
 
   constructor() {
     seedPersistedPreferences(this.slots, this.preferences);
@@ -426,6 +429,9 @@ export class MeetingsStore {
     this.slots.update('FOLDERS', { data: withFolderRemoved(this.folders(), id), status: 'Success', isLoading: false });
     this.persistExpandedFolders(withoutFolderId(this.expandedFolders(), id));
   }
+
+  /** Applies a server-confirmed storage location to the slot; callers write ONLY after the port write succeeds — never optimistic. */
+  setStorageLocation(location: StorageLocation): void { this.slots.update('STORAGE_LOCATION', { data: location, status: 'Success', isLoading: false }); }
 
   /** Toggles `id`'s membership in `EXPANDED_FOLDERS`, persisting the result via `PreferencesPort`. */
   toggleFolderExpanded(id: FolderId): void {

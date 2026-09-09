@@ -11,6 +11,7 @@ import { MenuPort } from './core/ports/menu.port';
 import { ModelsStatusPort } from './core/ports/models-status.port';
 import { PreferencesPort } from './core/ports/preferences.port';
 import { RecorderPort } from './core/ports/recorder.port';
+import { StorageLocationPort } from './core/ports/storage-location.port';
 import { SummarizerPort } from './core/ports/summarizer.port';
 import { TemplateRepositoryPort } from './core/ports/template-repository.port';
 import { TranscriberPort } from './core/ports/transcriber.port';
@@ -42,9 +43,11 @@ import { DeleteSummaryUseCase } from './application/use-cases/delete-summary.use
 import { DeleteTranscriptSegmentUseCase } from './application/use-cases/delete-transcript-segment.usecase';
 import { DiarizeMeetingUseCase } from './application/use-cases/diarize-meeting.usecase';
 import { EditSummaryUseCase } from './application/use-cases/edit-summary.usecase';
+import { EditLiveTranscriptSegmentUseCase } from './application/use-cases/edit-live-transcript-segment.usecase';
 import { EditTranscriptSegmentUseCase } from './application/use-cases/edit-transcript-segment.usecase';
 import { ExportMeetingUseCase } from './application/use-cases/export-meeting.usecase';
 import { GetAppVersionUseCase } from './application/use-cases/get-app-version.usecase';
+import { GetStorageLocationUseCase } from './application/use-cases/get-storage-location.usecase';
 import { GetSummaryGuidelinesUseCase } from './application/use-cases/get-summary-guidelines.usecase';
 import { GetSummaryUseCase } from './application/use-cases/get-summary.usecase';
 import { GetTemplatePromptUseCase } from './application/use-cases/get-template-prompt.usecase';
@@ -69,6 +72,7 @@ import { RestoreTranscriptSegmentsUseCase } from './application/use-cases/restor
 import { RetranscribeMeetingUseCase } from './application/use-cases/retranscribe-meeting.usecase';
 import { SetMeetingArchivedUseCase } from './application/use-cases/set-meeting-archived.usecase';
 import { SetMeetingFolderUseCase } from './application/use-cases/set-meeting-folder.usecase';
+import { SetStorageLocationUseCase } from './application/use-cases/set-storage-location.usecase';
 import { SetSummaryGuidelinesUseCase } from './application/use-cases/set-summary-guidelines.usecase';
 import { SetSegmentSpeakerUseCase } from './application/use-cases/set-segment-speaker.usecase';
 import { SetTemplatePromptUseCase } from './application/use-cases/set-template-prompt.usecase';
@@ -86,6 +90,7 @@ import { MeetingsStore } from './application/stores/meetings.store';
 import { UpdatesStore } from './application/stores/updates.store';
 import { ModelInitializerPort } from './core/ports/model-initializer.port';
 import { TauriModelInitializerAdapter } from './infrastructure/tauri/tauri-model-initializer.adapter';
+import { TauriStorageLocationAdapter } from './infrastructure/tauri/tauri-storage-location.adapter';
 
 /**
  * Self-registering module providers for the meetings feature.
@@ -109,6 +114,7 @@ export function provideMeetings(): EnvironmentProviders {
     { provide: AudioImportPort, useClass: TauriAudioImportAdapter },
     { provide: AudioRepositoryPort, useClass: TauriAudioRepositoryAdapter },
     { provide: ModelInitializerPort, useClass: TauriModelInitializerAdapter },
+    { provide: StorageLocationPort, useClass: TauriStorageLocationAdapter },
     { provide: UpdatesPort, useClass: TauriUpdatesAdapter },
     StartRecordingUseCase,
     StopRecordingUseCase,
@@ -119,6 +125,7 @@ export function provideMeetings(): EnvironmentProviders {
     RenameMeetingUseCase,
     SetMeetingArchivedUseCase,
     EditTranscriptSegmentUseCase,
+    EditLiveTranscriptSegmentUseCase,
     EditSummaryUseCase,
     DeleteSummaryUseCase,
     SummarizeMeetingUseCase,
@@ -136,6 +143,7 @@ export function provideMeetings(): EnvironmentProviders {
     GetSummaryGuidelinesUseCase,
     SetSummaryGuidelinesUseCase,
     GetSummaryUseCase,
+    GetStorageLocationUseCase,
     GetAppVersionUseCase,
     ImportAudioUseCase,
     RetranscribeMeetingUseCase,
@@ -146,6 +154,7 @@ export function provideMeetings(): EnvironmentProviders {
     RenameFolderUseCase,
     DeleteFolderUseCase,
     SetMeetingFolderUseCase,
+    SetStorageLocationUseCase,
     PlaceMeetingUseCase,
     RenameSpeakerUseCase,
     RemoveSpeakerUseCase,

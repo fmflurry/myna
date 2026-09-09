@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 use myna_audio::{SystemAudioSource, SystemAudioStatus};
-use myna_stt::{Speaker, Transcript, TranscriptSegment};
+use myna_stt::{Speaker, SuspectReason, Transcript, TranscriptSegment};
 
 use crate::domain::{Folder, Meeting, Summary, SummaryRef};
 
@@ -81,6 +81,15 @@ pub struct TranscriptSegmentDto {
     /// [`myna_stt::Speaker::parse`] so a malformed label degrades to
     /// `"unknown"` rather than erroring.
     pub speaker: String,
+    /// Audit hints from the decode-time suspect scorer, as their flat
+    /// variant names (e.g. `"RepetitionLoop"`) — see
+    /// [`myna_stt::SuspectReason`]. Empty for clean segments.
+    pub suspect_reasons: Vec<String>,
+    /// Whether a human has manually corrected this segment's `text`.
+    pub edited: bool,
+    /// The decoder's original text before any human correction (`None`
+    /// until the first edit).
+    pub original_text: Option<String>,
 }
 
 impl From<TranscriptSegment> for TranscriptSegmentDto {
@@ -90,6 +99,13 @@ impl From<TranscriptSegment> for TranscriptSegmentDto {
             end_sec: segment.end_sec,
             speaker: segment.speaker.as_str().to_string(),
             text: segment.text,
+            suspect_reasons: segment
+                .suspect_reasons
+                .iter()
+                .map(|reason| format!("{reason:?}"))
+                .collect(),
+            edited: segment.edited,
+            original_text: segment.original_text,
         }
     }
 }
@@ -116,6 +132,12 @@ impl From<Transcript> for TranscriptDto {
 /// restored segment and cannot default a value the user never sent. A
 /// missing or malformed `speaker` degrades to [`Speaker::unknown`] via
 /// [`Speaker::parse`] — the codebase's documented data-loss gate.
+///
+/// `suspect_reasons`, `edited`, and `original_text` round-trip the
+/// decode-time audit fields the outbound DTO reports (see
+/// [`TranscriptSegmentDto`]); each defaults so payloads written before these
+/// fields existed still deserialize. An unknown reason string is dropped
+/// rather than erroring — the same degrade-don't-fail gate as `speaker`.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSegmentInput {
@@ -125,6 +147,12 @@ pub struct TranscriptSegmentInput {
     #[serde(default)]
     pub speaker: Option<String>,
     pub speaker_pinned: bool,
+    #[serde(default)]
+    pub suspect_reasons: Vec<String>,
+    #[serde(default)]
+    pub edited: bool,
+    #[serde(default)]
+    pub original_text: Option<String>,
 }
 
 impl From<TranscriptSegmentInput> for TranscriptSegment {
@@ -138,7 +166,29 @@ impl From<TranscriptSegmentInput> for TranscriptSegment {
                 .map(|label| Speaker::parse(&label))
                 .unwrap_or_else(Speaker::unknown),
             speaker_pinned: input.speaker_pinned,
+            suspect_reasons: input
+                .suspect_reasons
+                .iter()
+                .filter_map(|label| parse_suspect_reason(label))
+                .collect(),
+            original_text: input.original_text,
+            edited: input.edited,
         }
+    }
+}
+
+/// Parses a [`SuspectReason`] from its [`TranscriptSegmentDto`] wire name
+/// (the variant's `Debug` form — see the outbound `From` impl above).
+/// Returns `None` for unknown strings so a reason minted by a newer backend
+/// never breaks an older restore path; callers drop those entries.
+fn parse_suspect_reason(label: &str) -> Option<SuspectReason> {
+    match label {
+        "RepetitionLoop" => Some(SuspectReason::RepetitionLoop),
+        "LanguageDriftHint" => Some(SuspectReason::LanguageDriftHint),
+        "LowSpeechEnergy" => Some(SuspectReason::LowSpeechEnergy),
+        "TimingAnomaly" => Some(SuspectReason::TimingAnomaly),
+        "DegenerateLength" => Some(SuspectReason::DegenerateLength),
+        _ => None,
     }
 }
 

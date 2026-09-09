@@ -1,6 +1,5 @@
-import type { DestroyRef, Signal, WritableSignal } from '@angular/core';
+import type { Signal } from '@angular/core';
 import { computed, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Router } from '@angular/router';
 
 import { MeetingsFacade } from '../../../application/facades/meetings.facade';
@@ -9,12 +8,15 @@ import { describeTranscriptOp, type TranscriptOp } from '../../../application/st
 import type { SystemAudioStatus } from '../../../core/models/capture-source.model';
 import type { FolderId } from '../../../core/models/folder.model';
 import type { Meeting, MeetingId } from '../../../core/models/meeting.model';
+import type { LiveTranscriptSegmentEdit } from '../../components/live-transcript/live-transcript.component';
+import type { TranscriptSegmentEdit } from '../../components/transcript-view/transcript-view.component';
 import type { SummaryInstructionsDraft } from '../../../core/models/summary-instructions.model';
 import type { UpdateConsent } from '../../../core/models/update.model';
 import type { SummaryDraftChange } from '../../components/meeting-detail-pane/meeting-detail-pane.component';
 import type { MeetingDragMoveRequest } from '../../components/meeting-sidebar/meeting-sidebar.component';
 import { closeSidebarOnEscape } from './meetings-shell.page.sidebar-narrow.support';
 export { createSidebarNarrowControls } from './meetings-shell.page.sidebar-narrow.support';
+export { createSettingsControls, type SettingsControls } from './meetings-shell.page.settings.support';
 
 /**
  * Shown to the capture-source-picker before `checkSystemAudio()` has
@@ -116,6 +118,17 @@ export function runSummarize(facade: MeetingsFacade, templateName: string): void
     return;
   }
   void facade.summarizeMeeting(meeting.id, template);
+}
+
+/** Forwards a persisted-transcript inline edit; a no-op when nothing is selected. */
+export function runSegmentEdited(facade: MeetingsFacade, meeting: Meeting | undefined, edit: TranscriptSegmentEdit): void {
+  if (meeting) void facade.editTranscriptSegment(meeting.id, edit.index, edit.text);
+}
+
+/** Forwards a live inline correction, preferring the restored session id over the selection. */
+export function runLiveSegmentEdited(facade: MeetingsFacade, recordingId: MeetingId | undefined, selectedId: MeetingId | undefined, edit: LiveTranscriptSegmentEdit): void {
+  const id = recordingId ?? selectedId;
+  if (id) void facade.editLiveTranscriptSegment(id, edit.index, edit.text);
 }
 
 /**
@@ -242,70 +255,6 @@ export class MeetingOpQueue {
       this.queued -= 1;
     });
   }
-}
-
-/** Settings-modal visibility + close affordances + native-menu open, grouped so `MeetingsShellPage` stays under the 400-line `max-lines` cap. */
-export interface SettingsControls {
-  readonly showSettings: Signal<boolean>;
-  readonly toggleSettings: () => void;
-  /** Closes the modal — the shell's `toggleAbout` calls it so About/Settings exclusion is bidirectional. */
-  readonly closeSettings: () => void;
-  readonly onBackdropActivate: (event: MouseEvent) => void;
-  readonly onBackdropKeydown: (event: KeyboardEvent) => void;
-  /** Persisted general guidelines (`facade.summaryGuidelines()`); seeds the Settings textarea. */
-  readonly guidelines: Signal<string>;
-  /** Settings save-on-blur / Save click; the store slot updates only once the facade write succeeds. */
-  readonly onGuidelinesChanged: (text: string) => void;
-}
-
-/**
- * Builds the settings-modal controls. Every open path (gear toggle, native
- * "Settings…" menu request) closes About, and the shell's `toggleAbout`
- * closes Settings via {@link SettingsControls.closeSettings} — the two
- * modals are mutually exclusive in both directions. The error callback keeps
- * a missing Tauri event bridge (headless specs; a release where `listen()`
- * cannot register) from crashing boot — the gear button opens Settings
- * regardless.
- */
-export function createSettingsControls(
-  facade: MeetingsFacade,
-  showAbout: WritableSignal<boolean>,
-  destroyRef: DestroyRef,
-): SettingsControls {
-  const showSettings = signal(false);
-  const openSettings = (): void => {
-    showAbout.set(false);
-    showSettings.set(true);
-  };
-  const closeSettings = (): void => showSettings.set(false);
-  const toggleSettings = (): void => (showSettings() ? closeSettings() : openSettings());
-  facade
-    .settingsRequests()
-    .pipe(takeUntilDestroyed(destroyRef))
-    .subscribe({ next: () => openSettings(), error: () => undefined });
-  return {
-    showSettings: showSettings.asReadonly(),
-    toggleSettings,
-    closeSettings,
-    onBackdropActivate: (event) => {
-      if (event.target === event.currentTarget) {
-        closeSettings();
-      }
-    },
-    onBackdropKeydown: (event) => {
-      // Escape is modal-wide; Enter/Space only when the backdrop itself is
-      // the target — a bubbled Space from the consent checkbox must toggle
-      // the checkbox, not close the modal.
-      if (event.key === 'Escape' || (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' '))) {
-        event.preventDefault();
-        closeSettings();
-      }
-    },
-    guidelines: facade.summaryGuidelines,
-    onGuidelinesChanged: (text) => {
-      void facade.setSummaryGuidelines(text);
-    },
-  };
 }
 
 /**

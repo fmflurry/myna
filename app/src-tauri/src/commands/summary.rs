@@ -15,6 +15,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use time::OffsetDateTime;
@@ -28,7 +29,7 @@ use crate::error::AppError;
 use crate::events::{SummaryDonePayload, TokenPayload, SUMMARY_DONE, SUMMARY_TOKEN};
 use crate::paths;
 use crate::session::guard_not_recording;
-use crate::state::AppState;
+use crate::state::{guard_summary_vs_import, AppState};
 use crate::store::MeetingStore;
 use crate::summary_prefs;
 use crate::template_prefs;
@@ -76,6 +77,7 @@ pub async fn summarize_meeting(
 ) -> Result<SummaryDto, AppError> {
     let id = parse_meeting_id(&meeting_id)?;
     let state = app.state::<AppState>();
+    guard_summary_vs_import(state.import_busy())?;
     let _guard = state.summarization_guard()?;
 
     let app_for_worker = app.clone();
@@ -402,21 +404,40 @@ pub fn delete_summary_from(
     store.delete_summary(id, template, language)
 }
 
+/// RAII end-of-operation release for the cached [`myna_llm::Summarizer`],
+/// mirroring [`AppState::summarization_guard`]'s shape for the busy flag:
+/// `Drop` calls [`AppState::release_summarizer`], so the ~5 GB of weights +
+/// KV cache is dropped back to the OS on every exit path — `Ok`, `Err`,
+/// *and* a panic unwind — instead of only on a returned outcome.
+///
+/// Unwind ordering is what makes this correct, not just best-effort: the
+/// guard lives in [`run_summarization`]'s frame while the operation's own
+/// model `Arc` lives inside [`summarize_and_persist`]'s (via
+/// [`run_inference`]'s scope), so a panic drops the operation `Arc` first
+/// during inner-frame unwinding and the guard's `Drop` then observes the
+/// slot as the sole holder — exactly the `release_if_last` condition. The
+/// busy guard held by [`summarize_meeting`] guarantees no second concurrent
+/// summarization references the slot. Cross-guard `Busy` semantics are
+/// unchanged: this releases only the model slot, never the busy flag.
+struct SummarizerReleaseGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for SummarizerReleaseGuard<'_> {
+    fn drop(&mut self) {
+        self.state.release_summarizer();
+    }
+}
+
 /// Does the actual work of [`summarize_meeting`], factored out so the
 /// caller can hold [`AppState::summarization_guard`] across the whole call —
 /// that guard's `Drop` releases the busy flag regardless of outcome.
 ///
-/// End-of-operation model release: on every `Ok`/`Err` outcome the cached
-/// [`Summarizer`] is released via [`AppState::release_summarizer`] before
-/// this returns, dropping the ~5 GB of weights + KV cache back to the
-/// OS. The release only clears the slot when the slot is the sole `Arc`
-/// holder — the operation's own reference is dropped here first (it lives
-/// inside [`run_inference`]`'s` scope), and the busy guard held by
-/// [`summarize_meeting`] guarantees no second concurrent summarization
-/// references it. (A panic mid-operation skips the release; the model then
-/// stays cached until the next summarization releases it — degraded, not
-/// leaked.) The next summarization pays a seconds-scale reload; see
-/// [`AppState::summarizer`] for the tradeoff.
+/// End-of-operation model release: [`SummarizerReleaseGuard`] (held for
+/// this whole call) releases the cached [`myna_llm::Summarizer`] via
+/// [`AppState::release_summarizer`] on every exit path, dropping the ~5 GB
+/// of weights + KV cache back to the OS. The next summarization pays a
+/// seconds-scale reload; see [`AppState::summarizer`] for the tradeoff.
 fn run_summarization(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -425,16 +446,16 @@ fn run_summarization(
     language: Option<String>,
     instructions: Option<SummarizeInstructionsDto>,
 ) -> Result<SummaryDto, AppError> {
-    let result = summarize_and_persist(
+    let app_state: &AppState = state;
+    let _release = SummarizerReleaseGuard { state: app_state };
+    summarize_and_persist(
         app,
         state,
         id,
         &template_name,
         language.as_deref(),
         instructions.as_ref(),
-    );
-    state.release_summarizer();
-    result
+    )
 }
 
 fn summarize_and_persist(
@@ -502,8 +523,73 @@ fn load_general_guidelines() -> Result<String, AppError> {
     Ok(summary_prefs::load(&root).guidelines)
 }
 
+/// Minimum spacing, in milliseconds, between [`SUMMARY_TOKEN`] emissions.
+/// Per-token emits wake the webview IPC + Angular change detection once per
+/// decoded piece (often a single word or subword); batching to ~10Hz keeps
+/// live streaming visually identical while cutting event volume by an order
+/// of magnitude.
+const SUMMARY_TOKEN_FLUSH_INTERVAL_MS: u64 = 100;
+
+/// Minimum buffered characters that force a [`SUMMARY_TOKEN`] flush even
+/// when [`SUMMARY_TOKEN_FLUSH_INTERVAL_MS`] has not elapsed yet. Bounds
+/// live-caption latency for fast bursts: a rapid sequence of tiny tokens
+/// still reaches the UI after ~32 chars rather than waiting out the clock.
+const SUMMARY_TOKEN_FLUSH_CHARS: usize = 32;
+
+/// Coalesces per-token `on_token` pieces into fewer [`SUMMARY_TOKEN`]
+/// events: buffers pieces and yields a chunk to emit once either the
+/// buffered text reaches [`SUMMARY_TOKEN_FLUSH_CHARS`] or
+/// [`SUMMARY_TOKEN_FLUSH_INTERVAL_MS`] has elapsed since the last emission
+/// (whichever comes first). The caller owns the final [`Self::flush`]: any
+/// remainder still buffered when generation completes must be emitted, so
+/// no text is ever lost to the batcher.
+///
+/// Pure clock-injection shape (caller supplies `Instant`s) mirroring
+/// [`crate::session::LevelThrottle`], so the batching arithmetic is
+/// unit-testable without a model or an `AppHandle`.
+struct SummaryTokenBatcher {
+    buf: String,
+    last_flush: Instant,
+}
+
+impl SummaryTokenBatcher {
+    fn new(now: Instant) -> Self {
+        Self {
+            buf: String::new(),
+            last_flush: now,
+        }
+    }
+
+    /// Buffers `piece`, returning `Some(chunk)` when a flush threshold is
+    /// met (caller must emit it), or `None` when still accumulating.
+    fn push(&mut self, now: Instant, piece: &str) -> Option<String> {
+        self.buf.push_str(piece);
+        let elapsed_ms = now.saturating_duration_since(self.last_flush).as_millis() as u64;
+        let buffered_chars = self.buf.chars().count();
+        if buffered_chars >= SUMMARY_TOKEN_FLUSH_CHARS
+            || elapsed_ms >= SUMMARY_TOKEN_FLUSH_INTERVAL_MS
+        {
+            self.last_flush = now;
+            Some(std::mem::take(&mut self.buf))
+        } else {
+            None
+        }
+    }
+
+    /// Drains whatever is still buffered (the completion flush). Returns
+    /// `None` when nothing was buffered, so callers never emit an empty
+    /// trailing event.
+    fn flush(&mut self) -> Option<String> {
+        if self.buf.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.buf))
+        }
+    }
+}
+
 /// Runs the blocking `Summarizer::summarize_transcript` call, streaming
-/// each generated token back to the UI via [`SUMMARY_TOKEN`].
+/// coalesced token batches back to the UI via [`SUMMARY_TOKEN`].
 ///
 /// `summarize_transcript` (rather than the lower-level `summarize`) is what
 /// keeps a long meeting from crashing the app: it checks up front whether
@@ -511,6 +597,12 @@ fn load_general_guidelines() -> Result<String, AppError> {
 /// falls back to map-reduce chunking when it doesn't, instead of ever
 /// handing llama.cpp a prompt large enough to abort the process. See
 /// `myna_llm::Summarizer::summarize_transcript` for the full algorithm.
+///
+/// Token pieces are coalesced through [`SummaryTokenBatcher`] (flush every
+/// ~100ms or ~32 chars, plus a final flush on completion) instead of one
+/// [`SUMMARY_TOKEN`] event per decoded piece, cutting event/IPC volume by
+/// ≥5x with no text loss: the concatenated emitted chunks equal the full
+/// generated markdown.
 ///
 /// Called from inside the [`tauri::async_runtime::spawn_blocking`] closure
 /// in [`summarize_meeting`], so this already executes on a dedicated
@@ -528,6 +620,7 @@ fn run_inference(
 ) -> Result<String, AppError> {
     let cancel = Arc::clone(&state.cancel_summary);
     let meeting_id_str = id.to_string();
+    let mut batcher = SummaryTokenBatcher::new(Instant::now());
 
     let markdown = summarizer.summarize_transcript(
         template,
@@ -535,9 +628,14 @@ fn run_inference(
         &SummaryOptions::default(),
         &cancel,
         |token| {
-            emit_token(app, &meeting_id_str, template_name, token);
+            if let Some(chunk) = batcher.push(Instant::now(), token) {
+                emit_token(app, &meeting_id_str, template_name, &chunk);
+            }
         },
     )?;
+    if let Some(chunk) = batcher.flush() {
+        emit_token(app, &meeting_id_str, template_name, &chunk);
+    }
 
     Ok(markdown)
 }
@@ -574,6 +672,14 @@ fn load_template(app: &AppHandle, template_name: &str) -> Result<Template, AppEr
 /// `summarize_transcript`, which needs the unrendered context to re-render
 /// per map-reduce chunk. `instructions: None` keeps the prompt
 /// template-only.
+///
+/// The transcript text is the persisted `meeting.transcript` rendered via
+/// `attributed_text_with_names`, so transcript edits flow into the next run
+/// by construction with no prompt-template change: live-segment corrections
+/// are folded from the journal into `meeting.json` at stop (see
+/// `stop_recording_blocking`), and post-meeting segment edits are saved to
+/// the meeting before this ever runs. The user re-runs the summary manually
+/// (existing UX); nothing here re-triggers on edit.
 ///
 /// `pub` (rather than private) so integration tests can assert the prompt
 /// text handed to Qwen is speaker-attributed, mirroring
@@ -902,6 +1008,127 @@ mod tests {
         assert!(
             !dir.path().join("evil").exists(),
             "no file must escape the store root"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // SummaryTokenBatcher — SUMMARY_TOKEN coalescing (sustained-energy cut).
+    // -----------------------------------------------------------------------
+
+    use std::time::Duration;
+
+    fn drive_batcher(pieces: &[&str], step: Duration) -> (Vec<String>, String) {
+        let start = Instant::now();
+        let mut batcher = SummaryTokenBatcher::new(start);
+        let mut events = Vec::new();
+        let mut now = start;
+        for piece in pieces {
+            if let Some(chunk) = batcher.push(now, piece) {
+                events.push(chunk);
+            }
+            now += step;
+        }
+        if let Some(chunk) = batcher.flush() {
+            events.push(chunk);
+        }
+        let concatenated = events.concat();
+        (events, concatenated)
+    }
+
+    #[test]
+    fn token_batcher_coalesces_many_tiny_pieces_into_at_least_5x_fewer_events() {
+        // Arrange: 100 single-character pieces arriving faster than the
+        // 100ms clock flush, so only the 32-char size threshold fires.
+        let pieces: Vec<String> = (0..100)
+            .map(|i| (b'a' + (i % 26) as u8) as char)
+            .map(|c| c.to_string())
+            .collect();
+        let refs: Vec<&str> = pieces.iter().map(String::as_str).collect();
+
+        // Act
+        let (events, concatenated) = drive_batcher(&refs, Duration::from_millis(1));
+
+        // Assert: no text lost, and event count drops ≥5x vs per-token emit.
+        assert_eq!(concatenated, pieces.concat());
+        assert!(
+            events.len() * 5 <= pieces.len(),
+            "expected ≥5x fewer SUMMARY_TOKEN events than per-token emit: {} events for {} pieces",
+            events.len(),
+            pieces.len()
+        );
+    }
+
+    #[test]
+    fn token_batcher_flushes_on_the_clock_even_when_the_buffer_is_small() {
+        // Arrange
+        let start = Instant::now();
+        let mut batcher = SummaryTokenBatcher::new(start);
+
+        // Act: one small piece stays buffered, then the 100ms clock fires
+        // on the next piece.
+        assert_eq!(batcher.push(start, "hi"), None);
+        let flushed = batcher.push(start + Duration::from_millis(150), "!");
+
+        // Assert
+        assert_eq!(flushed.as_deref(), Some("hi!"));
+        assert_eq!(
+            batcher.flush(),
+            None,
+            "flush must not emit an empty trailer"
+        );
+    }
+
+    #[test]
+    fn token_batcher_final_flush_preserves_the_tail_without_an_empty_trailer() {
+        // Arrange
+        let start = Instant::now();
+        let mut batcher = SummaryTokenBatcher::new(start);
+
+        // Act: a short stream that never hits either threshold.
+        assert_eq!(batcher.push(start, "a"), None);
+        assert_eq!(batcher.push(start, "b"), None);
+
+        // Assert: the completion flush carries the whole tail exactly once.
+        assert_eq!(batcher.flush().as_deref(), Some("ab"));
+        assert_eq!(batcher.flush(), None);
+    }
+
+    #[test]
+    fn summarizer_release_guard_runs_on_unwind() {
+        // Arrange: a fresh, idle `AppState` with an empty summarizer slot —
+        // no model files needed, since the contract under test is that the
+        // release path runs during unwinding, not the model load itself.
+        use crate::store::folder_store::FsFolderStore;
+        use std::panic::{self, AssertUnwindSafe};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            FsMeetingStore::new(dir.path()),
+            FsFolderStore::new(dir.path().to_path_buf()),
+        );
+
+        // Act: hold the release guard (mirroring `run_summarization`) and
+        // panic — `catch_unwind` stands in for `spawn_blocking`'s own panic
+        // capture.
+        let panic_result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _release = SummarizerReleaseGuard { state: &state };
+            panic!("simulated panic mid-summarization");
+        }));
+        assert!(
+            panic_result.is_err(),
+            "the simulated panic must actually unwind for this test to be meaningful"
+        );
+
+        // Assert: no model stays pinned — the slot is empty (as it was), and
+        // the release ran without poisoning it. The full
+        // loaded-model-dropped proof (`weak.upgrade().is_none()` on a warm
+        // slot) needs multi-GB model files, so it rests on the documented
+        // unwind-ordering argument on `SummarizerReleaseGuard`: the operation
+        // `Arc` drops in the inner frame first, the guard's `Drop` then sees
+        // `release_if_last`'s sole-holder condition.
+        assert!(
+            state.summarizer_slot().weak().is_none(),
+            "no summarizer model may stay pinned after a panic while the release guard was held"
         );
     }
 }

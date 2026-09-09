@@ -29,6 +29,18 @@ export class SettingsComponent {
   readonly selectedSummaryLanguage = input.required<string>();
   /** The persisted general summary guidelines (`facade.summaryGuidelines()` via the shell); `''` until loaded. */
   readonly guidelines = input('');
+  /**
+   * Effective meetings data root (`facade.storageLocation()?.path` via the
+   * shell); `undefined` until `loadStorageLocation` resolves — the template
+   * shows a loading placeholder, never a guessed path.
+   */
+  readonly storagePath = input<string | undefined>(undefined);
+  /** True while recording/importing or a storage move is in flight; disables Change/Reset. */
+  readonly storageBusy = input(false);
+  /** Inline storage error (PATH/BUSY validation or move failure); `null` hides it. */
+  readonly storageError = input<string | null>(null);
+  /** True right after a move that needs an app restart (`restartRequired`). */
+  readonly storageRestartRequired = input(false);
 
   readonly closed = output<void>();
   readonly updateConsentChanged = output<UpdateConsent>();
@@ -36,6 +48,18 @@ export class SettingsComponent {
   readonly summaryLanguageSelected = output<string>();
   /** The trimmed guidelines text; emitted on blur and on Save — the shell persists it, never this component. */
   readonly guidelinesChanged = output<string>();
+  /**
+   * Pending Move vs Stay choice (default Move checked); the shell mirrors it
+   * so Change…/Reset forward the same flag to `facade.setStorageLocation` /
+   * `facade.resetStorageLocation` — this component never calls the facade.
+   */
+  readonly moveExisting = input(true);
+  /** Change… clicked — carries the pending Move vs Stay choice; the shell opens `FileDialogPort.selectDirectory` and calls `facade.setStorageLocation`, never this component. */
+  readonly browseStorageRequested = output<boolean>();
+  /** Reset-to-default clicked — carries the pending Move vs Stay choice; the shell calls `facade.resetStorageLocation`, never this component. */
+  readonly resetStorageRequested = output<boolean>();
+  /** Move checkbox toggled — carries the new choice; the shell owns the pending signal, never this component. */
+  readonly moveExistingChanged = output<boolean>();
 
   protected readonly autoCheckEnabled = computed(() => this.updateConsent() === 'granted');
   protected readonly checkNowDisabled = computed(() => this.checking() || this.recording());
@@ -69,6 +93,10 @@ export class SettingsComponent {
 
   onGuidelinesInput(event: Event): void {
     this.guidelinesEdit.set({ source: this.guidelines(), value: (event.target as HTMLTextAreaElement).value });
+  }
+
+  onMoveExistingToggled(event: Event): void {
+    this.moveExistingChanged.emit((event.target as HTMLInputElement).checked);
   }
 
   /** Blur saves and the button clicks here; a rejected write leaves `guidelines` untouched, so the text and the enabled Save persist for a retry. */

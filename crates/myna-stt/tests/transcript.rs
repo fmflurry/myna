@@ -9,6 +9,9 @@ fn segment(start: f32, end: f32, text: &str) -> TranscriptSegment {
         text: text.to_string(),
         speaker: Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     }
 }
 

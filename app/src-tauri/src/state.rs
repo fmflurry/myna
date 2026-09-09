@@ -99,11 +99,16 @@ const LLM_MODEL_FILE_NAME: &str = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.ggu
 
 /// How long the cached STT engine may sit unused after a recording (or
 /// import) completes before [`AppState::evict_stt_if_idle`] releases it.
-/// 10 minutes: long enough that back-to-back recordings and
-/// record→stop→immediately-retranscribe flows reuse the warm engine (each
-/// reload is a seconds-scale Parakeet load), short enough that an app left
-/// idle after a meeting gives the ~1 GB of ONNX weights back to the OS.
-pub const IDLE_MODEL_TTL: Duration = Duration::from_secs(10 * 60);
+/// 4 minutes: long enough that back-to-back recordings and
+/// record→stop→retranscribe flows reuse the warm engine (each reload is a
+/// seconds-scale Parakeet load — a re-transcribe started within minutes of
+/// stopping still hits the cache), short enough that an app left idle
+/// after a meeting gives the ~1 GB of ONNX weights back to the OS on a
+/// measure-friendly timescale. Expectation: a 30 s idle recording returns
+/// toward baseline RSS by this TTL (verify manually with `ps -o rss`),
+/// provided the UI's periodic ticks are alive (see
+/// [`AppState::evict_stt_if_idle`]).
+pub const IDLE_MODEL_TTL: Duration = Duration::from_secs(4 * 60);
 
 /// The pure decision behind [`AppState::evict_stt_if_idle`]: the STT engine
 /// is released only when no recording session occupies [`AppState::session`]
@@ -114,6 +119,33 @@ pub const IDLE_MODEL_TTL: Duration = Duration::from_secs(10 * 60);
 /// precedent in `commands::recording`).
 pub fn stt_evict_allowed(session_active: bool, import_busy: bool) -> bool {
     !session_active && !import_busy
+}
+
+/// Pure guard for starting a summarization: `Busy` while an import,
+/// re-transcribe, or diarization holds the STT/diarizer models, so the
+/// ~5 GB LLM weights are never co-resident with the STT/diarizer weights.
+/// Mirrors [`crate::ingest::guard_import`].
+pub fn guard_summary_vs_import(import_busy: bool) -> Result<(), AppError> {
+    if import_busy {
+        Err(AppError::Busy(
+            "cannot start summarization while an import or diarization is in progress",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Pure guard for starting an import, re-transcribe, or diarization: `Busy`
+/// while a summarization holds the LLM weights, so STT/diarizer models are
+/// never co-resident with the LLM. Mirrors [`crate::ingest::guard_import`].
+pub fn guard_import_vs_summary(summary_busy: bool) -> Result<(), AppError> {
+    if summary_busy {
+        Err(AppError::Busy(
+            "cannot start import or diarization while a summarization is in progress",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// An evictable cache slot for one lazily-loaded model.
@@ -323,6 +355,11 @@ pub struct AppState {
     /// `true` while an import or re-transcribe is running, guarding against
     /// concurrent `import_audio`/`retranscribe_meeting` calls.
     import_busy: AtomicBool,
+    /// `true` while a storage-location change (`set_storage_location` /
+    /// `reset_storage_location`, including its multi-GB migration) is in
+    /// flight, guarding against a concurrent second change racing it on
+    /// the same archive. Mirrors [`AppState::import_busy`].
+    storage_busy: AtomicBool,
 }
 
 impl AppState {
@@ -341,6 +378,7 @@ impl AppState {
             summary_busy: AtomicBool::new(false),
             cancel_import: Arc::new(AtomicBool::new(false)),
             import_busy: AtomicBool::new(false),
+            storage_busy: AtomicBool::new(false),
         }
     }
 
@@ -355,6 +393,12 @@ impl AppState {
     /// for the operation's whole duration, which is what makes eviction
     /// race-free: [`ModelSlot::evict_if_idle`] refuses while any live
     /// reference exists.
+    ///
+    /// Deliberately does *not* pre-evict before loading: the model being
+    /// loaded here *is* the cached one, so evict-then-reload would just
+    /// churn seconds of Parakeet load to end up with the identical
+    /// weights. Reuse wins; [`AppState::touch_stt_last_used`] restarts the
+    /// TTL countdown at the end of each operation instead.
     pub fn stt_engine(&self, app: &AppHandle) -> Result<Arc<SttEngine>, AppError> {
         self.stt_engine.get_or_load(|| {
             Ok(Arc::new(SttEngine::load(&SttConfig {
@@ -382,7 +426,24 @@ impl AppState {
     /// tradeoff; holding the model forever was the leak. Callers must
     /// still serialize through [`AppState::begin_summarization`] so only
     /// one operation references the model at a time.
+    ///
+    /// Opportunistic pre-evict (tick independence): a TTL-expired STT
+    /// engine is released *before* the ~5 GB LLM weights load, so a
+    /// summarize-with-cold-STT never peaks with both models co-resident.
+    /// The cross `Busy` guards only serialize *operations* — a stale cache
+    /// from an earlier, finished operation is exactly what this clears.
+    /// This complements (not replaces) the periodic ticks in
+    /// `recording_state` and `list_input_devices`: eviction no longer
+    /// depends solely on those polls firing. A no-op when the engine is
+    /// warm (TTL unelapsed) or live (a session/import holds it).
+    ///
+    /// Inference threads are bounded independently of this cache: generation
+    /// runs at `SummaryOptions::default().n_threads` (detected parallelism
+    /// minus two, floored at two — never `0`/auto), so LLM decode doesn't
+    /// take all cores out from under live STT/diarizer pools. See
+    /// `myna_llm::default_summarizer_threads`.
     pub fn summarizer(&self, app: &AppHandle) -> Result<Arc<Summarizer>, AppError> {
+        self.evict_stt_if_idle();
         self.summarizer.get_or_load(|| {
             Ok(Arc::new(Summarizer::load(
                 &paths::models_root(app)
@@ -399,7 +460,22 @@ impl AppState {
     /// `diarize_meeting_blocking` serializes callers through
     /// [`AppState::import_guard`] so exactly one operation holds it at a
     /// time.
+    ///
+    /// Thread-pool math: `num_threads` below fans out to *two* ONNX Runtime
+    /// pools — the pyannote-3.0 segmentation session *and* the NeMo TitaNet
+    /// embedding extractor each get `num_threads` — so the effective thread
+    /// footprint is ~2× the configured value. It reuses the clamped STT
+    /// value ([`STT_ENGINE_THREADS_MIN`]..=[`STT_ENGINE_THREADS_MAX`], so at
+    /// most 4 → ~8 threads total), not a second full-width pool.
+    ///
+    /// Opportunistic pre-evict like [`AppState::summarizer`]: a
+    /// TTL-expired STT engine is released before the diarizer pair loads.
+    /// Usually a no-op (the import guard is already held on this path, so
+    /// the evict refuses by design while an STT-side operation is live) —
+    /// the call exists so eviction doesn't depend solely on the periodic
+    /// ticks when the diarizer is acquired outside a guarded operation.
     pub fn diarizer(&self, app: &AppHandle) -> Result<Arc<Diarizer>, AppError> {
+        self.evict_stt_if_idle();
         self.diarizer.get_or_load(|| {
             let models_root = paths::models_root(app);
             Ok(Arc::new(Diarizer::load(&DiarizeConfig {
@@ -443,8 +519,11 @@ impl AppState {
     /// since the last use. Never blocks (all `try_lock`), so it is safe to
     /// call from the synchronous command paths that poll it —
     /// `recording_state` (boot/reload) and `list_input_devices` (the UI's
-    /// 5 s device poll), which together give the check a periodic tick
-    /// without introducing a dedicated timer.
+    /// 5 s device poll) — *and* from the op-acquire paths
+    /// ([`AppState::summarizer`]/[`AppState::diarizer`], which pre-evict
+    /// before loading a new model). The periodic ticks and the op-acquire
+    /// checks together give the check tick independence: no single poll is
+    /// load-bearing, and there is no dedicated timer.
     pub fn evict_stt_if_idle(&self) -> bool {
         // A contended session lock means a start/stop is mid-flight:
         // treat it as active and let the next poll retry.
@@ -515,6 +594,76 @@ impl AppState {
         self.import_busy.load(Ordering::SeqCst)
     }
 
+    /// Whether a summarization is currently in flight — read-only accessor
+    /// for [`AppState::guard_storage_change`].
+    pub fn summary_busy(&self) -> bool {
+        self.summary_busy.load(Ordering::SeqCst)
+    }
+
+    /// Marks a storage-location change as in-flight, failing with
+    /// [`AppError::Busy`] if one is already running. Mirrors
+    /// [`AppState::begin_import`].
+    pub fn begin_storage_change(&self) -> Result<(), AppError> {
+        if self.storage_busy.swap(true, Ordering::SeqCst) {
+            return Err(AppError::Busy(
+                "a storage location change is already in progress",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Marks the in-flight storage-location change as finished, regardless
+    /// of outcome. Must be called exactly once per successful
+    /// [`AppState::begin_storage_change`]. Mirrors
+    /// [`AppState::end_import`].
+    pub fn end_storage_change(&self) {
+        self.storage_busy.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether a storage-location change is currently in flight.
+    pub fn storage_busy(&self) -> bool {
+        self.storage_busy.load(Ordering::SeqCst)
+    }
+
+    /// Refuses a storage-location change while any recording-adjacent work
+    /// is in flight — a live session, a stop/cancel finalization, an
+    /// import/re-transcribe, or a summarization — with [`AppError::Busy`].
+    ///
+    /// Re-root vs restart-required policy: even when this guard passes, the
+    /// live [`FsMeetingStore`]/[`FsFolderStore`] are never re-rooted.
+    /// `commands::storage` migrates the bytes and persists the pointer, then
+    /// reports `restart_required: true` so the next process boots on the new
+    /// root (where [`crate::recovery::recover_orphaned_sessions`] replays any
+    /// orphans from the effective root). A contended session lock reads as
+    /// busy — a start/stop is mid-flight and the next attempt retries.
+    pub fn guard_storage_change(&self) -> Result<(), AppError> {
+        let recording_active = match self.session.try_lock() {
+            Ok(session) => session.is_some(),
+            Err(_) => true,
+        };
+        if recording_active {
+            return Err(AppError::Busy(
+                "cannot change the storage location while a recording is in progress",
+            ));
+        }
+        if self.stopping().is_some() {
+            return Err(AppError::Busy(
+                "cannot change the storage location while a recording is finalizing",
+            ));
+        }
+        if self.import_busy() {
+            return Err(AppError::Busy(
+                "cannot change the storage location while an import is in progress",
+            ));
+        }
+        if self.summary_busy() {
+            return Err(AppError::Busy(
+                "cannot change the storage location while a summarization is in progress",
+            ));
+        }
+        Ok(())
+    }
+
     /// Panic-safe counterpart to [`AppState::begin_import`]/
     /// [`AppState::end_import`]: acquires the same busy flag (same
     /// precondition, same [`AppError::Busy`] failure), but returns an RAII
@@ -540,6 +689,18 @@ impl AppState {
     pub fn summarization_guard(&self) -> Result<SummarizationGuard<'_>, AppError> {
         self.begin_summarization()?;
         Ok(SummarizationGuard { state: self })
+    }
+
+    /// Panic-safe counterpart to [`AppState::begin_storage_change`]/
+    /// [`AppState::end_storage_change`] — mirrors [`AppState::import_guard`]
+    /// for `storage_busy`. `commands::storage` holds this for the whole
+    /// set/reset body (including the multi-GB migration), so a second
+    /// concurrent set/reset fails with [`AppError::Busy`] instead of
+    /// racing the first on the same archive — and a panic mid-migration
+    /// still releases the flag during unwinding.
+    pub fn storage_guard(&self) -> Result<StorageGuard<'_>, AppError> {
+        self.begin_storage_change()?;
+        Ok(StorageGuard { state: self })
     }
 
     /// Marks a stop/cancel as finalizing `meeting_id` (with `elapsed_sec`
@@ -618,5 +779,18 @@ pub struct SummarizationGuard<'a> {
 impl Drop for SummarizationGuard<'_> {
     fn drop(&mut self) {
         self.state.end_summarization();
+    }
+}
+
+/// RAII guard returned by [`AppState::storage_guard`]. Releases the storage
+/// busy flag via [`AppState::end_storage_change`] when dropped — including
+/// during a panic unwind. Mirrors [`ImportGuard`].
+pub struct StorageGuard<'a> {
+    state: &'a AppState,
+}
+
+impl Drop for StorageGuard<'_> {
+    fn drop(&mut self) {
+        self.state.end_storage_change();
     }
 }

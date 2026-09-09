@@ -12,4 +12,11 @@ export interface FileDialogFilter {
 export abstract class FileDialogPort {
   abstract save(suggestedName: string, extension: string): Promise<string | null>;
   abstract open(filters: readonly FileDialogFilter[]): Promise<string | null>;
+  /**
+   * Maps onto the native OS directory picker (the dialog plugin's open
+   * entry with directory selection enabled). Returns the chosen absolute
+   * directory path, or `null` when the user cancels — never throws for a
+   * cancellation.
+   */
+  abstract selectDirectory(): Promise<string | null>;
 }

@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import type { MeetingId } from '../../core/models/meeting.model';
 import { MeetingsStore } from '../stores/meetings.store';
 import { DeleteTranscriptSegmentUseCase } from '../use-cases/delete-transcript-segment.usecase';
+import { EditLiveTranscriptSegmentUseCase } from '../use-cases/edit-live-transcript-segment.usecase';
 import { EditTranscriptSegmentUseCase } from '../use-cases/edit-transcript-segment.usecase';
 import { MergeTranscriptSegmentUpUseCase } from '../use-cases/merge-transcript-segment-up.usecase';
 import { RestoreTranscriptSegmentsUseCase } from '../use-cases/restore-transcript-segments.usecase';
@@ -12,7 +13,7 @@ import {
   runMergeTranscriptSegmentUpWithHistory,
   runUndoLastTranscriptOp,
 } from './meetings-facade-transcript-history.support';
-import { runGuarded } from './meetings-facade.support';
+import { clearErrorFromSource, runGuarded, toErrorInfo } from './meetings-facade.support';
 
 /**
  * Transcript editing (inline text edit + structural delete / merge-up /
@@ -26,6 +27,7 @@ import { runGuarded } from './meetings-facade.support';
 export class TranscriptEditingFacade {
   private readonly store = inject(MeetingsStore);
   private readonly editTranscriptSegmentUseCase = inject(EditTranscriptSegmentUseCase);
+  private readonly editLiveSegmentUseCase = inject(EditLiveTranscriptSegmentUseCase);
   private readonly deleteTranscriptSegmentUseCase = inject(DeleteTranscriptSegmentUseCase);
   private readonly mergeTranscriptSegmentUpUseCase = inject(MergeTranscriptSegmentUpUseCase);
   private readonly restoreTranscriptSegmentsUseCase = inject(RestoreTranscriptSegmentsUseCase);
@@ -39,6 +41,37 @@ export class TranscriptEditingFacade {
       async () => this.store.updateMeeting(await this.editTranscriptSegmentUseCase.edit(id, index, text)),
       'editTranscriptSegment',
     );
+  }
+
+  /**
+   * Corrects one LIVE (still-recording) segment through the public store merge only
+   * (no new store methods, keeping `meetings.store.ts` under its max-lines cap):
+   * seeds an optimistic edited patch first (same `edited`/`originalText`/
+   * `suspectReasons` semantics as the backend, so the triple-match replaces in
+   * place), then the port write. On success merges the backend transcript (so
+   * concurrent finals arriving mid-flight survive); on reject seeds the snapshot
+   * segment back (clean-on-edited replaces back) and surfaces the failure in
+   * `MeetingsError`. Never touches the persisted-meeting edit/undo pipeline.
+   */
+  async editLiveTranscriptSegment(id: MeetingId, index: number, text: string): Promise<void> {
+    const previous = this.store.finalizedSegments();
+    const current = previous[index];
+    if (current !== undefined) {
+      this.store.seedFinalizedSegments([
+        { ...current, text, edited: true, originalText: current.originalText ?? current.text, suspectReasons: [] },
+      ]);
+    }
+    try {
+      const transcript = await this.editLiveSegmentUseCase.edit(id, index, text);
+      this.store.seedFinalizedSegments(transcript.segments);
+      clearErrorFromSource(this.store, 'editLiveTranscriptSegment');
+    } catch (caught) {
+      const snapshot = previous[index];
+      if (snapshot !== undefined) {
+        this.store.seedFinalizedSegments([snapshot]);
+      }
+      this.store.setError({ ...toErrorInfo(caught), source: 'editLiveTranscriptSegment' });
+    }
   }
 
   async deleteTranscriptSegment(id: MeetingId, index: number, expectedText: string): Promise<void> {

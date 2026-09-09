@@ -93,6 +93,28 @@ describe('meetings routing integration', () => {
         const { meetingId } = args as GetLiveTranscriptArgs;
         return meetingId === 'm1' ? LIVE_JOURNAL : null;
       }
+      if (cmd === 'edit_live_transcript_segment') {
+        // Live-edit write path through the REAL `TauriTranscriberAdapter`:
+        // mirrors the backend patch (timing/speaker triple preserved,
+        // `edited` stamped, first `originalText` kept, suspect cleared) so
+        // the routed spec exercises the full port chain, not a mock.
+        const { segmentIndex, text } = args as {
+          readonly segmentIndex: number;
+          readonly text: string;
+        };
+        const segments = LIVE_JOURNAL.segments.map((segment, index) =>
+          index === segmentIndex
+            ? {
+                ...segment,
+                text,
+                suspectReasons: [],
+                edited: true,
+                originalText: segment.text,
+              }
+            : segment,
+        );
+        return { segments };
+      }
       throw new Error(`Unexpected command in routing integration spec: ${cmd}`);
     });
 
@@ -260,6 +282,108 @@ describe('meetings routing integration', () => {
     expect(harness.routeNativeElement?.querySelector('app-settings')).toBeTruthy();
     subscription.unsubscribe();
   });
+
+  it(
+    'flags a suspect live final with the review badge',
+    async () => {
+      // Same fake-timer discipline as the post-boot finals spec: the
+      // `bufferTime(FINAL_BATCH_MS)` window lives on the fake clock.
+      vi.useFakeTimers();
+      try {
+        const harness = await RouterTestingHarness.create('/meetings');
+        await vi.advanceTimersByTimeAsync(0);
+        harness.fixture.detectChanges();
+        await vi.advanceTimersByTimeAsync(0);
+        harness.fixture.detectChanges();
+
+        // A decode-time suspect hint arrives as a live final after boot.
+        tauri.emit('transcript://final', {
+          meetingId: 'm1',
+          segment: {
+            start_sec: 10,
+            end_sec: 13,
+            text: 'Shaky decode.',
+            speaker: 'me',
+            suspect_reasons: ['RepetitionLoop'],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(FINAL_BATCH_MS);
+        harness.fixture.detectChanges();
+
+        expect(transcriptTexts(harness.routeNativeElement!)).toEqual([
+          'Welcome everyone.',
+          'Thanks for joining.',
+          'Shaky decode.',
+        ]);
+        // Only the suspect segment carries the badge — the two replayed
+        // journal lines stay clean.
+        const badges = Array.from(
+          harness.routeNativeElement?.querySelectorAll(
+            'app-live-transcript .suspect-badge',
+          ) as NodeListOf<Element>,
+        );
+        expect(badges.length).toBe(1);
+        expect(badges[0]?.getAttribute('title')).toBe('Repeated phrase');
+        expect(badges[0]?.getAttribute('aria-label')).toBe('Possibly mis-transcribed');
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    15000,
+  );
+
+  it(
+    'round-trips a live correction through the real edit command and re-renders the Edited badge',
+    async () => {
+      const harness = await RouterTestingHarness.create('/meetings');
+      await flushMicrotasks();
+      harness.fixture.detectChanges();
+      await flushMicrotasks();
+      harness.fixture.detectChanges();
+
+      const facade = harness.routeDebugElement!.injector.get(MeetingsFacade);
+      expect(facade.recordingState()).toBe('recording');
+      // The live pane is editable while recording (the detail pane binds
+      // `[editableLive]="true"` on the live branch) — losing that wiring
+      // silently disables every inline correction, so it is asserted here.
+      expect(
+        harness.routeNativeElement?.querySelector('app-live-transcript app-editable-segment'),
+      ).toBeTruthy();
+
+      // Index 1 (not 0) proves the absolute transcript index threads through
+      // the shell wiring, the facade, and the Tauri adapter untouched.
+      await facade.editLiveTranscriptSegment(toMeetingId('m1'), 1, 'Thanks for joining — corrected.');
+      await flushMicrotasks();
+      harness.fixture.detectChanges();
+
+      // The real port chain issued the exact Tauri command with the exact args
+      // (matched positionally — the Tauri client appends its own trailing
+      // `options` argument, so `toHaveBeenCalledWith` on the full call
+      // shape would couple this spec to that wrapper).
+      const editCalls = tauri.invokeSpy.mock.calls.filter(([cmd]) => cmd === 'edit_live_transcript_segment');
+      expect(editCalls.length).toBe(1);
+      expect(editCalls[0]?.[1]).toEqual({
+        meetingId: 'm1',
+        segmentIndex: 1,
+        text: 'Thanks for joining — corrected.',
+      });
+      // The optimistic patch plus the backend merge re-render the corrected
+      // text in place (no duplicate row, order unchanged).
+      expect(transcriptTexts(harness.routeNativeElement!)).toEqual([
+        'Welcome everyone.',
+        'Thanks for joining — corrected.',
+      ]);
+      const editedBadges = Array.from(
+        harness.routeNativeElement?.querySelectorAll(
+          'app-live-transcript .edited-badge',
+        ) as NodeListOf<Element>,
+      );
+      expect(editedBadges.length).toBe(1);
+      expect(editedBadges[0]?.textContent).toBe('Edited');
+      expect(editedBadges[0]?.getAttribute('title')).toBe('Thanks for joining.');
+    },
+    15000,
+  );
 });
 
 const transcriptTexts = (root: Element): readonly string[] =>

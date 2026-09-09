@@ -47,6 +47,15 @@ pub enum AppError {
     #[error("path error: {0}")]
     Path(String),
 
+    /// The persisted storage pointer names a directory that no longer
+    /// exists (unplugged drive, deleted folder, revoked iCloud grant).
+    /// Distinct from [`AppError::Path`] so the UI can offer a Reset
+    /// affordance instead of a generic path complaint — startup must fail
+    /// loudly here rather than silently fall back to `~/myna` and split
+    /// the library across two roots (see ADR 0012).
+    #[error("storage location missing: {0}")]
+    StorageMissing(String),
+
     /// The in-flight operation was cancelled by the user.
     #[error("cancelled")]
     Cancelled,
@@ -72,6 +81,7 @@ impl AppError {
             AppError::Busy(_) => "BUSY",
             AppError::ModelsMissing(_) => "MODELS_MISSING",
             AppError::Path(_) => "PATH",
+            AppError::StorageMissing(_) => "STORAGE_MISSING",
             AppError::Cancelled => "CANCELLED",
             AppError::Updater(_) => "UPDATER",
         }

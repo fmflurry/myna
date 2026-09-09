@@ -192,4 +192,121 @@ describe('SettingsComponent', () => {
     textarea.dispatchEvent(new Event('blur'));
     expect(emitted).toEqual(['Be concise. In French.']);
   });
+
+  it('shows the current storage path once loaded', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('storagePath', '/tmp/myna-data');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.storage-path-value').textContent).toContain('/tmp/myna-data');
+  });
+
+  it('shows a loading placeholder until the storage location resolves', () => {
+    const fixture = createFixture();
+
+    expect(fixture.nativeElement.querySelector('.storage-path-value').textContent).toContain('Loading…');
+  });
+
+  it('shows the inline storage error, hidden when null', () => {
+    const clean = createFixture();
+    expect(clean.nativeElement.querySelector('.storage-error')).toBeNull();
+
+    const failed = createFixture();
+    failed.componentRef.setInput('storageError', 'not a directory');
+    failed.detectChanges();
+    expect(failed.nativeElement.querySelector('.storage-error')?.textContent).toContain('not a directory');
+  });
+
+  it('shows the restart prompt after a move that needs a restart, hidden otherwise', () => {
+    const withoutRestart = createFixture();
+    expect(withoutRestart.nativeElement.querySelector('.storage-restart')).toBeNull();
+
+    const withRestart = createFixture();
+    withRestart.componentRef.setInput('storageRestartRequired', true);
+    withRestart.detectChanges();
+    expect(withRestart.nativeElement.querySelector('.storage-restart')?.textContent).toContain('restart');
+  });
+
+  it('disables Change/Reset while busy, enables them when idle', () => {
+    const busy = createFixture();
+    busy.componentRef.setInput('storageBusy', true);
+    busy.detectChanges();
+
+    expect((busy.nativeElement.querySelector('.change-storage') as HTMLButtonElement).disabled).toBe(true);
+    expect((busy.nativeElement.querySelector('.reset-storage') as HTMLButtonElement).disabled).toBe(true);
+
+    const idle = createFixture();
+    expect((idle.nativeElement.querySelector('.change-storage') as HTMLButtonElement).disabled).toBe(false);
+    expect((idle.nativeElement.querySelector('.reset-storage') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('emits browseStorageRequested on Change… and resetStorageRequested on Reset', () => {
+    const fixture = createFixture();
+    const browsed: void[] = [];
+    const reset: void[] = [];
+    fixture.componentInstance.browseStorageRequested.subscribe(() => browsed.push(undefined));
+    fixture.componentInstance.resetStorageRequested.subscribe(() => reset.push(undefined));
+
+    fixture.nativeElement.querySelector('.change-storage').click();
+    fixture.nativeElement.querySelector('.reset-storage').click();
+
+    expect(browsed.length).toBe(1);
+    expect(reset.length).toBe(1);
+  });
+
+  it('defaults the Move toggle to checked (Move existing meetings)', () => {
+    const fixture = createFixture();
+
+    const checkbox: HTMLInputElement = fixture.nativeElement.querySelector('.storage-move-toggle');
+    expect(checkbox.checked).toBe(true);
+    expect(fixture.nativeElement.querySelector('.storage-note').textContent).toContain('move');
+  });
+
+  it('reflects moveExisting=false as an unchecked Stay toggle with the stay note', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('moveExisting', false);
+    fixture.detectChanges();
+
+    const checkbox: HTMLInputElement = fixture.nativeElement.querySelector('.storage-move-toggle');
+    expect(checkbox.checked).toBe(false);
+    expect(fixture.nativeElement.querySelector('.storage-note').textContent).toContain('stay');
+  });
+
+  it('emits moveExistingChanged with the toggled choice', () => {
+    const fixture = createFixture();
+    const emitted: boolean[] = [];
+    fixture.componentInstance.moveExistingChanged.subscribe((choice) => emitted.push(choice));
+
+    const checkbox: HTMLInputElement = fixture.nativeElement.querySelector('.storage-move-toggle');
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+
+    expect(emitted).toEqual([false]);
+  });
+
+  it('emits browseStorageRequested with the pending Move choice (true by default)', () => {
+    const fixture = createFixture();
+    const emitted: boolean[] = [];
+    fixture.componentInstance.browseStorageRequested.subscribe((choice) => emitted.push(choice));
+
+    fixture.nativeElement.querySelector('.change-storage').click();
+
+    expect(emitted).toEqual([true]);
+  });
+
+  it('emits browseStorageRequested/resetStorageRequested with the Stay choice when toggled off', () => {
+    const fixture = createFixture();
+    fixture.componentRef.setInput('moveExisting', false);
+    fixture.detectChanges();
+    const browsed: boolean[] = [];
+    const reset: boolean[] = [];
+    fixture.componentInstance.browseStorageRequested.subscribe((choice) => browsed.push(choice));
+    fixture.componentInstance.resetStorageRequested.subscribe((choice) => reset.push(choice));
+
+    fixture.nativeElement.querySelector('.change-storage').click();
+    fixture.nativeElement.querySelector('.reset-storage').click();
+
+    expect(browsed).toEqual([false]);
+    expect(reset).toEqual([false]);
+  });
 });

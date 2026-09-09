@@ -175,6 +175,9 @@ fn backup_transcript_copies_existing_transcript_before_overwrite() {
         text: "original transcript".to_string(),
         speaker: myna_stt::Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     });
     let meeting = store.create("Re-transcribe me").expect("create");
     let with_transcript = meeting.with_transcript(transcript.clone());
@@ -312,6 +315,9 @@ fn merge_track_transcripts_stamps_and_sorts_both_speakers_ascending_by_start_sec
             text: "mic second".to_string(),
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 4.0,
@@ -319,6 +325,9 @@ fn merge_track_transcripts_stamps_and_sorts_both_speakers_ascending_by_start_sec
             text: "mic third".to_string(),
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         });
     let system_transcript = Transcript::default().with_segment(TranscriptSegment {
         start_sec: 0.0,
@@ -326,6 +335,9 @@ fn merge_track_transcripts_stamps_and_sorts_both_speakers_ascending_by_start_sec
         text: "system first".to_string(),
         speaker: Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     });
 
     // Act
@@ -362,6 +374,9 @@ fn merge_track_transcripts_with_only_a_mic_track_stamps_everything_me_never_fabr
             text: "hello".to_string(),
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 1.0,
@@ -369,6 +384,9 @@ fn merge_track_transcripts_with_only_a_mic_track_stamps_everything_me_never_fabr
             text: "team".to_string(),
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         });
 
     // Act
@@ -395,6 +413,9 @@ fn merge_track_transcripts_fallback_case_stamps_everything_unknown() {
         text: "hello team".to_string(),
         speaker: Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     });
 
     // Act
@@ -414,6 +435,9 @@ fn segment_at(start_sec: f32, text: &str) -> TranscriptSegment {
         text: text.to_string(),
         speaker: Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     }
 }
 
@@ -478,6 +502,9 @@ fn backup_transcript_round_trips_a_dual_track_speaker_tagged_transcript() {
             text: "hi there".to_string(),
             speaker: Speaker::others(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 1.0,
@@ -485,6 +512,9 @@ fn backup_transcript_round_trips_a_dual_track_speaker_tagged_transcript() {
             text: "hello".to_string(),
             speaker: Speaker::me(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         });
 
     // Act

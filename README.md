@@ -105,7 +105,7 @@ Tauri 2 shell (Rust + webview); macOS-first.
 
 - **STT** runs locally (Parakeet-TDT via sherpa-onnx) — no audio sent anywhere.
 - **Summaries** run locally (Qwen via llama.cpp) — no transcript leaves your machine.
-- **Storage** is `~/myna/` (override `MYNA_DATA_DIR`) — nothing synced to the cloud.
+- **Storage** is `~/myna/` (changeable in Settings, override `MYNA_DATA_DIR`) — nothing synced to the cloud.
 - **No telemetry, no analytics.** **No bot joins your call.**
 - **The only network call:** one-time model download from Hugging Face
   (~5.4 GB) via in-app **Download** or `./scripts/download-models.sh`.
@@ -211,6 +211,7 @@ Resources:
 - [Architecture](docs/stack-proposal.md)
 - [ADRs](docs/adr/)
 - [Custom Summary Instructions](docs/custom-summary-instructions.md)
+- [Speaker Diarization Accuracy](docs/diarization-accuracy.md)
 
 Questions? Open an issue.
 Built entirely with AI ([configs](https://github.com/fmflurry/settings-opencode)).

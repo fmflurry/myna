@@ -13,6 +13,9 @@ fn segment(start_sec: f32, end_sec: f32, text: &str, speaker: Speaker) -> Transc
         text: text.to_string(),
         speaker,
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     }
 }
 

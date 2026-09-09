@@ -204,6 +204,9 @@ fn segments_from_result(
             text: word.text,
             speaker: Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .collect()
 }

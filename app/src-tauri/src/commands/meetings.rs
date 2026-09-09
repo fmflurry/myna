@@ -872,7 +872,9 @@ pub fn apply_segment_delete(
 /// `prev.end_sec.max(cur.end_sec)` (so an overlapping pair can never yield an
 /// end before its start), joins text with a single ASCII space after
 /// trimming both sides, clones (never re-parses) the shared speaker label,
-/// and ORs `speaker_pinned` from both sides.
+/// and ORs `speaker_pinned` from both sides. The per-window suspect/edited
+/// audit fields reset to clean defaults — the joined text is one neither
+/// window produced verbatim, so neither window's hints survive the join.
 pub fn apply_segment_merge_up(
     transcript: &myna_stt::Transcript,
     index: usize,
@@ -899,6 +901,12 @@ pub fn apply_segment_merge_up(
         text,
         speaker: prev.speaker.clone(),
         speaker_pinned: prev.speaker_pinned || cur.speaker_pinned,
+        // A merge joins two decoder outputs into text neither window
+        // produced verbatim, so the per-window audit hints don't survive
+        // the join: the merged segment starts clean and unedited.
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     };
     let mut segments = transcript.segments.clone();
     segments.splice(index - 1..=index, [merged]);

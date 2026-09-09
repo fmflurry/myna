@@ -11,7 +11,10 @@ mod instructions;
 mod language;
 mod template;
 
-pub use engine::{init_ggml_env, Summarizer, SummaryOptions};
+pub use engine::{
+    clamp_summarizer_threads, default_summarizer_threads, init_ggml_env, Summarizer,
+    SummaryOptions, SUMMARIZER_THREADS_FALLBACK, SUMMARIZER_THREADS_MIN,
+};
 pub use error::LlmError;
 pub use instructions::{SummaryInstructions, MAX_INSTRUCTION_CHARS};
 pub use language::{

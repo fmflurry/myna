@@ -192,6 +192,9 @@ fn edited_segment_text_and_timestamps_survive_a_save_and_get_json_round_trip() {
             text: "hello team".to_string(),
             speaker: myna_stt::Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         })
         .with_segment(TranscriptSegment {
             start_sec: 1.5,
@@ -199,6 +202,9 @@ fn edited_segment_text_and_timestamps_survive_a_save_and_get_json_round_trip() {
             text: "let's begin".to_string(),
             speaker: myna_stt::Speaker::default(),
             speaker_pinned: false,
+            suspect_reasons: Vec::new(),
+            original_text: None,
+            edited: false,
         });
     let created = store.create("Needs an edit").expect("create");
     let with_transcript = created.with_transcript(transcript);
@@ -235,6 +241,9 @@ fn with_transcript_returns_a_new_meeting_and_leaves_the_original_untouched() {
         text: "hello team".to_string(),
         speaker: myna_stt::Speaker::default(),
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     });
 
     // Act

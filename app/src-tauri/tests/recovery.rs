@@ -91,6 +91,9 @@ fn segment(start_sec: f32, end_sec: f32, text: &str, speaker: Speaker) -> Transc
         text: text.to_string(),
         speaker,
         speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: None,
+        edited: false,
     }
 }
 
@@ -737,5 +740,87 @@ fn legacy_pass_skips_meetings_without_audio_and_healthy_meetings() {
         store.get(healthy.id).expect("load"),
         healthy_saved,
         "a healthy meeting must be untouched by the legacy pass"
+    );
+}
+
+// --- kill-mid-edit recovery --------------------------------------------------
+
+/// A `kill -9` that lands after a live correction but mid-append must still
+/// recover the EDITED line — not the decoder original — while dropping the
+/// truncated tail: the journal holds the rewritten edited line followed by
+/// a half-written append with no trailing newline. Losing the correction
+/// on reload (replaying stale pre-edit text, or choking on the tail and
+/// recovering nothing) fails here.
+#[test]
+fn kill_mid_edit_replays_the_edited_line_and_drops_the_truncated_tail() {
+    // Arrange: the journal as a kill-mid-edit leaves it — the rewritten
+    // edited line (edited stamped, first original kept, suspect cleared)
+    // plus a second final, with the crash signature appended behind both.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = FsMeetingStore::new(dir.path());
+    let edited = TranscriptSegment {
+        start_sec: 0.0,
+        end_sec: 1.0,
+        text: "hello, corrected".to_string(),
+        speaker: Speaker::me(),
+        speaker_pinned: false,
+        suspect_reasons: Vec::new(),
+        original_text: Some("hello".to_string()),
+        edited: true,
+    };
+    let id = seed_orphan(
+        &store,
+        "Killed mid-edit",
+        CaptureSource::Microphone,
+        &[
+            edited,
+            segment(3.0, 4.5, "still listening", Speaker::others()),
+        ],
+        Some((48_000, 2, 96_000)),
+        Some(32_000),
+        None,
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(store.transcript_journal_path(id))
+        .expect("reopen journal");
+    file.write_all(br#"{"start_sec":5.0,"end"#)
+        .expect("write truncated line");
+    drop(file);
+
+    // Act
+    recover_orphaned_sessions(&store);
+
+    // Assert: the edited line replays verbatim — timing, speaker, and audit
+    // flags — and the truncated tail is dropped, not folded.
+    let recovered = store.get(id).expect("recovered meeting must load");
+    let transcript = recovered
+        .transcript
+        .expect("journal transcript must be folded in");
+    assert_eq!(transcript.segments.len(), 2);
+    let first = &transcript.segments[0];
+    assert_eq!(
+        first.text, "hello, corrected",
+        "the correction must survive the crash, not revert to the decoder original"
+    );
+    assert!(first.edited, "the edited stamp must survive the crash");
+    assert_eq!(
+        first.original_text.as_deref(),
+        Some("hello"),
+        "the first decoder original must survive the crash"
+    );
+    assert!(
+        first.suspect_reasons.is_empty(),
+        "the human review must stay cleared"
+    );
+    assert_eq!(first.speaker, Speaker::me());
+    assert_eq!(transcript.segments[1].text, "still listening");
+    assert!(
+        !store.session_manifest_path(id).exists(),
+        "the manifest must be deleted once the meeting is saved"
+    );
+    assert!(
+        !store.transcript_journal_path(id).exists(),
+        "the journal must be deleted once the meeting is saved"
     );
 }

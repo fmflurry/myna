@@ -222,6 +222,8 @@
         [finalizedSegments]="finalizedSegments()"
         [partialTextMe]="partialTextMe()"
         [partialTextOthers]="partialTextOthers()"
+        [editableLive]="true"
+        (liveSegmentEdited)="liveSegmentEdited.emit($event)"
       />
     } @else if (diarizing()) {
       <div class="diarize-loading" role="status">

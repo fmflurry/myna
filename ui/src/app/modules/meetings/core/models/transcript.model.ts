@@ -69,6 +69,48 @@ export interface TranscriptSegment {
   /** User-pinned speaker attribution; re-running diarization must not overwrite it.
       Absent on segments persisted before pinning. */
   readonly speakerPinned?: boolean;
+  /**
+   * Decode-time audit hints as their `SuspectReason` Debug variant names
+   * (e.g. `'RepetitionLoop'`). Empty — or absent on legacy payloads — for
+   * clean segments. Presence means "worth review", never "definitely
+   * wrong": renderers must never fabricate flags from an absent field.
+   */
+  readonly suspectReasons?: readonly string[];
+  /**
+   * Whether a human has manually corrected this segment's `text`.
+   * Absent on segments persisted before editing; reads as `false`.
+   */
+  readonly edited?: boolean;
+  /**
+   * The decoder's original text before the first human correction.
+   * `undefined` until the first edit; preserved across further edits so
+   * reviewers can always diff back to what the model actually produced.
+   */
+  readonly originalText?: string;
+}
+
+/**
+ * Human-facing labels for the `SuspectReason` Debug variant names the
+ * backend emits (see `myna_stt::suspect::SuspectReason`). Unknown strings —
+ * e.g. a reason minted by a newer backend — fall back to the raw value so
+ * the UI never drops an audit hint it doesn't recognize yet.
+ */
+const SUSPECT_REASON_LABELS: Record<string, string> = {
+  RepetitionLoop: 'Repeated phrase',
+  LanguageDriftHint: 'Possible language drift',
+  LowSpeechEnergy: 'Low speech energy',
+  TimingAnomaly: 'Unusual word timing',
+  DegenerateLength: 'Unusual length',
+};
+
+/** Whether a segment carries any suspect flag worth review. */
+export function isSuspect(segment: TranscriptSegment): boolean {
+  return (segment.suspectReasons?.length ?? 0) > 0;
+}
+
+/** Human-facing label for a single suspect-reason wire value. */
+export function suspectLabel(reason: string): string {
+  return SUSPECT_REASON_LABELS[reason] ?? reason;
 }
 
 export interface Transcript {

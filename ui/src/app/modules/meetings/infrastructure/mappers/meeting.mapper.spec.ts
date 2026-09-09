@@ -48,7 +48,9 @@ describe('mapMeetingDtoToDomain', () => {
     });
 
     expect(meeting.audioPath).toBe('/data/meetings/m-2/audio.wav');
-    expect(meeting.transcript).toEqual({ segments: [{ startSec: 0, endSec: 1, text: 'hi', speaker: 'unknown' }] });
+    expect(meeting.transcript).toEqual({
+      segments: [{ startSec: 0, endSec: 1, text: 'hi', speaker: 'unknown', suspectReasons: [], edited: false }],
+    });
     expect(meeting.summaries).toEqual([
       { template: 'key-points', markdown: '', createdAt: new Date('2026-01-15T09:05:00Z'), language: 'en', stale: true },
     ]);

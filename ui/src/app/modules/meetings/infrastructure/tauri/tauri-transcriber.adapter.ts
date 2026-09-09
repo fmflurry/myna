@@ -34,6 +34,17 @@ export class TauriTranscriberAdapter extends TranscriberPort {
     return dto === null ? emptyTranscript() : mapTranscriptDtoToDomain(dto);
   }
 
+  override async editLiveSegment(id: MeetingId, index: number, text: string): Promise<Transcript> {
+    // Tauri maps the Rust command's snake_case `meeting_id`/`segment_index`
+    // params to the camelCase invoke args below.
+    const dto = await invokeCommand('edit_live_transcript_segment', {
+      meetingId: id,
+      segmentIndex: index,
+      text,
+    });
+    return mapTranscriptDtoToDomain(dto);
+  }
+
   override async liveTranscriptFor(id: MeetingId): Promise<Transcript> {
     // Tauri maps the Rust command's snake_case `meeting_id` param to the
     // camelCase `meetingId` invoke arg. `null` means `id` is not the active

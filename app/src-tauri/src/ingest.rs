@@ -354,6 +354,12 @@ pub fn transcribe_wav_streaming(
         on_event(event);
     }
 
+    // Single-track decode completes in chronological order, and batch
+    // callers sort once here instead of paying `insert_final_segment`'s
+    // O(n) shift per segment (O(n²) over a long import). Stable: equal
+    // `start_sec` keeps arrival order, exactly like `insert_final_segment`.
+    sort_transcript_segments(&mut transcript);
+
     Ok(transcript)
 }
 
@@ -371,8 +377,32 @@ fn import_cancelled_error() -> AppError {
 /// false`) are ignored.
 fn accumulate_streamed_event(transcript: &mut Transcript, event: &SttEvent) {
     if let SttEvent::Final { segment } = event {
-        insert_final_segment(transcript, segment.clone());
+        push_final_segment(transcript, segment.clone());
     }
+}
+
+/// Appends `segment` to `transcript.segments` without ordering — the
+/// batch-path counterpart to [`insert_final_segment`].
+///
+/// Batch producers ([`transcribe_wav_streaming`], [`read_journal`][crate::session_manifest::read_journal],
+/// [`merge_track_transcripts`]) append every segment and call
+/// [`sort_transcript_segments`] once at the end (O(n log n) total) instead
+/// of paying [`insert_final_segment`]'s O(n) `Vec::insert` shift per
+/// segment (O(n²) over a thousands-long journal replay). [`insert_final_segment`]
+/// stays for the live decode-worker path, which folds one segment at a time
+/// as each track's VAD segment finishes out of chronological order and must
+/// keep the in-memory transcript ordered after every fold.
+pub fn push_final_segment(transcript: &mut Transcript, segment: TranscriptSegment) {
+    transcript.segments.push(segment);
+}
+
+/// Stable ascending sort by `start_sec`, preserving arrival order among
+/// equal `start_sec` — the same tiebreak [`insert_final_segment`] gives,
+/// so batch-replay order is identical to per-segment sorted insert.
+pub fn sort_transcript_segments(transcript: &mut Transcript) {
+    transcript
+        .segments
+        .sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec));
 }
 
 /// Inserts `segment` into `transcript.segments` at its sorted position by
@@ -392,8 +422,11 @@ fn accumulate_streamed_event(transcript: &mut Transcript, event: &SttEvent) {
 /// decode-completion order across two tracks isn't chronological order.
 ///
 /// A binary-search insert into a `Vec`, not a re-sort of the whole
-/// transcript: this runs once per finalized segment on the decode worker,
-/// and transcripts can reach thousands of segments.
+/// transcript: this runs once per finalized segment on the live decode
+/// worker, where each fold must leave the in-memory transcript ordered.
+/// Batch producers must NOT use this per segment — they append via
+/// [`push_final_segment`] and call [`sort_transcript_segments`] once
+/// (O(n log n) total vs O(n²) for repeated inserts over a long replay).
 pub fn insert_final_segment(transcript: &mut Transcript, segment: TranscriptSegment) {
     let insert_at = transcript.segments.partition_point(|existing| {
         existing.start_sec.total_cmp(&segment.start_sec) != std::cmp::Ordering::Greater
@@ -617,7 +650,11 @@ impl TrackProgressAggregator {
 /// re-transcribes their speaker attribution is directly unit-testable
 /// without a loaded [`SttEngine`] -- see `tests/ingest.rs`.
 pub fn merge_track_transcripts(per_track: Vec<(Speaker, Transcript)>) -> Transcript {
-    let mut segments: Vec<TranscriptSegment> = Vec::new();
+    let total: usize = per_track
+        .iter()
+        .map(|(_, transcript)| transcript.segments.len())
+        .sum();
+    let mut segments: Vec<TranscriptSegment> = Vec::with_capacity(total);
     for (speaker, transcript) in per_track {
         segments.extend(
             transcript
@@ -629,6 +666,12 @@ pub fn merge_track_transcripts(per_track: Vec<(Speaker, Transcript)>) -> Transcr
                 }),
         );
     }
+    // One stable sort over the concatenated batch (O(n log n) total), not
+    // a per-segment sorted insert (O(n²)): each per-track transcript is
+    // already ascending, but cross-track completion order is not, so the
+    // merge point is the single place ordering is established. Stable, so
+    // equal `start_sec` keeps mic-before-system arrival order exactly like
+    // `insert_final_segment` would.
     segments.sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec));
     Transcript { segments }
 }

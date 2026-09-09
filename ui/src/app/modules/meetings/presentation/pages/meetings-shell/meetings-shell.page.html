@@ -119,6 +119,7 @@
           [summaryInstructionDrafts]="summaryInstructions.drafts()"
           (renameRequested)="onMeetingRenamed($event)"
           (segmentEdited)="onSegmentEdited($event)"
+          (liveSegmentEdited)="onLiveSegmentEdited($event)"
           (speakerRenamed)="onSpeakerRenamed($event)"
           (speakerRemoved)="onSpeakerRemoved($event)"
           (segmentSpeakerReassigned)="onSegmentSpeakerReassigned($event)"
@@ -196,11 +197,19 @@
         [summaryLanguages]="facade.summaryLanguages()"
         [selectedSummaryLanguage]="facade.selectedSummaryLanguage()"
         [guidelines]="settings.guidelines()"
+        [storagePath]="settings.storagePath()"
+        [storageBusy]="settings.storageBusy()"
+        [storageError]="settings.storageError()"
+        [storageRestartRequired]="settings.storageRestartRequired()"
+        [moveExisting]="settings.moveExisting()"
         (closed)="settings.toggleSettings()"
         (updateConsentChanged)="updateHandlers.onConsentChanged($event)"
         (checkNowRequested)="updateHandlers.onCheckNow()"
         (summaryLanguageSelected)="onSummaryLanguageSelected($event)"
         (guidelinesChanged)="settings.onGuidelinesChanged($event)"
+        (moveExistingChanged)="settings.onMoveExistingChanged($event)"
+        (browseStorageRequested)="settings.onBrowseStorage($event)"
+        (resetStorageRequested)="settings.onResetStorage($event)"
       />
     </div>
   </div>

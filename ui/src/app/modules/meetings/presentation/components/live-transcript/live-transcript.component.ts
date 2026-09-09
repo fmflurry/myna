@@ -6,18 +6,22 @@ import {
   afterRenderEffect,
   computed,
   input,
+  output,
   signal,
   viewChild,
 } from '@angular/core';
 
 import {
+  isSuspect,
   speakerAccentIndex,
   speakerDisplayName,
   speakerRole,
+  suspectLabel,
   type Speaker,
   type TranscriptSegment,
 } from '../../../core/models/transcript.model';
 import { formatMmSs } from '../../utils/format-display.util';
+import { EditableSegmentComponent } from '../editable-segment/editable-segment.component';
 
 /** Pixel tolerance for treating the scroll position as "pinned to bottom". */
 const BOTTOM_TOLERANCE_PX = 24;
@@ -28,6 +32,12 @@ const SPEAKER_ACCENT_PALETTE_SIZE = 6;
 /** Maximum number of finalized rows retained in the live DOM. */
 const LIVE_WINDOW_SIZE = 250;
 
+/** One inline edit committed for the finalized live segment at ABSOLUTE `index`. */
+export interface LiveTranscriptSegmentEdit {
+  readonly index: number;
+  readonly text: string;
+}
+
 /**
  * Finalized segments and the two streaming partials (one per speaker slot)
  * are explicit inputs — never a single merged `Transcript` with a sentinel
@@ -37,6 +47,7 @@ const LIVE_WINDOW_SIZE = 250;
  */
 @Component({
   selector: 'app-live-transcript',
+  imports: [EditableSegmentComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './live-transcript.component.html',
   styleUrl: './live-transcript.component.scss',
@@ -45,6 +56,9 @@ export class LiveTranscriptComponent implements OnDestroy {
   readonly finalizedSegments = input.required<readonly TranscriptSegment[]>();
   readonly partialTextMe = input<string>('');
   readonly partialTextOthers = input<string>('');
+  readonly editableLive = input(false);
+
+  readonly liveSegmentEdited = output<LiveTranscriptSegmentEdit>();
 
   readonly isEmpty = computed(
     () => this.finalizedSegments().length === 0 && !this.partialTextMe() && !this.partialTextOthers(),
@@ -53,11 +67,17 @@ export class LiveTranscriptComponent implements OnDestroy {
   /** Start index selected by explicit earlier-page navigation. */
   private readonly selectedWindowStart = signal(0);
 
+  /** ABSOLUTE index of the first finalized row in the current bounded live page. */
+  readonly windowStart = computed(() => {
+    const segments = this.finalizedSegments();
+    const tailStart = this.tailStart(segments.length);
+    return this.pinnedToBottom() ? tailStart : Math.min(this.selectedWindowStart(), tailStart);
+  });
+
   /** Finalized rows in the current bounded live page; the complete input remains untouched. */
   readonly visibleFinalizedSegments = computed(() => {
     const segments = this.finalizedSegments();
-    const tailStart = this.tailStart(segments.length);
-    const windowStart = this.pinnedToBottom() ? tailStart : Math.min(this.selectedWindowStart(), tailStart);
+    const windowStart = this.windowStart();
     return segments.slice(windowStart, windowStart + LIVE_WINDOW_SIZE);
   });
 
@@ -170,6 +190,36 @@ export class LiveTranscriptComponent implements OnDestroy {
   /** Whether `speaker` carries real attribution chrome should render for. */
   hasSpeakerLabel(speaker: Speaker): boolean {
     return speakerRole(speaker) !== 'unknown';
+  }
+
+  /** Whether a finalized live segment carries any suspect flag worth review. */
+  isSuspectSegment(segment: TranscriptSegment): boolean {
+    return isSuspect(segment);
+  }
+
+  /** Whether a finalized live segment was human-corrected (`edited` stamped by the backend or the optimistic patch). */
+  isEditedSegment(segment: TranscriptSegment): boolean {
+    return segment.edited === true;
+  }
+
+  /** Decoder-original text preserved at first correction; the `Edited` chip tooltip so the audit stays visible without a separate history view. */
+  editedTooltip(segment: TranscriptSegment): string {
+    return segment.originalText ?? '';
+  }
+
+  /** Human-facing label for a single suspect-reason wire value. */
+  suspectReasonLabel(reason: string): string {
+    return suspectLabel(reason);
+  }
+
+  /** Comma-joined human-facing suspect reasons for the badge tooltip. */
+  suspectTooltip(segment: TranscriptSegment): string {
+    return (segment.suspectReasons ?? []).map((reason) => suspectLabel(reason)).join(', ');
+  }
+
+  /** Re-emits an inline edit with its ABSOLUTE transcript index; the parent owns persistence. */
+  onLiveSegmentEdited(index: number, text: string): void {
+    this.liveSegmentEdited.emit({ index, text });
   }
 
   /** Stable CSS accent class for `speaker`, from the fixed-size palette. */

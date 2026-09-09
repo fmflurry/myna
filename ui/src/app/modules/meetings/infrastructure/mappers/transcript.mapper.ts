@@ -9,6 +9,10 @@ export function mapTranscriptSegmentDtoToDomain(dto: TranscriptSegmentDto): Tran
     endSec: dto.endSec,
     text: dto.text,
     speaker: dto.speaker ?? 'unknown',
+    // Missing audit fields default to "clean, unedited" — never fabricated.
+    suspectReasons: dto.suspectReasons != null ? [...dto.suspectReasons] : [],
+    edited: dto.edited ?? false,
+    ...(dto.originalText == null ? {} : { originalText: dto.originalText }),
   };
 }
 
@@ -22,6 +26,10 @@ export function mapRawTranscriptSegmentDtoToDomain(dto: RawTranscriptSegmentDto)
     endSec: dto.end_sec,
     text: dto.text,
     speaker: dto.speaker ?? 'unknown',
+    // Missing audit fields default to "clean, unedited" — never fabricated.
+    suspectReasons: dto.suspect_reasons != null ? [...dto.suspect_reasons] : [],
+    edited: dto.edited ?? false,
+    ...(dto.original_text == null ? {} : { originalText: dto.original_text }),
   };
 }
 

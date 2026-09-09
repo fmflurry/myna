@@ -30,8 +30,9 @@ use crate::events::{emit_recording_state, ErrorPayload, RecordingStatePayload, A
 use crate::paths;
 use crate::recovery;
 use crate::session::{
-    guard_start, guard_stop, resolve_bt_safe_source, resolve_capture_source,
-    resolve_system_source_id, AudioPaths, CaptureSelection, RecordingSession, RecordingState,
+    apply_live_segment_edit, emit_final, guard_start, guard_stop, resolve_bt_safe_source,
+    resolve_capture_source, resolve_system_source_id, rewrite_journal, AudioPaths,
+    CaptureSelection, RecordingSession, RecordingState,
 };
 use crate::session_manifest::{self, SessionManifest};
 use crate::state::{AppState, StoppingGuard};
@@ -260,6 +261,23 @@ fn stop_recording_blocking(app: &AppHandle) -> Result<MeetingDto, AppError> {
         Err(err) => {
             return recover_after_failed_stop(app, &state, meeting_id, duration_sec, err);
         }
+    };
+    // The live-edit command patches the journal (the decode worker's
+    // in-memory transcript is unreachable from here), so the journal — not
+    // the worker result — is the source of truth for already-edited
+    // segments, and is folded into `meeting.json` verbatim. The `>=` keeps
+    // this safe when the journal is the SHORTER side: after a journal append
+    // failure (or a final decoded between the edit's read and its rewrite,
+    // which the rewrite then drops) the worker transcript is the fuller one
+    // and wins; on a tie the journal wins, carrying any live edits.
+    // Post-meeting summaries are therefore edited-based by construction: the
+    // next `summarize_meeting` renders this persisted transcript. No stale
+    // flip is needed here — a recording meeting is freshly created at start,
+    // so it carries no summaries yet for an edit to invalidate.
+    let journal_path = state.store.transcript_journal_path(meeting_id);
+    let transcript = match session_manifest::read_journal(&journal_path) {
+        Ok(journaled) if journaled.segments.len() >= transcript.segments.len() => journaled,
+        _ => transcript,
     };
     let meeting = state.store.get(meeting_id)?;
     let audio_path = state.store.audio_path(meeting_id);
@@ -516,6 +534,59 @@ pub fn get_live_transcript(
     Ok(Some(TranscriptDto::from(transcript)))
 }
 
+/// Patches one segment of the ACTIVE session's transcript with user-corrected
+/// `text`, rewrites the durability journal, and re-emits the patched segment
+/// as [`crate::events::TRANSCRIPT_FINAL`] so live subscribers converge on the
+/// corrected text.
+///
+/// Rejects with [`AppError::NotFound`] — never [`AppError::Busy`], this
+/// command contends with no other operation — when `meeting_id` is not the
+/// meeting currently being recorded, when `segment_index` is out of range, or
+/// when the trimmed `text` is empty or matches the segment's current text
+/// (the backend half of the UI `EditableSegment` commit guard, which never
+/// sends those inputs). Returns the patched transcript.
+///
+/// The patch preserves the segment's `(start_sec, end_sec, speaker)` triple
+/// so the UI's live-event-vs-journal dedupe (ADR 0011) still holds, stamps
+/// `edited`, keeps the first `original_text`, and clears `suspect_reasons`
+/// (see [`apply_live_segment_edit`]). The journal rewrite is atomic
+/// (tmp+rename `0600`, same discipline as the manifest write), and the stop
+/// path folds whatever the journal holds into `meeting.json` verbatim — so a
+/// correction made here survives the recording's end. Partial
+/// (not-yet-final) hypotheses are never journaled and cannot be edited here;
+/// persisted meetings stay on [`super::meetings::edit_transcript_segment`],
+/// which refuses the recording meeting from the other side.
+///
+/// Stays synchronous like [`get_live_transcript`]: the journal is small, and
+/// the session-slot lock is held for the whole read→patch→rewrite→emit so
+/// the edit serializes against start/stop/cancel's own slot transitions.
+#[tauri::command]
+pub fn edit_live_transcript_segment(
+    app: AppHandle,
+    meeting_id: String,
+    segment_index: usize,
+    text: String,
+) -> Result<TranscriptDto, AppError> {
+    let state = app.state::<AppState>();
+    let session_slot = lock_session(&state)?;
+    let active_id = session_slot
+        .as_ref()
+        .filter(|session| session.meeting_id.to_string() == meeting_id)
+        .map(|session| session.meeting_id);
+    let Some(active_id) = active_id else {
+        return Err(AppError::NotFound(format!(
+            "no active recording for meeting {meeting_id}"
+        )));
+    };
+    let journal_path = state.store.transcript_journal_path(active_id);
+    let journal = session_manifest::read_journal(&journal_path)?;
+    let patched = apply_live_segment_edit(&journal, segment_index, &text)?;
+    rewrite_journal(&journal_path, &patched)?;
+    let patched_segment = patched.segments[segment_index].clone();
+    emit_final(&app, active_id, patched_segment);
+    Ok(TranscriptDto::from(patched))
+}
+
 /// Bluetooth/HFP guard (A2DP→SCO profile switch): opening a BT mic for
 /// capture collapses live output even though the recorded tracks look loud,
 /// while the system-audio tap alone never touches the input.
@@ -718,6 +789,9 @@ mod tests {
                 text: "journaled".to_string(),
                 speaker: myna_stt::Speaker::me(),
                 speaker_pinned: false,
+                suspect_reasons: Vec::new(),
+                original_text: None,
+                edited: false,
             })
             .expect("append");
         drop(journal);

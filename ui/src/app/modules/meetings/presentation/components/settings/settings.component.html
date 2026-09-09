@@ -59,4 +59,41 @@
       </button>
     </div>
   </section>
+
+  <section class="meetings-storage" aria-label="Meetings storage">
+    <h3>Meetings storage</h3>
+    <p class="storage-path">
+      <span class="storage-path-label">Current location</span>
+      <span class="storage-path-value">{{ storagePath() ?? 'Loading…' }}</span>
+    </p>
+    <label class="storage-move">
+      <input
+        type="checkbox"
+        class="storage-move-toggle"
+        [checked]="moveExisting()"
+        [disabled]="storageBusy()"
+        (change)="onMoveExistingToggled($event)"
+      />
+      <span>Move existing meetings to the new location</span>
+    </label>
+    @if (moveExisting()) {
+      <p class="storage-note">Existing meetings move from {{ storagePath() ?? 'the current location' }} to the chosen location.</p>
+    } @else {
+      <p class="storage-note">New location starts empty — existing meetings stay in {{ storagePath() ?? 'the current location' }} (nothing deleted or merged).</p>
+    }
+    <div class="storage-actions">
+      <button type="button" class="change-storage" [disabled]="storageBusy()" (click)="browseStorageRequested.emit(moveExisting())">
+        Change…
+      </button>
+      <button type="button" class="reset-storage" [disabled]="storageBusy()" (click)="resetStorageRequested.emit(moveExisting())">
+        Reset to default
+      </button>
+    </div>
+    @if (storageError() !== null) {
+      <p class="storage-error" role="alert">{{ storageError() }}</p>
+    }
+    @if (storageRestartRequired()) {
+      <p class="storage-restart">Location changed — restart the app to use the new location.</p>
+    }
+  </section>
 </section>

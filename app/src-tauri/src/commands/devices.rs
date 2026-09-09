@@ -16,13 +16,17 @@ use crate::state::AppState;
 
 /// Lists all available audio input devices.
 ///
-/// Doubles as the app's periodic idle-model-eviction tick: the UI's
+/// Doubles as one of the app's idle-model-eviction ticks: the UI's
 /// `DevicesFacade` polls this command every 5 s for the lifetime of the
 /// meetings module, so [`AppState::evict_stt_if_idle`] runs here instead
 /// of introducing a dedicated timer. The check is non-blocking (all
 /// `try_lock`s) and refuses while a recording or import holds the engine,
 /// so a warm-poll tick costs microseconds; the real release only happens
-/// once [`crate::state::IDLE_MODEL_TTL`] has elapsed since last use.
+/// once [`crate::state::IDLE_MODEL_TTL`] (4 minutes) has elapsed since
+/// last use. This tick is not load-bearing on its own: `recording_state`
+/// polls the same check, and [`AppState::summarizer`]/[`AppState::diarizer`]
+/// pre-evict before loading a new model, so eviction still happens when
+/// this poll isn't firing.
 #[tauri::command]
 pub async fn list_input_devices(state: State<'_, AppState>) -> Result<Vec<DeviceInfo>, AppError> {
     state.evict_stt_if_idle();

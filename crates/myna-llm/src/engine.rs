@@ -58,6 +58,15 @@ use crate::error::LlmError;
 use crate::template::{RenderContext, Template};
 
 /// Default context window, in tokens.
+///
+/// Sized for a 30+ minute meeting transcript in a single prompt (this
+/// crate's normal case, not an edge case): prompts that still don't fit
+/// fall back to map-reduce chunking (see
+/// [`Summarizer::summarize_transcript`]) rather than ever reaching
+/// llama.cpp over-full. Each `LlamaContext` built at this size allocates
+/// a ~1.9 GB KV cache, so [`Summarizer`] builds exactly one context per
+/// loaded model and reuses it across calls (clearing the KV cache between
+/// jobs) instead of churning the allocation per `summarize` call.
 const DEFAULT_N_CTX: u32 = 32_768;
 /// Default maximum number of tokens generated per summary.
 const DEFAULT_MAX_TOKENS: u32 = 1024;
@@ -67,8 +76,38 @@ const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_TOP_P: f32 = 0.9;
 /// Default sampling seed.
 const DEFAULT_SEED: u32 = 1234;
-/// Default thread count; `0` lets llama.cpp pick automatically.
-const DEFAULT_N_THREADS: i32 = 0;
+/// Lower bound on the summarizer thread count: `0` (llama.cpp "pick
+/// automatically") is deliberately never used — auto means all cores, which
+/// oversubscribes the machine while the STT decoder/joiner ORT pools (see
+/// `STT_ENGINE_THREADS_MAX` in the app crate) are still spinning, and the
+/// cross `Busy` guards only serialize *operations*, not thread-pool
+/// residency around them.
+pub const SUMMARIZER_THREADS_MIN: i32 = 2;
+
+/// Fallback summarizer thread count when
+/// [`std::thread::available_parallelism`] fails to detect the CPU count.
+pub const SUMMARIZER_THREADS_FALLBACK: i32 = 4;
+
+/// Summarizer thread count: detected parallelism minus two (headroom for
+/// the OS, the audio capture worker, and any lingering STT/diarizer ORT
+/// pools), floored at [`SUMMARIZER_THREADS_MIN`]. Split out from
+/// [`default_summarizer_threads`] so it is unit-testable without depending
+/// on the host machine's actual CPU count.
+pub fn clamp_summarizer_threads(detected: Option<i32>) -> i32 {
+    detected
+        .map(|n| n - 2)
+        .unwrap_or(SUMMARIZER_THREADS_FALLBACK)
+        .max(SUMMARIZER_THREADS_MIN)
+}
+
+/// Explicit summarizer thread count for [`SummaryOptions::default`]: never
+/// `0`/auto (see [`SUMMARIZER_THREADS_MIN`]).
+pub fn default_summarizer_threads() -> i32 {
+    let detected = std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .ok();
+    clamp_summarizer_threads(detected)
+}
 /// `min_keep` for the top-p filter: never trim below this many candidates.
 const TOP_P_MIN_KEEP: usize = 1;
 /// Batch sequence id used for the single-sequence prefill/decode loop.
@@ -113,11 +152,22 @@ const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Tunable generation parameters for [`Summarizer::summarize`].
 #[derive(Debug, Clone)]
 pub struct SummaryOptions {
+    /// Total context window in tokens (prompt + generation). See
+    /// [`DEFAULT_N_CTX`]: prompts that don't fit fall back to map-reduce,
+    /// and every distinct `n_ctx` value rebuilds the ~1.9 GB-KV-cache
+    /// context (see [`Summarizer::context_builds`]), so callers should
+    /// stick to one value per process lifetime.
     pub n_ctx: u32,
     pub max_tokens: u32,
     pub temperature: f32,
     pub top_p: f32,
     pub seed: u32,
+    /// Inference thread count. The default is
+    /// [`default_summarizer_threads`] (detected parallelism minus two,
+    /// floored at [`SUMMARIZER_THREADS_MIN`]) — never `0`/auto, which
+    /// would take all cores and contend with live STT/diarizer thread
+    /// pools. Changing `n_threads` between calls rebuilds the shared
+    /// context, so callers should likewise stick to one value.
     pub n_threads: i32,
 }
 
@@ -129,7 +179,7 @@ impl Default for SummaryOptions {
             temperature: DEFAULT_TEMPERATURE,
             top_p: DEFAULT_TOP_P,
             seed: DEFAULT_SEED,
-            n_threads: DEFAULT_N_THREADS,
+            n_threads: default_summarizer_threads(),
         }
     }
 }
@@ -588,11 +638,12 @@ fn inference_worker(
             return;
         }
     };
+    let initial_threads = default_summarizer_threads();
     let mut context = match build_context(
         &model,
         &backend,
         DEFAULT_N_CTX,
-        DEFAULT_N_THREADS,
+        initial_threads,
         &context_builds,
     ) {
         Ok(context) => context,
@@ -603,7 +654,7 @@ fn inference_worker(
     };
     // (effective n_ctx, requested n_threads) the current context was
     // built with — see [`serve_generation`] for when it is rebuilt.
-    let mut context_key = (context.n_ctx(), DEFAULT_N_THREADS);
+    let mut context_key = (context.n_ctx(), initial_threads);
 
     if ready.send(Ok(())).is_err() {
         return; // the caller gave up before load finished
@@ -1156,6 +1207,37 @@ mod tests {
 
         // Act & Assert
         assert!(!fits_in_context(prompt_tokens, max_tokens, n_ctx));
+    }
+
+    #[test]
+    fn clamp_summarizer_threads_leaves_two_cores_of_headroom() {
+        // Arrange & Act & Assert
+        assert_eq!(clamp_summarizer_threads(Some(10)), 8);
+    }
+
+    #[test]
+    fn clamp_summarizer_threads_floors_at_the_minimum_rather_than_going_auto_or_zero() {
+        // Arrange & Act & Assert: small machines never get 0/auto.
+        assert_eq!(clamp_summarizer_threads(Some(4)), 2);
+        assert_eq!(clamp_summarizer_threads(Some(2)), 2);
+        assert_eq!(clamp_summarizer_threads(Some(1)), 2);
+    }
+
+    #[test]
+    fn clamp_summarizer_threads_falls_back_when_parallelism_is_undetected() {
+        // Arrange & Act & Assert
+        assert_eq!(clamp_summarizer_threads(None), SUMMARIZER_THREADS_FALLBACK);
+    }
+
+    #[test]
+    fn default_summarizer_threads_is_always_explicit() {
+        // Arrange & Act
+        let n_threads = default_summarizer_threads();
+
+        // Assert: never 0/auto (which would take all cores and contend
+        // with live STT/diarizer pools).
+        assert!(n_threads >= SUMMARIZER_THREADS_MIN);
+        assert_eq!(SummaryOptions::default().n_threads, n_threads);
     }
 
     #[test]

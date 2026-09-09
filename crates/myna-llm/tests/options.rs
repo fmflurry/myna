@@ -6,14 +6,13 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use myna_llm::SummaryOptions;
+use myna_llm::{default_summarizer_threads, SummaryOptions, SUMMARIZER_THREADS_MIN};
 
 const DEFAULT_N_CTX: u32 = 32_768;
 const DEFAULT_MAX_TOKENS: u32 = 1024;
 const DEFAULT_TEMPERATURE: f32 = 0.3;
 const DEFAULT_TOP_P: f32 = 0.9;
 const DEFAULT_SEED: u32 = 1234;
-const DEFAULT_N_THREADS: i32 = 0;
 
 /// Mirrors the `myna-llm` binary's CLI surface so this test crate does not
 /// need to depend on the `[[bin]]` target directly.
@@ -59,7 +58,12 @@ fn default_summary_options_match_documented_values() {
     assert_eq!(opts.temperature, DEFAULT_TEMPERATURE);
     assert_eq!(opts.top_p, DEFAULT_TOP_P);
     assert_eq!(opts.seed, DEFAULT_SEED);
-    assert_eq!(opts.n_threads, DEFAULT_N_THREADS);
+    // Explicit, never 0/auto: detected parallelism minus two, floored at
+    // two, so LLM decode doesn't take all cores from live STT/diarizer
+    // pools.
+    assert_eq!(opts.n_threads, default_summarizer_threads());
+    assert!(opts.n_threads >= SUMMARIZER_THREADS_MIN);
+    assert_ne!(opts.n_threads, 0);
 }
 
 #[test]
