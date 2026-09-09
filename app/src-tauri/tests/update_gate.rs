@@ -10,8 +10,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use myna_app::commands::updates::{
-    decide_and_check, map_check_result, RemoteVersion, UpdateFetcher,
+    decide_and_check, map_check_result, CheckOutcome, RemoteVersion, UpdateFetcher,
 };
+use myna_app::dto::UpdateCheckStatus;
 use myna_app::error::AppError;
 use myna_app::update_prefs::{UpdateConsent, UpdatePrefs};
 use time::{Duration, OffsetDateTime};
@@ -144,14 +145,14 @@ fn second_automatic_call_checks_again_no_throttle() {
 
     // A second automatic call an hour later checks again: a new fetch.
     let later = now + Duration::hours(1);
-    let dto = decide_and_check(&fetcher, &mut prefs, false, later, false);
+    let outcome = decide_and_check(&fetcher, &mut prefs, false, later, false);
 
     assert_eq!(
         fetcher.call_count(),
         2,
         "every consented, idle startup must check — no 24h skip"
     );
-    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::UpToDate);
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::UpToDate);
 }
 
 #[test]
@@ -182,14 +183,14 @@ fn failed_fetch_leaves_last_check_at_untouched_so_autos_retry_soon() {
     let now = OffsetDateTime::now_utc();
     let mut prefs = prefs_with(UpdateConsent::Granted, None);
 
-    let dto = decide_and_check(&fetcher, &mut prefs, false, now, false);
+    let outcome = decide_and_check(&fetcher, &mut prefs, false, now, false);
 
     assert_eq!(fetcher.call_count(), 1);
     assert_eq!(
         prefs.last_check_at, None,
         "a failed fetch must not stamp last_check_at"
     );
-    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Failed);
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::Failed);
 
     // The very next automatic check retries.
     let soon = now + Duration::minutes(5);
@@ -204,7 +205,7 @@ fn failed_fetch_preserves_a_prior_success_timestamp() {
     let prior = now - Duration::hours(25);
     let mut prefs = prefs_with(UpdateConsent::Granted, Some(prior));
 
-    let dto = decide_and_check(&fetcher, &mut prefs, false, now, false);
+    let outcome = decide_and_check(&fetcher, &mut prefs, false, now, false);
 
     assert_eq!(fetcher.call_count(), 1);
     assert_eq!(
@@ -212,7 +213,81 @@ fn failed_fetch_preserves_a_prior_success_timestamp() {
         Some(prior),
         "a failed fetch must leave a prior success timestamp untouched, not clear or refresh it"
     );
-    assert_eq!(dto.status, myna_app::dto::UpdateCheckStatus::Failed);
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::Failed);
+}
+
+#[test]
+fn failed_fetch_surfaces_the_error_to_the_caller_not_only_a_failed_dto() {
+    // Defect B: today `run_check` collapses `Err` into a `failed` DTO and
+    // nothing logs it — the banner renders nothing for `failed`, so a
+    // broken updater is invisible. The orchestration must hand the
+    // typed error back to the `#[tauri::command]` wrapper (which owns the
+    // logging) alongside the DTO, not swallow it.
+    let fetcher = RecordingFetcher::new(CannedOutcome::Failed("network unreachable".to_string()));
+    let mut prefs = prefs_with(UpdateConsent::Granted, None);
+
+    let outcome: CheckOutcome = decide_and_check(
+        &fetcher,
+        &mut prefs,
+        false,
+        OffsetDateTime::now_utc(),
+        false,
+    );
+
+    // The wire contract is unchanged: the UI still receives `failed`...
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::Failed);
+    // ...but the error itself must be surfaced, not only stringified into it.
+    let error = outcome
+        .error
+        .expect("a failed fetch must surface its AppError to the command wrapper for logging");
+    assert!(
+        matches!(&error, AppError::Updater(message) if message.contains("network unreachable")),
+        "expected the fetcher's Updater error to be surfaced verbatim, got {error:?}"
+    );
+}
+
+#[test]
+fn successful_fetch_surfaces_no_error() {
+    let fetcher = RecordingFetcher::new(CannedOutcome::UpToDate);
+    let mut prefs = prefs_with(UpdateConsent::Granted, None);
+
+    let outcome = decide_and_check(
+        &fetcher,
+        &mut prefs,
+        false,
+        OffsetDateTime::now_utc(),
+        false,
+    );
+
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::UpToDate);
+    assert!(
+        outcome.error.is_none(),
+        "a successful fetch must not report an error, got {:?}",
+        outcome.error
+    );
+}
+
+#[test]
+fn skipped_check_surfaces_no_error() {
+    // A consent/recording skip is not a failure: nothing to log.
+    let fetcher = RecordingFetcher::new(CannedOutcome::Failed("must never be reached".to_string()));
+    let mut prefs = prefs_with(UpdateConsent::Declined, None);
+
+    let outcome = decide_and_check(
+        &fetcher,
+        &mut prefs,
+        false,
+        OffsetDateTime::now_utc(),
+        false,
+    );
+
+    assert_eq!(fetcher.call_count(), 0);
+    assert_eq!(outcome.dto.status, UpdateCheckStatus::Skipped);
+    assert!(
+        outcome.error.is_none(),
+        "a skipped check must not report an error, got {:?}",
+        outcome.error
+    );
 }
 
 #[test]

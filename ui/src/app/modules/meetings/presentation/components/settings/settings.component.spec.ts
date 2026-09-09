@@ -38,6 +38,21 @@ describe('SettingsComponent', () => {
     expect(checkbox.checked).toBe(false);
   });
 
+  it('describes the auto-check cadence as every launch, never "once a day"', () => {
+    // The once-a-day throttle was removed (every consented, idle launch
+    // checks — see tests/update_gate.rs::second_automatic_call_checks_again_no_throttle).
+    // Both the toggle label and the privacy note must match that cadence.
+    const fixture = createFixture('granted');
+
+    const updatesSection: HTMLElement = fixture.nativeElement.querySelector('.update-settings');
+    const copy = updatesSection.textContent ?? '';
+
+    expect(copy).not.toMatch(/once a day/i);
+    expect(fixture.nativeElement.querySelector('.auto-check').textContent).toMatch(
+      /(every|each|on every|at every) (launch|start|startup|time you open)/i,
+    );
+  });
+
   it('emits granted when the auto-check toggle is switched on', () => {
     const fixture = createFixture('declined');
     const emitted: UpdateConsent[] = [];

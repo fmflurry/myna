@@ -61,12 +61,19 @@ export class UpdatesFacade implements OnDestroy {
     this.teardownInstallEvents();
   }
 
-  /** Runs a check-for-update pass; a rejected IPC call degrades to a `'failed'` result instead of throwing, so a caller never has to guard this with try/catch. */
+  /**
+   * Runs a check-for-update pass; a rejected IPC call degrades to a
+   * `'failed'` result instead of throwing, so a caller never has to guard
+   * this with try/catch. The rejection is ALSO logged: the banner renders
+   * nothing for `'failed'`, so this is the last place a broken updater
+   * (IPC rejection, network stall, bad manifest) is visible at all.
+   */
   async checkForUpdate(manual: boolean): Promise<void> {
     this.store.setChecking(true);
     try {
       this.store.setLastCheck(await this.checkForUpdateUseCase.check(manual));
     } catch (caught) {
+      console.error('[update] check for update failed', caught);
       this.store.setLastCheck({ status: 'failed', message: caught instanceof Error ? caught.message : String(caught) });
     } finally {
       this.store.setChecking(false);

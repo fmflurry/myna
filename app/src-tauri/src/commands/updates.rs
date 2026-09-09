@@ -4,11 +4,15 @@
 //! `update_consent`/`set_update_consent` are pure IPC glue over
 //! [`crate::update_prefs`]: no network call. `check_for_update` is the one
 //! command in this crate that may reach the network — and only when
-//! [`update_prefs::decide_check`] says `Run`. The actual
-//! `tauri-plugin-updater` call is hidden behind [`UpdateFetcher`] so the
-//! consent/recording gate can be exercised in tests without ever
-//! constructing a live [`tauri::AppHandle`] or touching the network (see
-//! `tests/update_gate.rs`).
+//! [`update_prefs::decide_check`] says `Run`. The gate ([`gate`]) and the
+//! post-fetch bookkeeping ([`run_check`]) are pure and shared between the
+//! async command (which awaits the real `tauri-plugin-updater` call in
+//! [`fetch_remote`]) and [`decide_and_check`], which takes an injectable
+//! [`UpdateFetcher`] so the consent/recording gate can be exercised in
+//! tests without ever constructing a live [`tauri::AppHandle`] or touching
+//! the network (see `tests/update_gate.rs`).
+
+use std::time::Duration;
 
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
@@ -78,27 +82,31 @@ pub struct RemoteVersion {
 }
 
 /// Abstraction over "ask the update server whether a newer version
-/// exists", so [`decide_and_check`]'s consent/recording/throttle gate can
-/// be tested without ever reaching the network. The production
-/// implementation ([`TauriUpdateFetcher`]) wraps the real
-/// `tauri-plugin-updater` call.
+/// exists", so [`decide_and_check`]'s consent/recording gate can be tested
+/// without ever reaching the network. Production does not go through this
+/// trait: the command awaits [`fetch_remote`] directly (the plugin's
+/// `check()` is async, and a sync trait would force a `block_on`).
 pub trait UpdateFetcher {
     fn fetch(&self) -> Result<Option<RemoteVersion>, AppError>;
 }
 
-/// Production [`UpdateFetcher`]: wraps `app.updater()?.check()`.
-struct TauriUpdateFetcher<'a> {
-    app: &'a AppHandle,
-}
+/// Upper bound on one update-check round-trip. `tauri-plugin-updater`
+/// defaults to *no* timeout, so without this a stalled connection at
+/// launch would leave the check — and its `checking` spinner — hanging
+/// indefinitely.
+pub const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
-impl UpdateFetcher for TauriUpdateFetcher<'_> {
-    fn fetch(&self) -> Result<Option<RemoteVersion>, AppError> {
-        let updater = self
-            .app
-            .updater()
-            .map_err(|err| AppError::Updater(err.to_string()))?;
-        map_check_result(tauri::async_runtime::block_on(updater.check()))
-    }
+/// Production fetch: the one place in this crate that reaches the network.
+/// Only ever awaited after [`gate`] returned [`Gate::Run`]. Builds the
+/// updater from the plugin's `tauri.conf.json` config plus
+/// [`UPDATE_CHECK_TIMEOUT`], then awaits `check()` — no `block_on`.
+async fn fetch_remote(app: &AppHandle) -> Result<Option<RemoteVersion>, AppError> {
+    let updater = app
+        .updater_builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .build()
+        .map_err(|err| AppError::Updater(err.to_string()))?;
+    map_check_result(updater.check().await)
 }
 
 /// Pure mapping from the plugin's `check()` outcome to [`UpdateFetcher`]'s
@@ -170,28 +178,80 @@ fn failed_dto(message: String) -> UpdateCheckDto {
     }
 }
 
-/// Calls `fetcher.fetch()` and stamps `prefs.last_check_at = Some(now)`
-/// only on success — before mapping the result to a DTO. Stamping after
+/// What one check pass produced: the wire DTO the webview receives, plus —
+/// when the fetch failed — the typed error behind the `failed` DTO so the
+/// `#[tauri::command]` wrapper can log it. The wire contract is unchanged
+/// (the UI still only sees the DTO); the error rides alongside because a
+/// `failed` DTO is banner-silent by design, which used to make a broken
+/// updater completely invisible.
+#[derive(Debug)]
+pub struct CheckOutcome {
+    pub dto: UpdateCheckDto,
+    pub error: Option<AppError>,
+}
+
+fn skipped_outcome(reason: UpdateSkipReason) -> CheckOutcome {
+    CheckOutcome {
+        dto: skipped_dto(reason),
+        error: None,
+    }
+}
+
+/// Verdict of the consent/recording gate: either a ready-made `skipped`
+/// outcome (the network must not be touched) or permission to fetch.
+enum Gate {
+    Skip(CheckOutcome),
+    Run,
+}
+
+/// The consent/recording gate shared by the async command and
+/// [`decide_and_check`] — see [`update_prefs::decide_check`] for the exact
+/// precedence. `manual` is still accepted (part of the IPC shape) but no
+/// longer gates anything: every consented, idle call checks.
+fn gate(prefs: &UpdatePrefs, is_recording: bool, now: OffsetDateTime, manual: bool) -> Gate {
+    match update_prefs::decide_check(
+        prefs.consent,
+        prefs.last_check_at,
+        is_recording,
+        now,
+        manual,
+    ) {
+        CheckDecision::SkipNoConsent => Gate::Skip(skipped_outcome(UpdateSkipReason::NoConsent)),
+        CheckDecision::SkipRecording => Gate::Skip(skipped_outcome(UpdateSkipReason::Recording)),
+        CheckDecision::Run => Gate::Run,
+    }
+}
+
+/// Maps an already-performed fetch to its [`CheckOutcome`], stamping
+/// `prefs.last_check_at = Some(now)` only on success. Stamping after
 /// (never before) the call is deliberate: stamping first is exactly the
 /// bug that let a decode throttle elsewhere in this codebase run 40x/sec,
 /// because the cap never bound. A failed fetch leaves the timestamp
-/// untouched; the `Failed` DTO itself stays banner-silent by design (the
-/// banner renders only for `Available`).
+/// untouched and surfaces the typed error next to the `failed` DTO.
 fn run_check(
-    fetcher: &dyn UpdateFetcher,
+    fetched: Result<Option<RemoteVersion>, AppError>,
     prefs: &mut UpdatePrefs,
     now: OffsetDateTime,
-) -> UpdateCheckDto {
-    match fetcher.fetch() {
+) -> CheckOutcome {
+    match fetched {
         Ok(Some(remote)) => {
             prefs.last_check_at = Some(now);
-            available_dto(remote)
+            CheckOutcome {
+                dto: available_dto(remote),
+                error: None,
+            }
         }
         Ok(None) => {
             prefs.last_check_at = Some(now);
-            up_to_date_dto()
+            CheckOutcome {
+                dto: up_to_date_dto(),
+                error: None,
+            }
         }
-        Err(err) => failed_dto(err.to_string()),
+        Err(err) => CheckOutcome {
+            dto: failed_dto(err.to_string()),
+            error: Some(err),
+        },
     }
 }
 
@@ -200,37 +260,33 @@ fn run_check(
 /// the consent/recording gate with an in-memory [`UpdatePrefs`]
 /// and a recording [`UpdateFetcher`] test double, and assert exactly how
 /// many times `fetch()` ran. `fetcher.fetch()` is reached only when
-/// [`update_prefs::decide_check`] returns [`CheckDecision::Run`]; every
-/// `Skip*` decision returns straight from the match without touching
-/// `fetcher`. `manual` is still accepted (part of the IPC shape) but no
-/// longer gates anything: every consented, idle call checks.
+/// [`gate`] returns [`Gate::Run`]; every skip returns straight from the
+/// match without touching `fetcher`.
 pub fn decide_and_check(
     fetcher: &dyn UpdateFetcher,
     prefs: &mut UpdatePrefs,
     is_recording: bool,
     now: OffsetDateTime,
     manual: bool,
-) -> UpdateCheckDto {
-    match update_prefs::decide_check(
-        prefs.consent,
-        prefs.last_check_at,
-        is_recording,
-        now,
-        manual,
-    ) {
-        CheckDecision::SkipNoConsent => skipped_dto(UpdateSkipReason::NoConsent),
-        CheckDecision::SkipRecording => skipped_dto(UpdateSkipReason::Recording),
-        CheckDecision::Run => run_check(fetcher, prefs, now),
+) -> CheckOutcome {
+    match gate(prefs, is_recording, now, manual) {
+        Gate::Skip(outcome) => outcome,
+        Gate::Run => run_check(fetcher.fetch(), prefs, now),
     }
 }
 
 /// Checks for an update, gated by the user's consent and current recording
 /// state — see [`update_prefs::decide_check`] for the exact precedence.
 /// Every consented, idle call checks (no once-a-day throttle). Never
-/// reaches the network unless consent is `Granted`: every `Skip*` branch
-/// of [`decide_and_check`] returns before `fetcher.fetch()` is ever called.
+/// reaches the network unless consent is `Granted`: [`fetch_remote`] is
+/// awaited only after [`gate`] returned [`Gate::Run`].
+///
+/// Genuinely async: the network round-trip is awaited on the runtime
+/// (bounded by [`UPDATE_CHECK_TIMEOUT`]) instead of blocking the command
+/// thread. The session lock is taken and released before the first
+/// `.await` — the guard must never be held across it.
 #[tauri::command]
-pub fn check_for_update(
+pub async fn check_for_update(
     app: AppHandle,
     state: State<'_, AppState>,
     manual: bool,
@@ -240,11 +296,16 @@ pub fn check_for_update(
     let is_recording = lock_session(&state)?.is_some();
     let now = OffsetDateTime::now_utc();
 
-    let fetcher = TauriUpdateFetcher { app: &app };
-    let dto = decide_and_check(&fetcher, &mut prefs, is_recording, now, manual);
+    let outcome = match gate(&prefs, is_recording, now, manual) {
+        Gate::Skip(outcome) => outcome,
+        Gate::Run => run_check(fetch_remote(&app).await, &mut prefs, now),
+    };
+    if let Some(err) = &outcome.error {
+        eprintln!("myna-app: update check failed: {err}");
+    }
 
     update_prefs::save(&root, &prefs)?;
-    Ok(dto)
+    Ok(outcome.dto)
 }
 
 #[cfg(test)]

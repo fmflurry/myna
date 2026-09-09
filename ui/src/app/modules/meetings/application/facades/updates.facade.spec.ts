@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { UpdateInstallState } from '../../core/models/update.model';
 import { MeetingsError } from '../../core/models/recording-state.model';
@@ -227,12 +228,51 @@ describe('UpdatesFacade install state machine', () => {
   });
 });
 
+describe('UpdatesFacade check-for-update failure reporting', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reports a rejected check via console.error instead of silently mapping it to failed', async () => {
+    // A broken updater (IPC rejection, network stall, bad manifest) must
+    // leave a trace somewhere a developer can see it. The banner renders
+    // nothing for `failed`, so the facade is the last place the error is
+    // visible — it must log it, not just swallow it into the DTO.
+    const { facade, updates } = setup();
+    const rejection = new Error('check_for_update rejected: network unreachable');
+    vi.spyOn(updates, 'check').mockRejectedValue(rejection);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expectAsyncSafe(facade.checkForUpdate(false));
+
+    // The never-throws degrade-to-failed contract is unchanged...
+    expect(facade.lastCheck()).toEqual({
+      status: 'failed',
+      message: 'check_for_update rejected: network unreachable',
+    });
+    expect(facade.checking()).toBe(false);
+    // ...but the rejection must ALSO be surfaced.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[update]'), rejection);
+  });
+
+  it('does not log when the check resolves normally', async () => {
+    const { facade, updates } = setup();
+    updates.seedCheckResult({ status: 'up-to-date' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await facade.checkForUpdate(false);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
 /** Awaits the promise and fails the spec if it rejects — the never-throws contract. */
 async function expectAsyncSafe(promise: Promise<void>): Promise<void> {
   await promise.then(
     () => undefined,
     (error: unknown) => {
-      throw new Error(`installUpdate() must never throw, rejected with: ${String(error)}`);
+      throw new Error(`never-throws contract violated, rejected with: ${String(error)}`);
     },
   );
 }
