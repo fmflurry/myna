@@ -323,8 +323,11 @@ export async function runPlaceMeeting(
 
 /**
  * Fetches and caches a persisted summary for one (meeting, template, language)
- * triple; a no-op once cached, so tab switches never re-hit IPC. Drops the
- * loading marker on failure so the next tab visit retries instead of sticking.
+ * triple; a no-op once cached, so tab switches never re-hit IPC. A rejection
+ * is recorded as a terminal `'failed'` entry — NEVER dropped from the cache:
+ * the detail pane's effect re-requests any key missing from `summaryCache`,
+ * so deleting the marker turned one failure into an unbounded IPC loop.
+ * Retrying is a deliberate user action, not something this path does.
  */
 export async function runLoadSummary(store: MeetingsStore, getSummaryUseCase: GetSummaryUseCase, id: MeetingId, template: string, language: string): Promise<void> {
   if (store.getSummaryCacheEntry(id, template, language)) {
@@ -336,7 +339,7 @@ export async function runLoadSummary(store: MeetingsStore, getSummaryUseCase: Ge
     store.setSummaryCacheResult(id, template, language, summary);
     store.clearError();
   } catch (caught) {
-    store.clearSummaryCacheEntry(id, template, language);
+    store.setSummaryCacheFailed(id, template, language);
     store.setError(toErrorInfo(caught));
   }
 }

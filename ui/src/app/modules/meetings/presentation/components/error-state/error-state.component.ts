@@ -27,7 +27,11 @@ const ERROR_MESSAGES: Readonly<Record<MeetingsErrorCode, string>> = {
   UNKNOWN: 'Something went wrong.',
 };
 
-/** Shared error surface: a human message plus a retry affordance, keyed off the stable error code. */
+/**
+ * Shared error surface: a human message plus retry and dismiss affordances,
+ * keyed off the stable error code. Pure presentation — the owning page decides
+ * what "retry" means and clears the shared error slot on "dismiss".
+ */
 @Component({
   selector: 'app-error-state',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -37,6 +41,8 @@ const ERROR_MESSAGES: Readonly<Record<MeetingsErrorCode, string>> = {
 export class ErrorStateComponent {
   readonly code = input.required<MeetingsErrorCode>();
   readonly retryClicked = output<void>();
+  /** "Close": the user wants the banner gone without retrying anything. */
+  readonly dismissClicked = output<void>();
 
   readonly message = computed(() => ERROR_MESSAGES[this.code()] ?? ERROR_MESSAGES.UNKNOWN);
 }

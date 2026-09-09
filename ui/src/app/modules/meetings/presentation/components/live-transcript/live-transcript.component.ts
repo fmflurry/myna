@@ -99,6 +99,14 @@ export class LiveTranscriptComponent implements OnDestroy {
   /** Pending rAF handle, or `null` when no auto-scroll is coalesced for this frame. */
   private pendingScrollFrame: number | null = null;
 
+  /**
+   * `scrollTop` the viewport was last known to be at while following (set by
+   * our own scroll-to-bottom and by any user scroll that lands at the bottom),
+   * or `null` before the first follow. Lets `onScroll` tell "content grew
+   * under a viewport that has not moved" apart from "the user scrolled up".
+   */
+  private followAnchorScrollTop: number | null = null;
+
   constructor() {
     afterRenderEffect(() => {
       // Reading all three signals here re-runs this effect after every new
@@ -130,20 +138,41 @@ export class LiveTranscriptComponent implements OnDestroy {
       this.pendingScrollFrame = null;
       const element = this.scrollContainer()?.nativeElement;
       if (element && this.pinnedToBottom()) {
+        // Must stay an instant jump: the stylesheet deliberately has no
+        // `scroll-behavior: smooth` because an animated follow reads back
+        // through `onScroll` as the user scrolling away (see the .scss).
         element.scrollTop = element.scrollHeight;
+        this.followAnchorScrollTop = element.scrollTop;
       }
     });
   }
 
-  /** Re-evaluates whether the user has scrolled away from the bottom. */
+  /**
+   * Re-evaluates whether the user has scrolled away from the bottom.
+   *
+   * The browser dispatches the `scroll` event for our own scroll-to-bottom
+   * one frame late, by which time streaming content may already have grown
+   * the container past the tolerance — so "not at the bottom" alone is not
+   * evidence of user intent. Only a move UP from where the follow last left
+   * the viewport is; a viewport that stayed put keeps following and the
+   * already-scheduled next follow catches it up.
+   */
   onScroll(event: Event): void {
     const element = event.target as HTMLElement;
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const isPinnedToBottom = distanceFromBottom <= BOTTOM_TOLERANCE_PX;
-    if (this.pinnedToBottom() && !isPinnedToBottom) {
-      this.selectedWindowStart.set(this.tailStart(this.finalizedSegments().length));
+    if (distanceFromBottom <= BOTTOM_TOLERANCE_PX) {
+      this.followAnchorScrollTop = element.scrollTop;
+      this.pinnedToBottom.set(true);
+      return;
     }
-    this.pinnedToBottom.set(isPinnedToBottom);
+    if (!this.pinnedToBottom()) {
+      return;
+    }
+    if (this.followAnchorScrollTop !== null && element.scrollTop >= this.followAnchorScrollTop) {
+      return;
+    }
+    this.selectedWindowStart.set(this.tailStart(this.finalizedSegments().length));
+    this.pinnedToBottom.set(false);
   }
 
   showEarlier(): void {

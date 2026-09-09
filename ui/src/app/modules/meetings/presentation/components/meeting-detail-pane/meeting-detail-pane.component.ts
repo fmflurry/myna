@@ -179,6 +179,8 @@ export class MeetingDetailPaneComponent {
   readonly cancelSummaryRequested = output<void>();
   readonly exportRequested = output<MeetingExportFormat>();
   readonly retryRequested = output<void>();
+  /** "Close" on the error banner (hoisted or inside the onboarding panel): clear the shared error slot. */
+  readonly dismissRequested = output<void>();
   readonly recheckModelsRequested = output<void>();
   readonly downloadRequested = output<void>();
   readonly downloadCancelRequested = output<void>();

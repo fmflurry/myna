@@ -118,4 +118,26 @@ describe('MeetingsShellPage import error visibility (regression)', () => {
     expect(facade.error()).toBeUndefined();
     expect(fixture.nativeElement.querySelector('app-error-state')).toBeNull();
   });
+
+  it('removes the banner via the Close button: error slot cleared through the real facade -> store -> template path', async () => {
+    fileDialog.seed('/Users/x/myna/meetings/m1/audio.wav');
+    audioImport.seedError(new MeetingsError('PATH', 'source path is inside the meetings root'));
+
+    const fixture = TestBed.createComponent(MeetingsShellPage);
+    fixture.detectChanges();
+    await flushMicrotasks();
+    fixture.detectChanges();
+
+    fixture.componentInstance.onImportRequested();
+    await flushMicrotasks();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('app-error-state')).toBeTruthy();
+
+    fixture.nativeElement.querySelector('app-error-state .dismiss').click();
+    fixture.detectChanges();
+
+    const facade = TestBed.inject(MeetingsFacade);
+    expect(facade.error()).toBeUndefined();
+    expect(fixture.nativeElement.querySelector('app-error-state')).toBeNull();
+  });
 });

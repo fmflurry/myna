@@ -59,6 +59,6 @@
   <button type="button" class="recheck" (click)="recheck()">Check again</button>
 
   @if (error(); as err) {
-    <app-error-state [code]="err.code" (retryClicked)="recheck()" />
+    <app-error-state [code]="err.code" (retryClicked)="recheck()" (dismissClicked)="dismiss()" />
   }
 </section>

@@ -284,6 +284,11 @@ export class MeetingsShellPage implements OnInit {
     runErrorRetry(this.facade);
   }
 
+  /** "Close" on the error banner: drop the error without retrying anything. */
+  onErrorDismissClicked(): void {
+    this.facade.clearError();
+  }
+
   recheckModels(): void {
     void this.facade.checkModels();
   }

@@ -45,7 +45,7 @@ import {
   SUMMARY_LANGUAGE_PREFERENCE_KEY,
 } from './meetings-store-preferences.util';
 import { readSummaryInstructionDraft, storeSummaryInstructionDraft } from './summary-instructions-preferences.util';
-import { applySummaryCacheLoading, applySummaryCacheResult, readSummaryCacheEntry, removeSummaryCacheEntry } from './meetings-store-summary-cache.support';
+import { applySummaryCacheFailed, applySummaryCacheLoading, applySummaryCacheResult, readSummaryCacheEntry, removeSummaryCacheEntry } from './meetings-store-summary-cache.support';
 import { mergeFinalizedSegments, seedPersistedPreferences, wireRecorderAndTranscriberEvents } from './meetings-store-wiring.support';
 import { summaryCacheKey } from './summary-cache.model';
 import type { SummaryCacheEntry, SummaryCacheStatus } from './summary-cache.model';
@@ -367,6 +367,10 @@ export class MeetingsStore {
 
   setSummaryCacheResult(meetingId: MeetingId, template: string, language: string, summary: Summary | null): void {
     applySummaryCacheResult(this.slots, meetingId, template, language, summary);
+  }
+
+  setSummaryCacheFailed(meetingId: MeetingId, template: string, language: string): void {
+    applySummaryCacheFailed(this.slots, meetingId, template, language);
   }
 
   clearSummaryCacheEntry(meetingId: MeetingId, template: string, language: string): void {

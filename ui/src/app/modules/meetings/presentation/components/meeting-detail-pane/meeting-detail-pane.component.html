@@ -4,6 +4,7 @@
     [error]="error()"
     [modelDownload]="modelDownload()"
     (recheckRequested)="recheckModelsRequested.emit()"
+    (dismissRequested)="dismissRequested.emit()"
     (downloadRequested)="downloadRequested.emit()"
     (downloadCancelRequested)="downloadCancelRequested.emit()"
   />
@@ -397,5 +398,9 @@
 }
 
 @if (modelsReady() && error(); as err) {
-  <app-error-state [code]="err.code" (retryClicked)="retryRequested.emit()" />
+  <app-error-state
+    [code]="err.code"
+    (retryClicked)="retryRequested.emit()"
+    (dismissClicked)="dismissRequested.emit()"
+  />
 }

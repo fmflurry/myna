@@ -33,4 +33,26 @@ describe('ErrorStateComponent', () => {
 
     expect(emitted.length).toBe(1);
   });
+
+  it('renders a Close button with a visible accessible name next to Try again', () => {
+    const fixture = createFixture('NOT_FOUND');
+
+    const dismiss: HTMLButtonElement | null = fixture.nativeElement.querySelector('.dismiss');
+    expect(dismiss).not.toBeNull();
+    expect(dismiss?.textContent?.trim()).toBe('Close');
+    expect(dismiss?.getAttribute('type')).toBe('button');
+  });
+
+  it('emits dismissClicked (and not retryClicked) when the Close button is clicked', () => {
+    const fixture = createFixture('NOT_FOUND');
+    const dismissed: void[] = [];
+    const retried: void[] = [];
+    fixture.componentInstance.dismissClicked.subscribe(() => dismissed.push(undefined));
+    fixture.componentInstance.retryClicked.subscribe(() => retried.push(undefined));
+
+    fixture.nativeElement.querySelector('.dismiss').click();
+
+    expect(dismissed.length).toBe(1);
+    expect(retried.length).toBe(0);
+  });
 });

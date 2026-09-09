@@ -42,7 +42,18 @@ export function applySummaryCacheResult(
   slots.update('SUMMARY_CACHE', { data: next, status: 'Success', isLoading: false });
 }
 
-/** Removes a cache entry (e.g. after a failed fetch) so the next tab visit retries instead of getting stuck. */
+/** Records the terminal `'failed'` outcome of a rejected fetch; the key stays present so the pane's effect never re-requests it on its own. */
+export function applySummaryCacheFailed(slots: MeetingsSlots, meetingId: MeetingId, template: string, language: string): void {
+  const next = new Map(readSummaryCache(slots));
+  next.set(summaryCacheKey(meetingId, template, language), { status: 'failed' });
+  slots.update('SUMMARY_CACHE', { data: next, status: 'Success', isLoading: false });
+}
+
+/**
+ * Removes a cache entry outright. NOT used on fetch failure (that records
+ * `'failed'` instead — deleting the key is what made the detail pane's effect
+ * re-request in a loop); reserved for an explicit, user-driven retry.
+ */
 export function removeSummaryCacheEntry(slots: MeetingsSlots, meetingId: MeetingId, template: string, language: string): void {
   const next = new Map(readSummaryCache(slots));
   next.delete(summaryCacheKey(meetingId, template, language));

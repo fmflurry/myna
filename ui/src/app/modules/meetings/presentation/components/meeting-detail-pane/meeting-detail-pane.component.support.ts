@@ -298,8 +298,10 @@ export const computeGeneratingElsewhereLabel = (
  * Requests a fetch whenever the active tab shows a persisted ref (survived a
  * restart) whose markdown hasn't been loaded into the cache yet. Returns
  * `undefined` once the facade has recorded a 'loading' (then
- * 'loaded'/'empty') entry for this exact key, so the caller's effect stops
- * emitting further requests for it.
+ * 'loaded'/'empty'/'failed') entry for this exact key, so the caller's effect
+ * stops emitting further requests for it. 'failed' is terminal on purpose: a
+ * rejected fetch must NOT vanish from the cache, or this guard re-fires every
+ * change-detection pass (retry is an explicit user action, never automatic).
  */
 export const findUnloadedSummaryRequest = (
   meeting: Meeting | undefined,

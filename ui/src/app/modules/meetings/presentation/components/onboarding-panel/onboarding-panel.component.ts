@@ -47,6 +47,8 @@ export class OnboardingPanelComponent {
   readonly modelDownload = input<ModelDownloadState | undefined>(undefined);
 
   readonly recheckRequested = output<void>();
+  /** "Close" on the embedded error banner — the owning page clears the shared error slot. */
+  readonly dismissRequested = output<void>();
   readonly downloadRequested = output<void>();
   readonly downloadCancelRequested = output<void>();
 
@@ -90,6 +92,10 @@ export class OnboardingPanelComponent {
 
   recheck(): void {
     this.recheckRequested.emit();
+  }
+
+  dismiss(): void {
+    this.dismissRequested.emit();
   }
 
   startDownload(): void {
