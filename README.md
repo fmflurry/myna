@@ -1,6 +1,8 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="myna-brand-kit/myna-logo-horizontal-dark.svg">
-  <img alt="Myna: AI meeting recorder and summarizer" src="myna-brand-kit/myna-logo-horizontal.svg" width="420">
+  <source media="(prefers-color-scheme: dark)"
+    srcset="myna-brand-kit/myna-logo-horizontal-dark.svg">
+  <img alt="Myna: AI meeting recorder and summarizer"
+    src="myna-brand-kit/myna-logo-horizontal.svg" width="420">
 </picture>
 
 **Capture, transcribe, and summarize your meetings — entirely on your machine.**
@@ -21,7 +23,8 @@
 - [Roadmap](#roadmap)
 
 <p align="center">
-  <img alt="Myna app recording a meeting with live transcript and summary" src="docs/screenshots/hero.png" width="800">
+  <img alt="Myna app recording a meeting with live transcript and summary"
+    src="docs/screenshots/hero.png" width="800">
 </p>
 
 <p align="center">
@@ -43,24 +46,28 @@ Just results you own.
 <table>
 <tr>
 <td width="50%" valign="top" align="center">
-<img alt="Recording controls with mic, system, and mixed capture modes" src="docs/screenshots/recording.png" width="400"><br>
+<img alt="Recording controls with mic, system, and mixed capture modes"
+  src="docs/screenshots/recording.png" width="400"><br>
 <strong>🎙 Record any source</strong><br>
 <sub>Mic, system audio, or mixed — with live status.</sub>
 </td>
 <td width="50%" valign="top" align="center">
-<img alt="Live transcription captions appearing during a recording" src="docs/screenshots/transcription.png" width="400"><br>
+<img alt="Live transcription captions appearing during a recording"
+  src="docs/screenshots/transcription.png" width="400"><br>
 <strong>💬 Live transcription</strong><br>
 <sub>Parakeet-TDT + Silero VAD, 25 languages.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top" align="center">
-<img alt="Meeting summary generated from Key Points template" src="docs/screenshots/summaries.png" width="400"><br>
+<img alt="Meeting summary generated from Key Points template"
+  src="docs/screenshots/summaries.png" width="400"><br>
 <strong>✨ One-click summaries</strong><br>
 <sub>Key Points, Action Items, Notes, Decisions.</sub>
 </td>
 <td width="50%" valign="top" align="center">
-<img alt="Meeting library with transcripts and export options" src="docs/screenshots/library.png" width="400"><br>
+<img alt="Meeting library with transcripts and export options"
+  src="docs/screenshots/library.png" width="400"><br>
 <strong>📚 Own your library</strong><br>
 <sub>Browse, rename, export. Stored in ~/myna/.</sub>
 </td>
@@ -78,14 +85,33 @@ graceful fallback to mic on older macOS.
 See [docs/usage.md](docs/usage.md#choosing-a-capture-source).
 
 - **Speaker labels** (`Me` for mic, `Others` for system) preserved
-  in transcripts and summaries.
+  in transcripts and summaries. Detected remote speakers appear as
+  numbered `Others` labels you can rename.
+
+### 🗣 Speaker detection
+
+**Detect speakers** on the system-audio track of any system/mixed
+recording (optional one-time download of the segmentation + embedding
+models, in-app or `scripts/download-models.sh --only diarization`).
+A centroid-merge pass, on by default, collapses spurious clusters —
+measured 45 → 2 speakers on a 29-minute two-speaker call. Rename or pin
+speakers; labels carry into summaries.
+See [docs/diarization-accuracy.md](docs/diarization-accuracy.md) and
+[ADR 0016](docs/adr/0016-diarization-centroid-merge.md).
 
 ### 💬 Real-time transcription
 
 **Parakeet-TDT v3** (640 MB int8 ONNX via sherpa-onnx),
 **25 European languages**, Silero-VAD-segmented simulated streaming —
 partial captions live, final punctuated results
-after ~300 ms of silence.
+after ~0.5 s of silence.
+
+Edit a live caption while recording continues; after the meeting, edit,
+delete, merge or restore segments and reassign speakers. Possibly-wrong
+live finals are flagged (repetition, drift, low energy, timing,
+degenerate length —
+[ADR 0014](docs/adr/0014-live-transcript-flags-and-editing.md)) so you
+know which lines to check.
 
 ### ✨ Local summarization
 
@@ -95,24 +121,36 @@ with four built-in templates — **Key Points**, **Action Items**,
 (`templates/`, `{transcript}` `{duration}` `{title}` `{language}`).
 Cancellable, multi-language output.
 
+Edit any summary in place, add global summary guidelines and per-request
+instructions, or override a template's prompt from the UI without
+touching JSON files (see
+[Custom Summary Instructions](docs/custom-summary-instructions.md),
+[Custom Template Prompts](docs/custom-template-prompts.md)).
+
 ### 📚 Meeting library
 
 List, rename, delete, view transcripts, retrieve summaries by template,
-export to your filesystem. In-app model downloads with progress + cancel.
-Tauri 2 shell (Rust + webview); macOS-first.
+export as **Markdown** or **JSON**. Import an existing audio file, or
+re-transcribe any meeting with the current model. Organise meetings into
+folders; archive what's done. In-app model downloads with progress +
+cancel. Tauri 2 shell (Rust + webview); macOS-first.
 
 ## Privacy: Recording & Transcription Stay Local
 
 - **STT** runs locally (Parakeet-TDT via sherpa-onnx) — no audio sent anywhere.
 - **Summaries** run locally (Qwen via llama.cpp) — no transcript leaves your machine.
-- **Storage** is `~/myna/` (changeable in Settings, override `MYNA_DATA_DIR`) — nothing synced to the cloud.
+- **Storage** is `~/myna/` (changeable in Settings, override
+  `MYNA_DATA_DIR`; model weights stay fixed at `~/myna/models`,
+  `MYNA_MODELS_DIR` only override) — nothing synced to the cloud.
 - **No telemetry, no analytics.** **No bot joins your call.**
 - **The only network call:** one-time model download from Hugging Face
   (~5.4 GB) via in-app **Download** or `./scripts/download-models.sh`.
   Then fully offline.
 
-**Optional update checks** (off by default, opt-in): one GitHub check
-per 24 h, IP address only, notify-only, never auto-install.
+**Optional update checks** (off by default, opt-in): one GitHub check at
+every launch (never while recording), IP address only. Updates are never
+installed silently — you click **Update**, the signed bundle is verified,
+and Myna restarts only when no recording is in progress.
 **Verify it yourself:** MIT-licensed — read the code, run offline.
 
 ## Free: Really Free
@@ -135,6 +173,8 @@ your machine does the work.
    macOS 14.4+, restart after granting).
    Click **Download** for models (~5.4 GB, one time).
    Decline update checks with no loss.
+   Later updates: click **Update** in Settings; you'll be asked to
+   re-grant the microphone after restart (ad-hoc signature).
 4. Hit **Record**, watch live captions, **Stop**, then **Summarize**.
 
 From source: `npm install && npm --prefix ui install && npx tauri dev`.
@@ -144,7 +184,7 @@ Full walkthrough: [docs/usage.md](docs/usage.md).
 ## How Myna Compares
 
 | Feature | Myna | Otter.ai | Fireflies.ai | Granola | Fathom | Meetily | MacWhisper |
-|---------|------|----------|------------|---------|--------|---------|-----------|
+| ------- | ---- | -------- | ------------ | ------- | ------ | ------- | ---------- |
 | **Runs on-device** | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | **Bot joins call** | ✗ | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ |
 | **Account required** | ✗ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -154,8 +194,10 @@ Full walkthrough: [docs/usage.md](docs/usage.md).
 Myna's edge: **privacy** (nothing leaves your machine) +
 **zero paywall** (every feature open).
 <sub>Pricing checked 2026-08:
-[Otter.ai](https://otter.ai/pricing) · [Fireflies.ai](https://fireflies.ai/pricing) ·
-[Granola](https://www.granola.ai/pricing) · [Fathom](https://www.fathom.ai/pricing) ·
+[Otter.ai](https://otter.ai/pricing) ·
+[Fireflies.ai](https://fireflies.ai/pricing) ·
+[Granola](https://www.granola.ai/pricing) ·
+[Fathom](https://www.fathom.ai/pricing) ·
 [Meetily](https://github.com/Zackriya-Solutions/meetily) ·
 [MacWhisper](https://www.macwhisper.com/)</sub>
 
@@ -165,9 +207,8 @@ Myna's edge: **privacy** (nothing leaves your machine) +
 
 ### Near-term
 
-- Speaker diarization
 - Global search across meetings
-- Export (Markdown/TXT/SRT/VTT/PDF, Obsidian/Notion)
+- More export formats (TXT/SRT/VTT/PDF, Obsidian/Notion)
 - Windows/Linux support
 - Model picker (7B/14B+)
 - Custom vocabulary
@@ -181,7 +222,6 @@ Myna's edge: **privacy** (nothing leaves your machine) +
 - Whisper fallback (99 languages)
 - PII redaction
 - Template sharing
-- Transcript editor
 
 ### Long-term
 
@@ -204,13 +244,18 @@ Third-party licenses:
 - llama.cpp runtime — **MIT**
 - Qwen2.5-Instruct — **Qwen research agreement**
   ([Hugging Face](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF))
+- Speaker diarization models (pyannote segmentation 3.0, NeMo
+  TitaNet-small) — optional download; see each model's upstream model
+  card for its license terms
 
 Resources:
 
 - [Usage Guide](docs/usage.md)
 - [Architecture](docs/stack-proposal.md)
 - [ADRs](docs/adr/)
+- [ADR 0016: Diarization centroid merge](docs/adr/0016-diarization-centroid-merge.md)
 - [Custom Summary Instructions](docs/custom-summary-instructions.md)
+- [Custom Template Prompts](docs/custom-template-prompts.md)
 - [Speaker Diarization Accuracy](docs/diarization-accuracy.md)
 
 Questions? Open an issue.

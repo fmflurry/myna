@@ -1,6 +1,9 @@
 # templates
 
-JSON summary templates: each file is a prompt template plus an optional section schema, loaded and rendered by `myna-llm`. The same files drive both the CLI and the Angular GUI — plain JSON, no custom syntax, parseable by both `serde_json` and the browser's `JSON.parse`.
+JSON summary templates: each file is a prompt template plus an optional
+section schema, loaded and rendered by `myna-llm`. The same files drive both
+the CLI and the Angular GUI — plain JSON, no custom syntax, parseable by both
+`serde_json` and the browser's `JSON.parse`.
 
 ## Format
 
@@ -18,24 +21,68 @@ Every template file matches `schema.json` (JSON Schema draft 2020-12):
 }
 ```
 
-- `name` — kebab-case id (`^[a-z0-9-]+$`), must match the filename without extension.
-- `label` — optional short (1-2 word) display label for compact UI tabs, e.g. `Notes`. Must be non-empty (after trimming) and at most 24 characters when present. Absent means the UI falls back to a title-cased `name`.
-- `emoji` — optional single display emoji for compact UI tabs, e.g. `📝`. Must be non-empty and at most 2 Unicode scalar values when present (covers a plain emoji or a base character plus a variation selector, e.g. `⚖️`). Absent means the UI falls back to a generic emoji.
-- `description` — human-readable summary of what the template produces. This stays the long explanatory text; it is not used for tab labels.
-- `prompt` — the prompt sent to the model. May reference the placeholders `{title}`, `{duration}`, `{transcript}`, and `{language}`; `{transcript}` is required. Any other `{...}` token in the prompt is rejected at load time. `{language}` receives the requested output language's display label (e.g. `French`). If a template's prompt does not reference `{language}` at all, a directive sentence (`Write your entire response in <Label>.`) is appended automatically to the rendered prompt, so templates written before this placeholder existed still produce output in the requested language. The default language is English (`en`) when none is requested or the requested code is unrecognized. When generating a summary, the app prepends user-supplied instructions (general guidelines plus per-request text) to the rendered prompt; the template file itself is unaffected — see [Custom Summary Instructions](../docs/custom-summary-instructions.md).
-- `section_schema` — optional JSON Schema describing the intended shape of the model's output. This is advisory only: it documents the expected structure for downstream tooling, but is **not enforced** on generated output. A local 7B-class model cannot reliably be constrained to emit conformant JSON without grammar-constrained decoding, which is out of scope for this phase.
+- `name` — kebab-case id (`^[a-z0-9-]+$`), must match the filename without
+  extension.
+- `label` — optional short (1-2 word) display label for compact UI tabs,
+  e.g. `Notes`. Must be non-empty (after trimming) and at most 24 characters
+  when present. Absent means the UI falls back to a title-cased `name`.
+- `emoji` — optional single display emoji for compact UI tabs, e.g. `📝`.
+  Must be non-empty and at most 2 Unicode scalar values when present (covers
+  a plain emoji or a base character plus a variation selector, e.g. `⚖️`).
+  Absent means the UI falls back to a generic emoji.
+- `description` — human-readable summary of what the template produces. This
+  stays the long explanatory text; it is not used for tab labels.
+- `prompt` — the prompt sent to the model. May reference the placeholders
+  `{title}`, `{duration}`, `{transcript}`, and `{language}`; `{transcript}`
+  is required. Any other `{...}` token in the prompt is rejected at load
+  time. `{language}` receives the requested output language's display label
+  (e.g. `French`). If a template's prompt does not reference `{language}` at
+  all, a directive sentence (`Write your entire response in <Label>.`) is
+  appended automatically to the rendered prompt, so templates written before
+  this placeholder existed still produce output in the requested language.
+  The default language is English (`en`) when none is requested or the
+  requested code is unrecognized. When generating a summary, the app
+  prepends user-supplied instructions (general guidelines plus per-request
+  text) to the rendered prompt; the template file itself is unaffected — see
+  [Custom Summary Instructions](../docs/custom-summary-instructions.md).
+- `section_schema` — optional JSON Schema describing the intended shape of
+  the model's output. This is advisory only: it documents the expected
+  structure for downstream tooling, but is **not enforced** on generated
+  output. A local 7B-class model cannot reliably be constrained to emit
+  conformant JSON without grammar-constrained decoding, which is out of
+  scope for this phase.
 
 ## Built-ins
 
 - `key-points.json` — bullet list of key points (`key_points: string[]`).
-- `action-items.json` — action items with owner/due date (`action_items: [{ task, owner, due_date }]`).
-- `decisions.json` — decisions made and their rationale (`decisions: [{ decision, rationale }]`).
+- `action-items.json` — action items with owner/due date
+  (`action_items: [{ task, owner, due_date }]`).
+- `decisions.json` — decisions made and their rationale
+  (`decisions: [{ decision, rationale }]`).
 - `meeting-notes.json` — full notes: `{ summary, discussion, decisions[] }`.
+
+`diarize-judge.json` is an internal diarization judge, not a summary
+template; discovery skips it.
 
 ## Extending
 
-Drop a new `*.json` file matching `schema.json` into this directory; it is picked up automatically by `myna-llm::template::list_templates` (sorted by `name`). `schema.json` itself is skipped by discovery. Files that fail to parse or fail validation are skipped individually rather than aborting discovery of the other templates. Adding a type needs no recompile — same files drive both the CLI and the GUI.
+Drop a new `*.json` file matching `schema.json` into this directory; it is
+picked up automatically by `myna-llm::template::list_templates` (sorted by
+`name`). `schema.json` itself is skipped by discovery. Files that fail to
+parse or fail validation are skipped individually rather than aborting
+discovery of the other templates. Adding a type needs no recompile — same
+files drive both the CLI and the GUI.
 
 ## Per-Template Prompt Overrides
 
-Users can replace any template's `prompt` at runtime from the GUI (per-tab cogwheel) without editing these files. Overrides are stored in `<data_root>/preferences.json` under the `"template_prompts"` key (`~/myna` by default, `MYNA_DATA_DIR` override; each capped at 12000 Unicode scalars) and apply to future summaries of that type globally — not per meeting. Validation matches the file rules above: non-empty, `{transcript}` required, no unknown `{...}` tokens, and a template without `{language}` gets the `Write your entire response in <Label>.` directive appended automatically. When both exist, the override wins; deleting the `*.json` file hides the tab even if a stored override remains. See [Custom Template Prompts](../docs/custom-template-prompts.md).
+Users can replace any template's `prompt` at runtime from the GUI (per-tab
+cogwheel) without editing these files. Overrides are stored in
+`<data_root>/preferences.json` under the `"template_prompts"` key (`~/myna`
+by default, `MYNA_DATA_DIR` override; each capped at 12000 Unicode scalars)
+and apply to future summaries of that type globally — not per meeting.
+Validation matches the file rules above: non-empty, `{transcript}` required,
+no unknown `{...}` tokens, and a template without `{language}` gets the
+`Write your entire response in <Label>.` directive appended automatically.
+When both exist, the override wins; deleting the `*.json` file hides the tab
+even if a stored override remains. See
+[Custom Template Prompts](../docs/custom-template-prompts.md).

@@ -10,10 +10,15 @@ Qwen2.5-7B-Instruct GGUF (Q4_K_M, two shards), and the silero VAD ONNX model —
 (`paths::models_root()` in release builds). Idempotent — re-running skips
 any artifact already present.
 
+The optional speaker diarization models (pyannote segmentation-3-0 + NeMo
+TitaNet) are **not** part of the default fetch — pass `--only diarization`
+to download both (they are useless apart). The app works without them.
+
 Override the destination with `MYNA_MODELS_DIR` (same env var the app
 honours) or `--dest <dir>`. Models are fixed at `~/myna/models`
 (`MYNA_MODELS_DIR` only override): `MYNA_DATA_DIR` and the Settings storage
-location never affect this destination — they move meetings/preferences/folders only.
+location never affect this destination — they move
+meetings/preferences/folders only.
 
 Downloads use `curl` against each artifact's Hugging Face `resolve/main` URL
 directly (the Qwen model is fetched as its two GGUF shards); no `hf` CLI is
@@ -26,7 +31,7 @@ re-download or duplicate the ~5.4 GB of weights — it prints the exact
 pass `--migrate`.
 
 ```bash
-# Fetch everything into ~/myna/models (skips artifacts already on disk)
+# Fetch the default set into ~/myna/models (skips artifacts already on disk)
 scripts/download-models.sh
 
 # Fetch into a custom destination
@@ -38,17 +43,35 @@ scripts/download-models.sh --only parakeet
 scripts/download-models.sh --only qwen
 scripts/download-models.sh --only vad
 
+# Fetch the optional speaker diarization models (not in the default set)
+scripts/download-models.sh --only diarization
+
 # Move weights already present in the repo's models/ dir into the new
 # default location instead of just printing the relocation command
 scripts/download-models.sh --migrate
 
-# Check that all three artifacts are present at the resolved destination
-# (used by app onboarding + CI); exits non-zero if any are missing
+# Report presence of all artifacts at the resolved destination, including
+# the optional diarization models (used by app onboarding + CI). Exits
+# non-zero if any of the three required artifacts is missing; a missing
+# diarization model is reported but never fails the check.
 scripts/download-models.sh --check
 
 # Show usage
 scripts/download-models.sh --help
 ```
+
+## release-macos.sh / make-latest-json.sh
+
+Build, sign, and publish the macOS release and the static updater manifest:
+
+- `release-macos.sh` builds, signs (Apple identity if available, ad-hoc
+  otherwise), and verifies the macOS bundle; notarization runs only when
+  the Apple credentials are present.
+- `make-latest-json.sh` generates and self-validates the `latest.json`
+  manifest consumed by the Tauri updater plugin, reading the version from
+  `app/src-tauri/tauri.conf.json` and failing loudly on tag drift.
+
+See [docs/releasing-macos.md](../docs/releasing-macos.md).
 
 ## generate-icons.sh
 
@@ -61,6 +84,7 @@ script fixes that by rendering the source SVG at 824x824 and compositing it
 centred onto a transparent 1024x1024 canvas before handing it to `tauri icon`.
 
 Requires:
+
 - ImageMagick (`magick`) — used for the transparent-canvas composite.
 - A Playwright Chromium headless shell under
   `~/Library/Caches/ms-playwright/chromium_headless_shell-*` — used to

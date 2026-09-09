@@ -1,0 +1,15 @@
+{
+  // Markdown lint for repo docs.
+  // Run: ./node_modules/.bin/markdownlint-cli2 "**/*.md"
+  "config": {
+    "default": true,
+    // 80-column prose. Code blocks and pipe tables are exempt: shell
+    // commands and table rows cannot be wrapped.
+    "MD013": { "line_length": 80, "code_blocks": false, "tables": false },
+    // README.md is the GitHub landing page: the <picture> logo, the
+    // <table> showcase grid and the bold tagline under it are intentional.
+    "MD033": false,
+    "MD036": false,
+    "MD041": false
+  }
+}

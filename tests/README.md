@@ -39,3 +39,15 @@ cargo test -p myna-integration-tests --release --locked -- --ignored
 - `tests/integration/tests/summarize_pipeline.rs` — `#[ignore]`d
   summarization tests against the real Qwen2.5 GGUF, covering every
   built-in template plus mid-generation cancellation.
+- `tests/integration/tests/stt_accuracy.rs` — `#[ignore]`d word-error-rate
+  (WER) checks against the EN/FR speech fixtures.
+- `tests/integration/tests/stt_cpu_bench.rs` — `#[ignore]`d streaming CPU
+  benchmark, driven by `scripts/bench-stt-cpu.sh`.
+- `tests/integration/tests/diarize_ab.rs` — `#[ignore]`d speaker
+  diarization A/B run over the reference recording; needs the optional
+  diarization models (`scripts/download-models.sh --only diarization`).
+- `tests/integration/tests/summary_instructions_composition.rs` — always-on
+  (deliberately **not** `#[ignore]`d) prompt-composition tests for
+  user-supplied summary guidelines against the built-in `key-points`
+  template. Loads no model weights; runs in the default
+  `cargo test --workspace` pass.
