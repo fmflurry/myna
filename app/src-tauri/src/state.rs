@@ -92,11 +92,6 @@ pub fn clamp_thread_count(detected: Option<i32>) -> i32 {
 /// summarization model.
 const LLM_MODEL_DIR_NAME: &str = "qwen2.5-7b-instruct";
 
-/// File name of the Qwen GGUF model, within [`LLM_MODEL_DIR_NAME`]: the
-/// first shard of the split q4_k_m distribution — llama.cpp opens it and
-/// follows the split metadata to load the companion shard.
-const LLM_MODEL_FILE_NAME: &str = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf";
-
 /// How long the cached STT engine may sit unused after a recording (or
 /// import) completes before [`AppState::evict_stt_if_idle`] releases it.
 /// 4 minutes: long enough that back-to-back recordings and
@@ -445,11 +440,10 @@ impl AppState {
     pub fn summarizer(&self, app: &AppHandle) -> Result<Arc<Summarizer>, AppError> {
         self.evict_stt_if_idle();
         self.summarizer.get_or_load(|| {
-            Ok(Arc::new(Summarizer::load(
-                &paths::models_root(app)
-                    .join(LLM_MODEL_DIR_NAME)
-                    .join(LLM_MODEL_FILE_NAME),
-            )?))
+            let dir = paths::models_root(app).join(LLM_MODEL_DIR_NAME);
+            let model = paths::first_gguf(&dir)
+                .ok_or_else(|| AppError::NotFound(format!("no GGUF model in {}", dir.display())))?;
+            Ok(Arc::new(Summarizer::load(&model)?))
         })
     }
 

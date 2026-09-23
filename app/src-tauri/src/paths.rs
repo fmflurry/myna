@@ -231,10 +231,6 @@ fn models_dir_complete(models_root: &Path) -> bool {
         "tokens.txt",
     ];
     const QWEN_DIR: &str = "qwen2.5-7b-instruct";
-    const QWEN_FILES: [&str; 2] = [
-        "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-        "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
-    ];
     const SILERO_DIR: &str = "silero-vad";
     const SILERO_FILES: [&str; 1] = ["silero_vad.onnx"];
 
@@ -244,8 +240,24 @@ fn models_dir_complete(models_root: &Path) -> bool {
     }
 
     slot_complete(models_root, PARAKEET_DIR, &PARAKEET_FILES)
-        && slot_complete(models_root, QWEN_DIR, &QWEN_FILES)
+        && first_gguf(&models_root.join(QWEN_DIR)).is_some()
         && slot_complete(models_root, SILERO_DIR, &SILERO_FILES)
+}
+
+/// Returns the first loadable `.gguf` file directly inside `dir` (not
+/// recursive). `is_file()` follows symlinks, so a symlinked model counts as
+/// present while a dangling symlink does not. When multiple `.gguf` files
+/// exist (e.g. a split shard set), returns the one with the
+/// lexicographically smallest file name, so `-00001-of-00002` sorts before
+/// `-00002-of-00002` and callers load the shard llama.cpp expects to start
+/// from. Unreadable directories (missing, permission-denied) report `None`.
+pub(crate) fn first_gguf(dir: &Path) -> Option<PathBuf> {
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "gguf") && path.is_file())
+        .min_by_key(|path| path.file_name().map(|name| name.to_os_string()))
 }
 
 fn resolve_resource_dir(app: &tauri::AppHandle, env_override: &str, dir_name: &str) -> PathBuf {

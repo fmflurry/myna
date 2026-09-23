@@ -175,7 +175,43 @@ fetch_parakeet() {
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main"
 }
 
+# link_ollama_qwen symlinks an already-pulled Ollama Qwen2.5 GGUF blob into
+# place instead of re-downloading ~4.4 GB. Returns 1 (soft) when Ollama isn't
+# installed or none of the candidate tags are present, so fetch_qwen falls
+# through to its normal download path.
+link_ollama_qwen() {
+  local root="${OLLAMA_MODELS:-$HOME/.ollama/models}"
+  [[ -d "$root" ]] || return 1
+
+  local link="$DEST/$QWEN_DIR_NAME/qwen2.5-7b-instruct-q4_k_m.gguf"
+  [[ -f "$link" ]] && return 0
+  [[ -L "$link" ]] && rm -f "$link"
+
+  local tag manifest digest blob size
+  for tag in qwen2.5:7b-instruct-q4_K_M qwen2.5:7b-instruct qwen2.5:7b; do
+    manifest="$root/manifests/registry.ollama.ai/library/${tag%%:*}/${tag#*:}"
+    [[ -f "$manifest" ]] || continue
+
+    # ponytail: text-scans the OCI manifest, no jq dep; switch to jq if Ollama changes the format
+    digest=$(tr -d ' \n' < "$manifest" | tr '{' '\n' | grep 'vnd\.ollama\.image\.model' | grep -oE 'sha256:[0-9a-f]{64}' | head -1)
+    [[ -n "$digest" ]] || continue
+
+    blob="$root/blobs/sha256-${digest#sha256:}"
+    [[ -f "$blob" ]] || continue
+    size=$(wc -c < "$blob")
+    [[ "$size" -ge $((1024 * 1024 * 1024)) ]] || continue
+
+    mkdir -p "$(dirname "$link")"
+    ln -sfn "$blob" "$link"
+    echo "linked Qwen from Ollama ($tag) -> $link"
+    return 0
+  done
+
+  return 1
+}
+
 fetch_qwen() {
+  link_ollama_qwen && return 0
   fetch_artifact "Qwen2.5-7B-Instruct GGUF" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME" \
     bash -c '
       set -euo pipefail

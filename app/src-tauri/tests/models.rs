@@ -4,6 +4,8 @@
 //! pure function over a plain `&Path`.
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use myna_app::commands::models::models_status_at;
@@ -51,8 +53,8 @@ fn reports_nothing_present_with_no_artifacts() {
 #[test]
 fn reports_partial_artifacts_as_not_present() {
     // Arrange: only some of Parakeet's expected files exist, Silero is
-    // entirely absent, and Qwen has only the first shard of its split GGUF
-    // — the presence gate requires both shards.
+    // entirely absent, and Qwen has only a partial download (a `.part` file,
+    // not a `.gguf`) — presence requires an actual loadable `.gguf`.
     let dir = tempfile::tempdir().expect("tempdir");
     touch(
         &dir.path()
@@ -62,7 +64,7 @@ fn reports_partial_artifacts_as_not_present() {
     touch(
         &dir.path()
             .join("qwen2.5-7b-instruct")
-            .join("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"),
+            .join("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf.part"),
     );
 
     // Act
@@ -73,9 +75,63 @@ fn reports_partial_artifacts_as_not_present() {
     assert!(!status.parakeet.present);
     assert!(
         !status.qwen.present,
-        "first shard alone must not count as present"
+        "a non-.gguf partial download must not count as present"
     );
     assert!(!status.silero.present);
+}
+
+/// A single `.gguf` symlinked into place (e.g. linked from an Ollama blob by
+/// `scripts/download-models.sh`'s `link_ollama_qwen`) must count as present:
+/// [`paths::first_gguf`] uses `is_file()`, which follows symlinks.
+#[cfg(unix)]
+#[test]
+fn qwen_present_via_single_symlinked_gguf() {
+    // Arrange: real file lives outside the models root, symlinked in.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target_dir = tempfile::tempdir().expect("target tempdir");
+    let target = target_dir.path().join("blob.gguf");
+    fs::write(&target, b"fake gguf weights").expect("write target");
+
+    let link = dir
+        .path()
+        .join("qwen2.5-7b-instruct")
+        .join("qwen2.5-7b-instruct-q4_k_m.gguf");
+    fs::create_dir_all(link.parent().expect("parent dir")).expect("create parent dir");
+    symlink(&target, &link).expect("create symlink");
+
+    // Act
+    let status = models_status_at(dir.path());
+
+    // Assert
+    assert!(status.qwen.present);
+}
+
+/// A dangling symlink (target removed) must not count as present.
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_counts_as_missing() {
+    // Arrange: same as above, but the target is deleted before the check.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target_dir = tempfile::tempdir().expect("target tempdir");
+    let target = target_dir.path().join("blob.gguf");
+    fs::write(&target, b"fake gguf weights").expect("write target");
+
+    let link = dir
+        .path()
+        .join("qwen2.5-7b-instruct")
+        .join("qwen2.5-7b-instruct-q4_k_m.gguf");
+    fs::create_dir_all(link.parent().expect("parent dir")).expect("create parent dir");
+    symlink(&target, &link).expect("create symlink");
+    fs::remove_file(&target).expect("remove target to dangle the symlink");
+
+    // Act
+    let status = models_status_at(dir.path());
+
+    // Assert
+    assert!(
+        !status.qwen.present,
+        "a dangling symlink must not count as present"
+    );
 }
 
 #[test]

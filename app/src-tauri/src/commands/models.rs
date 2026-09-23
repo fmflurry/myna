@@ -96,7 +96,7 @@ pub struct ModelsStatusDto {
 /// `tempfile::tempdir()` without loading any model.
 pub fn models_status_at(models_root: &Path) -> ModelsStatusDto {
     let parakeet = model_slot(models_root, PARAKEET_DIR_NAME, &PARAKEET_EXPECTED_FILES);
-    let qwen = model_slot(models_root, QWEN_DIR_NAME, &QWEN_EXPECTED_FILES);
+    let qwen = qwen_slot(models_root, QWEN_DIR_NAME, &QWEN_EXPECTED_FILES);
     let silero = model_slot(models_root, SILERO_DIR_NAME, &SILERO_EXPECTED_FILES);
     let diarization = diarization_slot(models_root);
     // Deliberately excludes `diarization` — see `ModelsStatusDto::diarization`'s docs.
@@ -117,6 +117,22 @@ pub fn models_status_at(models_root: &Path) -> ModelsStatusDto {
 fn model_slot(models_root: &Path, dir_name: &str, expected_files: &[&str]) -> ModelSlot {
     let dir = models_root.join(dir_name);
     let present = expected_files.iter().all(|file| dir.join(file).is_file());
+    let expected_files = expected_files.iter().map(|file| file.to_string()).collect();
+
+    ModelSlot {
+        present,
+        path: dir.to_string_lossy().into_owned(),
+        expected_files,
+    }
+}
+
+/// Builds the [`ModelSlot`] for Qwen: present when `dir_name` holds any
+/// loadable `.gguf` file (including a symlink), not gated on matching the
+/// exact shard names in `expected_files` — those are retained only as a UI
+/// hint for what `download-models.sh` fetches by default.
+fn qwen_slot(models_root: &Path, dir_name: &str, expected_files: &[&str]) -> ModelSlot {
+    let dir = models_root.join(dir_name);
+    let present = paths::first_gguf(&dir).is_some();
     let expected_files = expected_files.iter().map(|file| file.to_string()).collect();
 
     ModelSlot {
