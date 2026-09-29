@@ -17,6 +17,8 @@ use tauri::menu::MenuItem;
 use tauri::menu::{
     AboutMetadata, Menu, MenuEvent, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri::{AppHandle, Emitter, Wry};
 
 use crate::events;
@@ -33,6 +35,18 @@ pub const SETTINGS_ITEM_ID: &str = "settings";
 /// only production consumer (`app_submenu`) is not built.
 #[cfg(any(test, target_os = "macos"))]
 const SETTINGS_ACCELERATOR: &str = "CmdOrCtrl+,";
+
+/// Menu-item id for the "Reload Interface" entry. Handled entirely in
+/// [`handle`] by reloading the main webview — no other command reads this id.
+pub const RELOAD_ITEM_ID: &str = "reload_interface";
+
+/// Accelerator for "Reload Interface" as a muda-parseable string. Cmd+R is not
+/// bound anywhere else in this menu (Cmd+, is Settings, Cmd+Z/X/C/V/A are Edit
+/// roles, Cmd+H/Alt+H are Hide, Cmd+Q is Quit, Cmd+W is Close, Cmd+M is
+/// Minimize). See [`SETTINGS_ACCELERATOR`] doc comment for why this is guarded
+/// by a test rather than trusted to parse silently.
+#[cfg(any(test, target_os = "macos"))]
+const RELOAD_ACCELERATOR: &str = "CmdOrCtrl+R";
 
 /// Builds the application menu: Tauri's default layout plus "Settings…".
 ///
@@ -72,8 +86,28 @@ pub fn handle(app: &AppHandle, event: &MenuEvent) {
         // An emit failure is only possible before the webview is attached; the
         // title-bar gear button remains as a fallback path into Settings.
         let _ = app.emit(events::MENU_SETTINGS, ());
+    } else if event.id() == RELOAD_ITEM_ID {
+        reload_main_webview(app);
     }
 }
+
+/// Reloads the main webview in place. Recording/decode state lives in the
+/// Rust core (ADR 0011) and survives a webview reload untouched; the UI
+/// re-derives its view of that state at boot via `recording_state` +
+/// `get_live_transcript`, so no state reset happens here.
+#[cfg(target_os = "macos")]
+fn reload_main_webview(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("reload menu item clicked but no main webview window found");
+        return;
+    };
+    if let Err(err) = window.reload() {
+        eprintln!("failed to reload main webview: {err}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn reload_main_webview(_app: &AppHandle) {}
 
 fn about_metadata(app: &AppHandle) -> AboutMetadata<'static> {
     let pkg_info = app.package_info();
@@ -165,7 +199,17 @@ fn view_submenu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         app,
         "View",
         true,
-        &[&PredefinedMenuItem::fullscreen(app, None)?],
+        &[
+            &PredefinedMenuItem::fullscreen(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                RELOAD_ITEM_ID,
+                "Reload Interface",
+                true,
+                Some(RELOAD_ACCELERATOR),
+            )?,
+        ],
     )
 }
 
@@ -220,5 +264,22 @@ mod tests {
     fn settings_item_id_is_stable() {
         // The id is matched in `handle`; renaming it must be a deliberate act.
         assert_eq!(SETTINGS_ITEM_ID, "settings");
+    }
+
+    #[test]
+    fn reload_accelerator_parses_via_muda() {
+        // Same trap as SETTINGS_ACCELERATOR: MenuItem::with_id swallows parse
+        // errors silently (normal.rs:65).
+        let parsed: muda::accelerator::Accelerator = RELOAD_ACCELERATOR
+            .parse()
+            .expect("RELOAD_ACCELERATOR must parse as a muda Accelerator");
+        assert_eq!(parsed.key(), muda::accelerator::Code::KeyR);
+        assert!(parsed.modifiers().contains(muda::accelerator::CMD_OR_CTRL));
+    }
+
+    #[test]
+    fn reload_item_id_is_stable() {
+        // The id is matched in `handle`; renaming it must be a deliberate act.
+        assert_eq!(RELOAD_ITEM_ID, "reload_interface");
     }
 }
