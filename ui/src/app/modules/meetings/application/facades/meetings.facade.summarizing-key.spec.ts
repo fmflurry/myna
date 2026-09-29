@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 
 import { toMeetingId } from '../../core/models/meeting.model';
+import { MeetingsError } from '../../core/models/recording-state.model';
 import { AppInfoPort } from '../../core/ports/app-info.port';
 import { FileDialogPort } from '../../core/ports/file-dialog.port';
 import { MeetingRepositoryPort } from '../../core/ports/meeting-repository.port';
@@ -116,11 +117,14 @@ describe('MeetingsFacade summarizingKey', () => {
     expect(facade.error()).toBeDefined();
   });
 
-  it('clears the summarizingKey on cancellation', async () => {
+  it('keeps summarizingKey set across cancelSummarization until the cancelled summarize settles', async () => {
     const useCase = TestBed.inject(SummarizeMeetingUseCase);
-    vi.spyOn(useCase, 'summarize').mockImplementation(() => new Promise<Summary>(() => undefined));
+    let rejectSummary: (reason: unknown) => void = () => undefined;
+    vi.spyOn(useCase, 'summarize').mockImplementation(
+      () => new Promise<Summary>((_resolve, reject) => { rejectSummary = reject; }),
+    );
     facade.selectSummaryLanguage('en');
-    void facade.summarizeMeeting(toMeetingId('m-1'), {
+    const pending = facade.summarizeMeeting(toMeetingId('m-1'), {
       name: 'meeting-notes',
       description: 'Meeting notes',
       prompt: 'p',
@@ -128,6 +132,13 @@ describe('MeetingsFacade summarizingKey', () => {
     expect(facade.summarizingKey()).not.toBeNull();
 
     await facade.cancelSummarization();
+
+    // cancelSummarization() alone must NOT release the key — the underlying
+    // summarize() call is still in flight until the backend tears it down.
+    expect(facade.summarizingKey()).not.toBeNull();
+
+    rejectSummary(new MeetingsError('LLM', 'operation was cancelled'));
+    await pending;
 
     expect(facade.summarizingKey()).toBeNull();
   });
@@ -182,11 +193,14 @@ describe('MeetingsFacade summarizingKey', () => {
     expect(facade.error()?.message).toContain('regenerate boom');
   });
 
-  it('cancel during a regenerate releases the key', async () => {
+  it('cancel during a regenerate releases the key only once the cancelled summarize settles', async () => {
     const useCase = TestBed.inject(SummarizeMeetingUseCase);
-    vi.spyOn(useCase, 'summarize').mockImplementation(() => new Promise<Summary>(() => undefined));
+    let rejectSummary: (reason: unknown) => void = () => undefined;
+    vi.spyOn(useCase, 'summarize').mockImplementation(
+      () => new Promise<Summary>((_resolve, reject) => { rejectSummary = reject; }),
+    );
     facade.selectSummaryLanguage('en');
-    void facade.summarizeMeeting(toMeetingId('m-1'), {
+    const pending = facade.summarizeMeeting(toMeetingId('m-1'), {
       name: 'meeting-notes',
       description: 'Meeting notes',
       prompt: 'p',
@@ -194,6 +208,11 @@ describe('MeetingsFacade summarizingKey', () => {
     expect(facade.summarizingKey()).toEqual({ template: 'meeting-notes', language: 'en' });
 
     await facade.cancelSummarization();
+
+    expect(facade.summarizingKey()).toEqual({ template: 'meeting-notes', language: 'en' });
+
+    rejectSummary(new MeetingsError('LLM', 'operation was cancelled'));
+    await pending;
 
     expect(facade.summarizingKey()).toBeNull();
   });

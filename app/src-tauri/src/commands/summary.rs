@@ -473,6 +473,13 @@ fn summarize_and_persist(
     let resolved_instructions = resolve_instructions(&load_general_guidelines()?, instructions);
     let render_ctx = build_render_context(&meeting, language_label, resolved_instructions)?;
     let summarizer = state.summarizer(app)?;
+    if state.cancel_summary.load(Ordering::SeqCst) {
+        // A cancel arriving while the model was (re)loading has no
+        // in-flight job to observe it; check here so it still takes
+        // effect before the (possibly minutes-long) inference call
+        // starts, rather than only once generation begins.
+        return Err(myna_llm::LlmError::Cancelled.into());
+    }
 
     let markdown = run_inference(
         app,

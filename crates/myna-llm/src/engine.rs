@@ -515,8 +515,10 @@ impl Summarizer {
     ///
     /// Runs on the inference worker against its reused context (see
     /// [`Summarizer`]); this call blocks until the job finishes.
-    /// Cancellation keeps its pre-worker semantics exactly: the flag is
-    /// observed once per generated token, never mid-prefill.
+    /// Cancellation is observed once per generated token, and also once
+    /// per chunked prefill `llama_decode` call, so a cancel during a long
+    /// prefill (or right after model load) still lands promptly instead
+    /// of waiting for prefill to finish.
     pub fn summarize(
         &self,
         prompt: &str,
@@ -757,7 +759,7 @@ fn serve_generation<'a>(
 
     let batch_capacity = context.n_batch().max(1) as usize;
     let mut batch = LlamaBatch::new(batch_capacity, 1);
-    let mut n_cur = prefill(context, &mut batch, &tokens)?;
+    let mut n_cur = prefill(context, &mut batch, &tokens, cancel)?;
 
     let sampler = LlamaSampler::chain_simple([
         LlamaSampler::temp(opts.temperature),
@@ -854,17 +856,24 @@ fn prefill_chunks(total_tokens: usize, chunk_size: usize) -> Vec<PrefillChunk> {
 /// Feed `tokens` into `batch` across as many `llama_decode` calls as
 /// needed to respect `ctx`'s configured `n_batch` (see [`prefill_chunks`]
 /// and the module docs for why this can no longer submit everything in
-/// one call). Returns the position (`n_cur`) immediately after the
-/// prefilled tokens.
+/// one call). Checks `cancel` (see [`is_cancelled`]) before each chunk's
+/// decode, so a cancellation lands between chunks instead of only after
+/// the whole prefill completes. Returns the position (`n_cur`)
+/// immediately after the prefilled tokens.
 fn prefill(
     ctx: &mut LlamaContext,
     batch: &mut LlamaBatch,
     tokens: &[LlamaToken],
+    cancel: &Receiver<bool>,
 ) -> Result<i32, LlmError> {
     let n_batch = ctx.n_batch().max(1) as usize;
     let n_ctx = ctx.n_ctx();
 
     for chunk in prefill_chunks(tokens.len(), n_batch) {
+        if is_cancelled(cancel) {
+            return Err(LlmError::Cancelled);
+        }
+
         batch.clear();
 
         for index in chunk.range.clone() {
