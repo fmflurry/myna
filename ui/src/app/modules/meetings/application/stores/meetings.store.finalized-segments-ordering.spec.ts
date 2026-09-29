@@ -13,9 +13,11 @@ import { InMemorySummarizerFake } from '../testing/in-memory-summarizer.fake';
 import { InMemoryTranscriberFake } from '../testing/in-memory-transcriber.fake';
 import { MeetingsStore } from './meetings.store';
 
-interface StoreSlots {
-  readonly slots: {
-    update(key: string, value: unknown): void;
+interface StoreSignals {
+  readonly hotPath: {
+    readonly finalizedSegments: {
+      set(value: unknown): void;
+    };
   };
 }
 
@@ -115,8 +117,8 @@ describe('MeetingsStore finalizedSegments ordering', () => {
   });
 
   it('coalesces a timed burst into one bulk state merge after 50 ms, retaining chronological and equal-time arrival order', () => {
-    const slots = (store as unknown as StoreSlots).slots;
-    const update = vi.spyOn(slots, 'update');
+    const signals = (store as unknown as StoreSignals).hotPath.finalizedSegments;
+    const update = vi.spyOn(signals, 'set');
     const finals = [
       transcriptSegment({ startSec: 10, endSec: 11, text: 'first at 10' }),
       transcriptSegment({ startSec: 4, endSec: 5, text: 'at 4' }),
@@ -132,12 +134,12 @@ describe('MeetingsStore finalizedSegments ordering', () => {
     vi.advanceTimersByTime(1);
 
     expect(store.finalizedSegments().map((segment) => segment.text)).toEqual(['at 4', 'first at 10', 'second at 10']);
-    expect(update.mock.calls.filter(([key]) => key === 'FINALIZED_SEGMENTS').length).toBe(1);
+    expect(update.mock.calls.length).toBe(1);
   });
 
   it('flushes at 32 final events and dedupes identical timing-speaker-text identities without dropping distinct arrivals', () => {
-    const slots = (store as unknown as StoreSlots).slots;
-    const update = vi.spyOn(slots, 'update');
+    const signals = (store as unknown as StoreSignals).hotPath.finalizedSegments;
+    const update = vi.spyOn(signals, 'set');
     const duplicate = transcriptSegment({ startSec: 0, endSec: 1, speaker: 'me', text: 'duplicate' });
     const uniqueFinals = Array.from({ length: 31 }, (_, index) =>
       transcriptSegment({ startSec: 31 - index, endSec: 32 - index, speaker: 'others', text: `Line ${31 - index}` }),
@@ -151,8 +153,8 @@ describe('MeetingsStore finalizedSegments ordering', () => {
     expect(segments.length).toBe(32);
     expect(segments.map((segment) => segment.startSec)).toEqual([...segments].map((segment) => segment.startSec).sort((a, b) => a - b));
     expect(segments.filter((segment) => segment.text === 'duplicate').length).toBe(1);
-    expect(update.mock.calls.filter(([key]) => key === 'FINALIZED_SEGMENTS').length).toBe(1);
+    expect(update.mock.calls.length).toBe(1);
     vi.advanceTimersByTime(50);
-    expect(update.mock.calls.filter(([key]) => key === 'FINALIZED_SEGMENTS').length).toBe(1);
+    expect(update.mock.calls.length).toBe(1);
   });
 });

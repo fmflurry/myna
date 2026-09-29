@@ -239,7 +239,9 @@ export async function runSummarizeMeeting(
     store.setSummaryCacheResult(id, summary.template, summary.language, summary);
     store.clearError();
   } catch (caught) {
-    store.setError(toErrorInfo(caught));
+    if (!(caught instanceof MeetingsError && caught.code === 'LLM' && /cancelled/i.test(caught.message))) {
+      store.setError(toErrorInfo(caught));
+    }
   } finally {
     store.setSummarizingKey(null);
   }
@@ -344,15 +346,13 @@ export async function runLoadSummary(store: MeetingsStore, getSummaryUseCase: Ge
   }
 }
 
-/** Cancels an in-flight summarization; clears the error slot on success and ALWAYS releases `summarizingKey`. */
+/** Cancels an in-flight summarization; clears the error slot on success. `summarizingKey` is released by {@link runSummarizeMeeting} once the cancelled `summarize()` call itself settles — never here. */
 export async function runCancelSummarization(store: MeetingsStore, cancelSummarizationUseCase: CancelSummarizationUseCase): Promise<void> {
   try {
     await cancelSummarizationUseCase.cancel();
     store.clearError();
   } catch (caught) {
     store.setError(toErrorInfo(caught));
-  } finally {
-    store.setSummarizingKey(null);
   }
 }
 

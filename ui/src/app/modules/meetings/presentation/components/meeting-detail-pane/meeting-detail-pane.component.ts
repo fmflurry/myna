@@ -238,11 +238,11 @@ export class MeetingDetailPaneComponent {
   protected readonly diarizationModelsPresent = computed(() => this.modelsStatus()?.diarization?.present ?? false);
   /** See {@link isDiarizeDisabled}. `isLive()` is passed both as `busy` (silent, matches every other reingest control) and as the explicit `recording` flag that drives the surfaced reason below. */
   protected readonly diarizeDisabled = computed(() =>
-    isDiarizeDisabled(this.diarizationModelsPresent(), this.hasSystemTrack(), this.isLive(), this.importing(), this.diarizing(), this.isLive()),
+    isDiarizeDisabled(this.diarizationModelsPresent(), this.hasSystemTrack(), this.isLive(), this.importing(), this.diarizing(), this.isLive(), this.summarizingKey() !== null),
   );
   /** See {@link diarizeDisabledReason}. The recording reason takes precedence over the other durable reasons while a recording is in progress. */
   protected readonly diarizeDisabledReason = computed<string | undefined>(() =>
-    diarizeDisabledReason(this.diarizationModelsPresent(), this.hasSystemTrack(), this.modelsStatus()?.diarization?.path ?? '', this.isLive()),
+    diarizeDisabledReason(this.diarizationModelsPresent(), this.hasSystemTrack(), this.modelsStatus()?.diarization?.path ?? '', this.isLive(), this.summarizingKey() !== null),
   );
   /** Drives the "some audio wasn't transcribed" recovery warning near the transcript. */
   protected readonly hasDroppedAudio = computed(() => (this.meeting()?.droppedAudioChunks ?? 0) > 0);

@@ -1,6 +1,8 @@
+import type { WritableSignal } from '@angular/core';
 import { syncToStore } from 'flurryx';
 import { auditTime, bufferTime, distinct, filter, tap, type Observable } from 'rxjs';
 
+import type { AudioLevel } from '../../core/models/audio-device.model';
 import { speakerRole, type TranscriptSegment } from '../../core/models/transcript.model';
 import type { RecorderPort } from '../../core/ports/recorder.port';
 import type { SummarizerPort } from '../../core/ports/summarizer.port';
@@ -110,8 +112,20 @@ const segmentIdentityKey = (segment: TranscriptSegment): string =>
  * is deliberately EXCLUDED here (unlike `segmentIdentityKey`, which keeps
  * text so a same-timing different-text re-decode is never dropped).
  */
-const segmentReplaceKey = (segment: TranscriptSegment): string =>
+export const segmentReplaceKey = (segment: TranscriptSegment): string =>
   `${segment.startSec}|${segment.endSec}|${segment.speaker}`;
+
+/**
+ * Plain-signal write targets for the hot (up to 10 Hz) live-recording state.
+ * Kept OFF the flurryx slot schema entirely — see the comment on
+ * `MeetingsStoreConfig` in `meetings-store-config.model.ts` for why.
+ */
+export interface LiveHotPathSignals {
+  readonly level: WritableSignal<AudioLevel | undefined>;
+  readonly partialTextMe: WritableSignal<string>;
+  readonly partialTextOthers: WritableSignal<string>;
+  readonly finalizedSegments: WritableSignal<readonly TranscriptSegment[]>;
+}
 
 /**
  * Returns a NEW chronologically-sorted array with every segment from `incoming`
@@ -176,6 +190,7 @@ export function wireRecorderAndTranscriberEvents(
   recorder: RecorderPort,
   transcriber: TranscriberPort,
   summarizer: SummarizerPort,
+  hotPath: LiveHotPathSignals,
 ): void {
   recorder
     .stateChanges()
@@ -201,10 +216,7 @@ export function wireRecorderAndTranscriberEvents(
     .pipe(syncToStore(slots, 'EFFECTIVE_SYSTEM_SOURCE', { completeOnFirstEmission: false }))
     .subscribe();
 
-  recorder
-    .levels()
-    .pipe(syncToStore(slots, 'LEVEL', { completeOnFirstEmission: false }))
-    .subscribe();
+  recorder.levels().subscribe((level) => hotPath.level.set(level));
 
   recorder
     .stopProgressChanges()
@@ -242,13 +254,13 @@ export function wireRecorderAndTranscriberEvents(
   partialsFor(partials, 'me')
     .pipe(auditTime(PARTIAL_UI_AUDIT_MS))
     .subscribe((partial) => {
-      slots.update('PARTIAL_TEXT_ME', { data: partial.text, status: 'Success', isLoading: false });
+      hotPath.partialTextMe.set(partial.text);
     });
 
   partialsFor(partials, 'others')
     .pipe(auditTime(PARTIAL_UI_AUDIT_MS))
     .subscribe((partial) => {
-      slots.update('PARTIAL_TEXT_OTHERS', { data: partial.text, status: 'Success', isLoading: false });
+      hotPath.partialTextOthers.set(partial.text);
     });
 
   transcriber
@@ -257,8 +269,8 @@ export function wireRecorderAndTranscriberEvents(
       tap(() => {
         // A final immediately supersedes either streaming partial, even while
         // its durable transcript insertion waits for the short batch window.
-        slots.update('PARTIAL_TEXT_ME', { data: '', status: 'Success', isLoading: false });
-        slots.update('PARTIAL_TEXT_OTHERS', { data: '', status: 'Success', isLoading: false });
+        hotPath.partialTextMe.set('');
+        hotPath.partialTextOthers.set('');
       }),
       // Dedupe before applying the size limit so 32 distinct final segments
       // flush immediately even when the transport repeats one in the burst.
@@ -267,17 +279,15 @@ export function wireRecorderAndTranscriberEvents(
       filter((finals) => finals.length > 0),
     )
     .subscribe((finals) => {
-      const current = slots.get('FINALIZED_SEGMENTS')().data ?? [];
+      const current = hotPath.finalizedSegments();
       // One stable merge dedupes the batch and preserves equal-start arrival
-      // order while making a single finalized-segment slot update.
-      slots.update('FINALIZED_SEGMENTS', {
-        data: mergeFinalizedSegments(
+      // order while making a single finalized-segment signal write.
+      hotPath.finalizedSegments.set(
+        mergeFinalizedSegments(
           current,
           finals.map((final) => final.segment),
         ),
-        status: 'Success',
-        isLoading: false,
-      });
+      );
     });
 
   summarizer.tokens().subscribe((token) => {

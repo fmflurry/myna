@@ -154,6 +154,8 @@ describe('MeetingsFacade', () => {
     expect(facade.error()).toBeUndefined();
   });
 
+  // cancelSummarization while a summarize is in flight: meetings.facade.cancel-summarization.spec.ts (max-lines limit).
+
   it('exportMeeting exports through the chosen save path', async () => {
     await facade.startRecording('Retro');
     const selected = facade.selectedMeeting();

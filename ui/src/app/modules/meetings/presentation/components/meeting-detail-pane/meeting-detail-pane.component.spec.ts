@@ -312,6 +312,7 @@ describe('MeetingDetailPaneComponent', () => {
     expect(fixture.nativeElement.querySelector('.title-trigger').textContent.trim()).toBe('Untitled meeting');
   });
 
+  // "Detect speakers" while a summary is generating: meeting-detail-pane.component.diarize-while-summarizing.spec.ts (max-lines limit).
   describe('restart regression: a persisted-but-unfetched summary ref', () => {
     const refOnlyMeeting: Meeting = {
       ...meeting,
@@ -395,6 +396,5 @@ describe('MeetingDetailPaneComponent', () => {
       expect(fixture.nativeElement.querySelector('app-summary-panel')).toBeNull();
     });
   });
-
   // Degraded-recording warning: meeting-detail-pane.component.degraded-audio.spec.ts (max-lines limit).
 });
