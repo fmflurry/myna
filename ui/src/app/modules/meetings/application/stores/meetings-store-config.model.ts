@@ -1,4 +1,4 @@
-import type { AudioDevice, AudioLevel } from '../../core/models/audio-device.model';
+import type { AudioDevice } from '../../core/models/audio-device.model';
 import type { AudioSource } from '../../core/models/audio-source.model';
 import type { CaptureSource, SystemAudioStatus } from '../../core/models/capture-source.model';
 import type { Folder, FolderId } from '../../core/models/folder.model';
@@ -9,7 +9,6 @@ import type { MeetingsErrorCode, RecordingState } from '../../core/models/record
 import type { SummaryInstructionsDraft } from '../../core/models/summary-instructions.model';
 import type { SummaryLanguage } from '../../core/models/summary-language.model';
 import type { SummaryTemplate } from '../../core/models/summary-template.model';
-import type { TranscriptSegment } from '../../core/models/transcript.model';
 import type { ImportProgress } from '../../core/ports/audio-import.port';
 import type { StorageLocation } from '../../core/ports/storage-location.port';
 import type { SummaryCacheEntry } from './summary-cache.model';
@@ -78,10 +77,12 @@ export interface MeetingsStoreConfig {
    * true offset instead of restarting at `00:00`.
    */
   ACTIVE_RECORDING: ActiveRecording | null;
-  FINALIZED_SEGMENTS: readonly TranscriptSegment[];
-  PARTIAL_TEXT_ME: string;
-  PARTIAL_TEXT_OTHERS: string;
-  LEVEL: AudioLevel;
+  // FINALIZED_SEGMENTS, PARTIAL_TEXT_ME, PARTIAL_TEXT_OTHERS, and LEVEL are
+  // deliberately NOT flurryx slots: flurryx records one deep-cloned FULL
+  // STORE snapshot per acknowledged update with no cap (see
+  // meetings.store.live-hot-path.spec.ts), and these four update at up to
+  // 10 Hz during a live recording — they live as plain signals on
+  // MeetingsStore instead (see meetings.store.ts).
   TEMPLATES: readonly SummaryTemplate[];
   /**
    * Per-template prompt overrides keyed by template name; the server (via

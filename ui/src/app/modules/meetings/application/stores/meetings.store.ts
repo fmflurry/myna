@@ -46,6 +46,7 @@ import {
 } from './meetings-store-preferences.util';
 import { readSummaryInstructionDraft, storeSummaryInstructionDraft } from './summary-instructions-preferences.util';
 import { applySummaryCacheFailed, applySummaryCacheLoading, applySummaryCacheResult, readSummaryCacheEntry, removeSummaryCacheEntry } from './meetings-store-summary-cache.support';
+import { createLiveHotPathSignals } from './meetings-store-live-signals.support';
 import { mergeFinalizedSegments, seedPersistedPreferences, wireRecorderAndTranscriberEvents } from './meetings-store-wiring.support';
 import { summaryCacheKey } from './summary-cache.model';
 import type { SummaryCacheEntry, SummaryCacheStatus } from './summary-cache.model';
@@ -97,6 +98,8 @@ export class MeetingsStore {
   /** Optional: some specs predate this port; `provideMeetings()` always binds it for real use. */
   private readonly audioImport = inject(AudioImportPort, { optional: true });
   private readonly preferences = inject(PreferencesPort);
+  /** Hot (up to 10 Hz) live-recording state, kept OFF flurryx — see `createLiveHotPathSignals`. */
+  private readonly hotPath = createLiveHotPathSignals();
 
   readonly meetings: Signal<readonly Meeting[]> = computed(() => this.slots.get('MEETINGS')().data ?? []);
   readonly selectedMeeting: Signal<Meeting | undefined> = computed(() => this.slots.get('SELECTED_MEETING')().data);
@@ -104,12 +107,12 @@ export class MeetingsStore {
   /** Live session re-discovered at boot via `recording_state` (ADR 0011); `null` once the session goes idle. Carries the elapsed baseline the shell's timer seeds from. */
   readonly activeRecording: Signal<ActiveRecording | null> = computed(() => this.slots.get('ACTIVE_RECORDING')().data ?? null);
   /** Finalized segments only ever append; the partial is transient and clears once a final arrives (see `finals()` below). */
-  readonly finalizedSegments: Signal<readonly TranscriptSegment[]> = computed(() => this.slots.get('FINALIZED_SEGMENTS')().data ?? []);
+  readonly finalizedSegments: Signal<readonly TranscriptSegment[]> = this.hotPath.finalizedSegments.asReadonly();
   /** Live partial text spoken by the local participant ("me"). Last-value-wins, bounded to one slot. */
-  readonly partialTextMe: Signal<string> = computed(() => this.slots.get('PARTIAL_TEXT_ME')().data ?? '');
+  readonly partialTextMe: Signal<string> = this.hotPath.partialTextMe.asReadonly();
   /** Live partial text spoken by any other participant. Sub-identities (e.g. `others:2`) collapse into this single slot until diarization ships. */
-  readonly partialTextOthers: Signal<string> = computed(() => this.slots.get('PARTIAL_TEXT_OTHERS')().data ?? '');
-  readonly level: Signal<AudioLevel | undefined> = computed(() => this.slots.get('LEVEL')().data);
+  readonly partialTextOthers: Signal<string> = this.hotPath.partialTextOthers.asReadonly();
+  readonly level: Signal<AudioLevel | undefined> = this.hotPath.level.asReadonly();
   readonly templates: Signal<readonly SummaryTemplate[]> = computed(() => this.slots.get('TEMPLATES')().data ?? []);
   /** Override cache for per-template prompts; absent = built-in — see `TEMPLATES`. Never mutated in place. */
   readonly templatePrompts: Signal<ReadonlyMap<string, string>> = computed(() => this.slots.get('TEMPLATE_PROMPTS')().data ?? new Map());
@@ -179,7 +182,7 @@ export class MeetingsStore {
 
   constructor() {
     seedPersistedPreferences(this.slots, this.preferences);
-    wireRecorderAndTranscriberEvents(this.slots, this.recorder, this.transcriber, this.summarizer);
+    wireRecorderAndTranscriberEvents(this.slots, this.recorder, this.transcriber, this.summarizer, this.hotPath);
     subscribeToAudioImportEvents(this, this.audioImport ?? undefined);
   }
 
@@ -267,9 +270,9 @@ export class MeetingsStore {
   clearError(): void { this.slots.clear('ERROR'); }
 
   resetLiveTranscript(): void {
-    this.slots.update('FINALIZED_SEGMENTS', { data: [], status: 'Success', isLoading: false });
-    this.slots.update('PARTIAL_TEXT_ME', { data: '', status: 'Success', isLoading: false });
-    this.slots.update('PARTIAL_TEXT_OTHERS', { data: '', status: 'Success', isLoading: false });
+    this.hotPath.finalizedSegments.set([]);
+    this.hotPath.partialTextMe.set('');
+    this.hotPath.partialTextOthers.set('');
   }
 
   // Command-fed write path for the ADR 0011 boot resume: mirror the
@@ -280,7 +283,7 @@ export class MeetingsStore {
   setRecordingState(state: RecordingState): void { this.slots.update('RECORDING_STATE', { data: state, status: 'Success', isLoading: false }); }
   setActiveRecording(active: ActiveRecording | null): void { this.slots.update('ACTIVE_RECORDING', { data: active, status: 'Success', isLoading: false }); }
   clearActiveRecording(): void { this.slots.update('ACTIVE_RECORDING', { data: null, status: 'Success', isLoading: false }); }
-  seedFinalizedSegments(segments: readonly TranscriptSegment[]): void { this.slots.update('FINALIZED_SEGMENTS', { data: mergeFinalizedSegments(this.finalizedSegments(), segments), status: 'Success', isLoading: false }); }
+  seedFinalizedSegments(segments: readonly TranscriptSegment[]): void { this.hotPath.finalizedSegments.set(mergeFinalizedSegments(this.finalizedSegments(), segments)); }
 
   resetSummaryStream(): void {
     this.slots.update('SUMMARY_STREAM', { data: '', status: 'Success', isLoading: false });
