@@ -200,15 +200,20 @@ export class LiveTranscriptComponent implements OnDestroy {
   }
 
   /**
-   * `@for` identity: `TranscriptSegment` carries no id. The finalized list
-   * is maintained by sorted insertion (`insertSegmentSorted`), so a
-   * mid-list insert shifts the indices that follow it — the index +
-   * start-time composite pins rows for the common append case, and any
-   * row whose index or `startSec` changes is re-rendered rather than
-   * patched in place with stale content.
+   * `@for` identity: `TranscriptSegment` carries no id, so this keys on the
+   * segment's own `(startSec, endSec, speaker)` timing/speaker triple instead
+   * of the local render index. A local index breaks identity across a
+   * bounded-window slide (the 251st finalized segment pushes every visible
+   * row's `$index` down by one, so an index-keyed track would destroy and
+   * recreate the entire visible window on every new arrival instead of
+   * reusing still-present rows) — see
+   * `live-transcript.component.row-identity.spec.ts`. Mirrors
+   * `segmentReplaceKey` in `meetings-store-wiring.support.ts` (kept in sync
+   * manually rather than imported, to keep this presentation component out
+   * of the application layer's internals).
    */
-  trackBySegment(index: number, segment: TranscriptSegment): string {
-    return `${index}:${segment.startSec}`;
+  trackBySegment(segment: TranscriptSegment): string {
+    return `${segment.startSec}|${segment.endSec}|${segment.speaker}`;
   }
 
   /** `''` for `unknown` — renderers must never fabricate attribution the app doesn't have. */

@@ -142,7 +142,7 @@ export const isRegenerateDisabled = (
   generatingElsewhere: boolean,
 ): boolean => summarizing || summaryLoading || importing || isLive || generatingElsewhere;
 
-/** "Detect speakers" needs the diarization models AND a system-audio track, and never runs alongside anything else — including a recording still in progress, since diarization needs the finished system-audio track. */
+/** "Detect speakers" needs the diarization models AND a system-audio track, and never runs alongside anything else — including a recording still in progress or a summary generating, since diarization needs the finished system-audio track and shouldn't contend with another local-model run. */
 export const isDiarizeDisabled = (
   modelsPresent: boolean,
   hasSystemTrack: boolean,
@@ -150,28 +150,20 @@ export const isDiarizeDisabled = (
   importing: boolean,
   diarizing: boolean,
   recording: boolean,
-): boolean => !modelsPresent || !hasSystemTrack || busy || importing || diarizing || recording;
+  summarizing = false,
+): boolean => !modelsPresent || !hasSystemTrack || busy || importing || diarizing || recording || summarizing;
 
-/**
- * Explains why "Detect speakers" is disabled, but only for the durable
- * reasons worth surfacing inline (recording in progress, models missing, no
- * system track) — never for merely being busy with something else, which
- * every other reingest control disables silently too. The recording reason
- * wins over the other two: while recording, models/track state hasn't
- * settled yet and isn't the actionable reason for the user.
- */
+/** Explains why "Detect speakers" is disabled, but only for the durable reasons worth surfacing inline (recording, summary generating, missing models, no system track) — never for merely being busy elsewhere, which every other reingest control disables silently too. Priority order below: recording wins first, since models/track state hasn't settled yet during it. */
 export const diarizeDisabledReason = (
   modelsPresent: boolean,
   hasSystemTrack: boolean,
   _modelsPath: string,
   recording: boolean,
+  summarizing = false,
 ): string | undefined => {
-  if (recording) {
-    return 'Speaker detection runs on the finished recording — available once you stop recording.';
-  }
-  if (!modelsPresent) {
-    return 'Speaker detection needs ~45 MB extra models.';
-  }
+  if (recording) return 'Speaker detection runs on the finished recording — available once you stop recording.';
+  if (summarizing) return "Speaker detection can't run while a summary is generating.";
+  if (!modelsPresent) return 'Speaker detection needs ~45 MB extra models.';
   return hasSystemTrack ? undefined : 'No system audio was captured for this meeting.';
 };
 
