@@ -2,7 +2,9 @@
 //! across restarts.
 //!
 //! The pointer lives in the Tauri app config directory
-//! (`~/Library/Application Support/app.myna.desktop/` on macOS) — it cannot
+//! (`~/Library/Application Support/app.myna.desktop/` on macOS,
+//! `%APPDATA%\app.myna.desktop\` on Windows — resolved per-OS by Tauri's
+//! `app_config_dir`, so this module carries no platform split) — it cannot
 //! live inside the data root itself, which would be a chicken-and-egg
 //! problem (the pointer is what tells us where the data root is).
 //!
@@ -185,8 +187,10 @@ pub fn save(config_dir: impl AsRef<Path>, prefs: &StoragePrefs) -> Result<(), Ap
 }
 
 /// Resolves the Tauri app config directory
-/// (`~/Library/Application Support/app.myna.desktop/` on macOS) — home of
-/// the data-root pointer file.
+/// (`~/Library/Application Support/app.myna.desktop/` on macOS,
+/// `%APPDATA%\app.myna.desktop\` on Windows) — home of the data-root
+/// pointer file. Delegates to Tauri's `app_config_dir`, which resolves
+/// per-OS, so callers stay portable with no `cfg(windows)` split.
 pub fn app_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     app.path()
         .app_config_dir()
