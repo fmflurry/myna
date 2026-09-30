@@ -36,6 +36,12 @@ impl From<SystemAudioSource> for AudioSourceDto {
 /// [`SystemAudioStatus`], IPC-facing: same `kind`-tagged shape, but with
 /// `camelCase` field names within each variant so the Angular UI never has
 /// to translate.
+///
+/// `reason` carries provenance, not permission copy: macOS reports its
+/// OS-version gate here, Windows a missing render endpoint, and worker
+/// panics their own message. The UI derives the permission-denied
+/// wording per platform from `kind`; `Unavailable` reasons pass through
+/// as backend diagnostics.
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SystemAudioStatusDto {
@@ -48,10 +54,12 @@ pub enum SystemAudioStatusDto {
         reason: String,
     },
     /// Mirrors [`SystemAudioStatus::Unknown`]: permission state genuinely
-    /// cannot be determined without attempting a capture. Full UI/command
-    /// surfacing of this variant is a later phase; it is included here only
-    /// so this `From` conversion (and therefore the workspace build) stays
-    /// exhaustive and correct as new `SystemAudioStatus` variants land.
+    /// cannot be determined without attempting a capture (macOS exposes
+    /// no preflight query for `kTCCServiceAudioCapture`). The UI treats
+    /// this as "not yet known", never as denied: the system/mixed options
+    /// stay selectable so choosing one is what surfaces the OS prompt.
+    /// Windows loopback capture needs no grant and never reports this
+    /// variant — only `Available` or `Unavailable`.
     Unknown,
 }
 
