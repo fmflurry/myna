@@ -28,6 +28,8 @@ jobs:
     # macos-14 is Apple Silicon (arm64) — required for the macOS 14.4+ Core
     # Audio process-tap APIs.
     runs-on: ${{ matrix.os }}
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,9 +59,7 @@ jobs:
         run: npm ci
 
       - name: Warn if no signing certificate is configured
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE == ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
         run: |
           echo "::warning::APPLE_CERTIFICATE secret is not set — this build will ship AD-HOC SIGNED (unsigned)."
           echo "::warning::Ad-hoc builds get a new Designated Requirement on every rebuild, so any microphone"
@@ -73,9 +73,8 @@ jobs:
       # release-macos.sh then falls back to ad-hoc signing on its own and
       # still exits 0. macOS-only: Windows Authenticode needs no keychain.
       - name: Import signing certificate
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
@@ -204,7 +203,7 @@ jobs:
           NSIS_EXE=(artifacts/windows/*-setup.exe)
           ./scripts/make-latest-json.sh \
             --app-tar-gz artifacts/macos/Myna.app.tar.gz \
-            --windows-nsis "$NSIS_EXE" \
+            --windows-nsis "${NSIS_EXE[0]}" \
             --out artifacts/latest.json
 
       - name: Upload updater manifest to GitHub Release
