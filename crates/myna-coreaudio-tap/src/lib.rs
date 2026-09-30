@@ -25,15 +25,28 @@
 //! but before the IOProc starts, and returns it as part of [`CapturedFormat`]
 //! rather than letting a caller assume a fixed constant.
 
+// Off macOS this crate is an empty stub: every dependency above is
+// Apple-only, and the sole consumer (`myna-audio`'s `system_macos`, itself
+// mac-only) is swapped for `system_stub` elsewhere, so there is nothing to
+// expose here. This keeps `cargo build --workspace` working on Windows
+// while the macOS build graph stays exactly as it was.
+#[cfg(target_os = "macos")]
 mod aggregate;
+#[cfg(target_os = "macos")]
 mod process;
+#[cfg(target_os = "macos")]
 mod tap;
+#[cfg(target_os = "macos")]
 mod version;
 
+#[cfg(target_os = "macos")]
 pub use objc2_core_audio::AudioObjectID;
+#[cfg(target_os = "macos")]
 pub use process::{
     executable_name, executable_path, hal_device_uid, is_process_running_output,
     list_hal_device_ids, translate_pid, AudioProcess,
 };
+#[cfg(target_os = "macos")]
 pub use tap::{CapturedFormat, ProcessTapCapture, TapBlock, TapError, TapScope};
+#[cfg(target_os = "macos")]
 pub use version::is_macos_at_least;
