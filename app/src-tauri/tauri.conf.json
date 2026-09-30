@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["app", "dmg"],
+    "targets": ["app", "dmg", "nsis", "msi"],
     "publisher": "Myna",
     "copyright": "Copyright © 2026 Myna. MIT licensed.",
     "category": "Productivity",
@@ -51,6 +51,17 @@
       "minimumSystemVersion": "14.4",
       "signingIdentity": "-",
       "entitlements": "Entitlements.plist"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   },
   "plugins": {
