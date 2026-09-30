@@ -17,6 +17,19 @@ serde = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 myna-coreaudio-tap = { path = "../myna-coreaudio-tap" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+myna-wasapi-probe = { path = "../myna-wasapi-probe" }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }

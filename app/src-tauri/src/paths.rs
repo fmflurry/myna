@@ -81,18 +81,21 @@ pub fn meetings_root() -> Result<PathBuf, PathError> {
 /// Resolves the models directory.
 ///
 /// Models are ~5.4 GB of weights that must never be bundled into the app;
-/// they live at the fixed user path `~/myna/models`, downloaded there by
-/// `scripts/download-models.sh` (default `${MYNA_MODELS_DIR:-$HOME/myna/models}`).
+/// they live at the fixed user path `~/myna/models` on macOS
+/// (`%USERPROFILE%\myna\models` on Windows — [`home_dir`] reads `USERPROFILE`
+/// there, and Tauri's `$HOME` scope entry resolves to the same directory),
+/// downloaded there by `scripts/download-models.sh` (default
+/// `${MYNA_MODELS_DIR:-$HOME/myna/models}`).
 ///
 /// Meetings follow the effective data root (dev override > persisted
-/// pointer > `~/myna`); models never do — a storage-location move or a
-/// data-dir override must not drag the multi-GB weights along or
+/// pointer > home-joined `myna`); models never do — a storage-location move
+/// or a data-dir override must not drag the multi-GB weights along or
 /// strand the app looking for them under a custom root.
 ///
 /// In dev builds, the repo-relative `models/` directory is only a legacy
 /// fallback, honoured when it holds actual weights (a subdirectory) but the
-/// fixed `~/myna/models` does not exist yet — a git-kept placeholder
-/// (README only) must never shadow a populated `~/myna/models`.
+/// fixed home-joined `myna/models` does not exist yet — a git-kept
+/// placeholder (README only) must never shadow a populated fixed path.
 ///
 /// Honours `MYNA_MODELS_DIR` as an override, which takes precedence over
 /// both of the above.
@@ -126,17 +129,22 @@ pub fn resolve_models_root(models_dir_override: Option<PathBuf>, is_debug_build:
 
 /// Resolves the templates directory: repo-relative `templates/` in dev
 /// builds, the bundled resource directory in release builds (templates are
-/// small enough to ship inside the app bundle).
+/// small enough to ship inside the app bundle). Both resolutions are
+/// OS-agnostic — the dev path derives from `CARGO_MANIFEST_DIR` and the
+/// release path from Tauri's `resource_dir`, so Windows needs no special
+/// case.
 ///
 /// Honours `MYNA_TEMPLATES_DIR` as an override.
 pub fn templates_root(app: &tauri::AppHandle) -> PathBuf {
     resolve_resource_dir(app, TEMPLATES_DIR_ENV, TEMPLATES_DIR_NAME)
 }
 
-/// Fixed models path (`~/myna/models`), ensuring the parent `~/myna`
-/// exists (`0700`). Returns `None` only when the home directory itself
-/// cannot be resolved. Deliberately ignores the effective data root — a
-/// custom storage location or data-dir override must never move the
+/// Fixed models path (home-joined `myna/models`: `~/myna/models` on macOS,
+/// `%USERPROFILE%\myna\models` on Windows), ensuring the parent home-joined
+/// `myna` exists (`0700` on Unix; platform default elsewhere — see
+/// [`create_dir_all_0700`]). Returns `None` only when the home directory
+/// itself cannot be resolved. Deliberately ignores the effective data root
+/// — a custom storage location or data-dir override must never move the
 /// weights as a side effect.
 fn fixed_models_root() -> Option<PathBuf> {
     let root = home_dir().ok()?.join(DATA_DIR_NAME);
@@ -144,11 +152,11 @@ fn fixed_models_root() -> Option<PathBuf> {
     Some(root.join(MODELS_DIR_NAME))
 }
 
-/// Dev-mode models root: prefers the fixed `~/myna/models` directory (the
-/// downloader's canonical destination) when it exists; falls back to the
-/// repo's `models/` directory only when that holds actual weights (a
-/// subdirectory — not the git-kept README placeholder) and the fixed
-/// directory does not exist yet; otherwise returns the (possibly
+/// Dev-mode models root: prefers the fixed home-joined `myna/models`
+/// directory (the downloader's canonical destination) when it exists; falls
+/// back to the repo's `models/` directory only when that holds actual
+/// weights (a subdirectory — not the git-kept README placeholder) and the
+/// fixed directory does not exist yet; otherwise returns the (possibly
 /// not-yet-existing) fixed path so fresh downloads land in the canonical
 /// location. Takes both paths as parameters so each branch is unit-testable
 /// without touching the real (multi-GB) repo `models/` directory or the
@@ -180,10 +188,11 @@ fn dir_contains_subdirectory(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Release-mode models root: the fixed `~/myna/models`. The directory
-/// itself is populated by `scripts/download-models.sh`, not created eagerly
-/// here — only the parent `~/myna` is ensured to exist (see
-/// [`fixed_models_root`]).
+/// Release-mode models root: the fixed home-joined `myna/models`
+/// (`~/myna/models` on macOS, `%USERPROFILE%\myna\models` on Windows). The
+/// directory itself is populated by `scripts/download-models.sh`, not
+/// created eagerly here — only the parent home-joined `myna` is ensured to
+/// exist (see [`fixed_models_root`]).
 fn resolve_release_models_root() -> PathBuf {
     fixed_models_root().unwrap_or_else(|| PathBuf::from(MODELS_DIR_NAME))
 }
@@ -281,6 +290,11 @@ pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Resolves the user's home directory: `USERPROFILE` on Windows, `HOME`
+/// elsewhere. Tauri's `$HOME` asset-scope entry resolves to the same
+/// directory on each OS, so a storage location accepted by
+/// [`validate_storage_location`] under the home-joined `myna` subtree is
+/// also inside the webview-readable scope on Windows.
 fn home_dir() -> Result<PathBuf, PathError> {
     #[cfg(windows)]
     let key = "USERPROFILE";
@@ -315,9 +329,10 @@ fn ensure_dir(path: &Path) -> Result<(), PathError> {
 /// apply the same policy to the per-meeting and summaries directories they
 /// create, without duplicating the `cfg(unix)` split.
 ///
-/// Non-Unix targets fall back to the platform default permissions — Myna is
-/// macOS-first and Windows/Linux ACL handling is deferred (see
-/// `docs/stack-proposal.md`).
+/// Non-Unix targets fall back to the platform default permissions: Windows
+/// NTFS ACL restriction is deferred (no per-OS ACL handling yet — the
+/// `cfg(not(unix))` passthrough below is intentionally a no-op), and the
+/// same deferral covers [`write_0600`]. Unix behavior is unchanged.
 #[cfg(unix)]
 pub(crate) fn create_dir_all_0700(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
@@ -489,7 +504,8 @@ fn tighten_mode_if_looser(path: &Path, target_mode: u32) {
     }
 }
 
-/// Default data root (`~/myna`), without creating it — the location
+/// Default data root (home-joined `myna`: `~/myna` on macOS,
+/// `%USERPROFILE%\myna` on Windows), without creating it — the location
 /// [`effective_data_root`] falls back to when neither the `MYNA_DATA_DIR`
 /// override nor the persisted pointer names a directory. Exposed so
 /// `commands::storage::reset_storage_location` can name its migration target
@@ -514,7 +530,8 @@ pub fn default_data_root() -> Result<PathBuf, PathError> {
 ///    [`PathError::StorageMissing`] — it is never silently recreated and
 ///    never falls through to the default (either would split the library
 ///    across two roots).
-/// 3. Otherwise `~/myna`.
+/// 3. Otherwise the home-joined `myna` default (`~/myna` on macOS,
+///    `%USERPROFILE%\myna` on Windows).
 ///
 /// `config_dir` is a parameter — rather than resolving the Tauri app config
 /// dir internally — so every precedence branch is unit-testable against an
@@ -622,11 +639,17 @@ fn ensure_effective_root(root: PathBuf) -> Result<PathBuf, PathError> {
 /// archive outside the chosen location), or when the directory is not
 /// writable (missing owner write bit, or a failed probe write).
 ///
+/// Portable across macOS and Windows: the symlink checks use
+/// `symlink_metadata` (never following links) and the writability probe is
+/// a plain file create-write-delete, both OS-agnostic. Only the owner-write
+/// mode-bit pre-check is Unix-gated (`cfg(unix)`); on Windows the live
+/// probe alone decides writability.
+///
 /// Notably this does *not* reject anything under `~/Library`: iCloud Drive
-/// lives at `~/Library/Mobile Documents/` and is a legitimate storage
-/// choice. Do not "harden" this by reusing `commands::export`'s `~/Library`
-/// confinement — that reject exists for a different threat (save-dialog
-/// destinations) and would lock out iCloud.
+/// lives at `~/Library/Mobile Documents/` on macOS and is a legitimate
+/// storage choice there. Do not "harden" this by reusing
+/// `commands::export`'s `~/Library` confinement — that reject exists for a
+/// different threat (save-dialog destinations) and would lock out iCloud.
 pub fn validate_storage_location(path: impl AsRef<Path>) -> Result<(), AppError> {
     use std::io::Write as _;
 

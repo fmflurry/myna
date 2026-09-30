@@ -16,7 +16,7 @@ license.workspace = true
 [lints.rust]
 unsafe_code = "allow"
 
-[dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 thiserror = { workspace = true }
 objc2 = "0.6"
 block2 = "0.6"

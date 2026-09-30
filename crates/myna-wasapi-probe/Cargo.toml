@@ -1,0 +1,27 @@
+[package]
+name = "myna-wasapi-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Deliberately does NOT opt into `[lints] workspace = true`. The workspace
+# forbids `unsafe_code` everywhere (`unsafe_code = "forbid"` in the root
+# Cargo.toml, and `forbid` cannot be locally overridden with `#[allow]`), and
+# this crate is the one deliberate Windows exception to that: a throwaway
+# WASAPI loopback probe needs real `unsafe` COM/FFI calls underneath it.
+# Staying off `workspace = true` keeps `forbid` fully intact, unweakened, for
+# every other crate — none of them may add their own `#[allow(unsafe_code)]`
+# either.
+[lints.rust]
+unsafe_code = "allow"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }

@@ -15,6 +15,9 @@ path = "src/main.rs"
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# llama-cpp-2 stays on its default CPU-only build (no CUDA/Vulkan
+# features): the 2-shard Q4_K_M 32K-context path needs no GPU setup on
+# Windows either.
 llama-cpp-2 = { workspace = true }
 encoding_rs = { workspace = true }
 clap = { workspace = true }

@@ -2,9 +2,10 @@
 //! dispatch.
 //!
 //! This is the **only** file in this crate that branches on target
-//! platform for system-audio support. [`crate::system_macos`] backs macOS;
-//! [`crate::system_stub`] backs every other platform (and used to back
-//! macOS too, before a real backend existed).
+//! platform for system-audio support. [`crate::system_macos`] backs macOS,
+//! [`crate::system_windows`] backs Windows; [`crate::system_stub`] backs
+//! every other platform (and used to back macOS too, before a real backend
+//! existed).
 
 use serde::Serialize;
 
@@ -12,8 +13,10 @@ use crate::error::AudioError;
 
 #[cfg(target_os = "macos")]
 use crate::system_macos as backend;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::system_stub as backend;
+#[cfg(target_os = "windows")]
+use crate::system_windows as backend;
 
 /// Opaque handle to a live platform system-audio capture, re-exported here
 /// (rather than named directly) so [`crate::capture`] can hold one — e.g. to

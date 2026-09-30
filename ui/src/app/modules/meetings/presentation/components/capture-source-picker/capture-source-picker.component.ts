@@ -24,6 +24,28 @@ const BLUETOOTH_INPUT_NEEDLES: readonly string[] = [
   'hfp',
 ];
 
+/**
+ * OS the permission guidance targets. Windows loopback capture needs no
+ * grant — only the microphone does — so its copy names the mic path
+ * instead of the macOS audio-capture pane.
+ */
+export type CapturePlatform = 'macos' | 'windows' | 'linux';
+
+export function platformFromUserAgent(userAgent: string): CapturePlatform {
+  const lower = userAgent.toLowerCase();
+  if (lower.includes('windows')) {
+    return 'windows';
+  }
+  if (lower.includes('linux')) {
+    return 'linux';
+  }
+  return 'macos';
+}
+
+function currentUserAgent(): string {
+  return typeof navigator === 'undefined' ? '' : navigator.userAgent;
+}
+
 /** Name parts (lowercased) marking a built-in microphone — mirrors the Rust fallback preference. */
 const BUILTIN_MIC_NEEDLES: readonly string[] = [
   'built-in',
@@ -60,6 +82,11 @@ export class CaptureSourcePickerComponent {
   readonly selectedDeviceName = input<string | null>(null);
   readonly devices = input<readonly AudioDevice[]>([]);
   readonly disabled = input(false);
+  /**
+   * OS the permission guidance targets, defaulting to the runtime user
+   * agent so platform-specific copy needs no backend wiring.
+   */
+  readonly platform = input<CapturePlatform>(platformFromUserAgent(currentUserAgent()));
 
   readonly sourceSelected = output<CaptureSource>();
   readonly fallbackMicSelected = output<string>();
@@ -85,10 +112,20 @@ export class CaptureSourcePickerComponent {
       return status.reason;
     }
     if (status.kind === 'permission_denied') {
-      return 'System audio permission was denied.';
+      return this.permissionDeniedReason();
     }
     return null;
   });
+
+  /**
+   * Windows loopback capture needs no grant, so its denial copy points
+   * at the microphone Settings path instead of the macOS audio-capture pane.
+   */
+  protected readonly permissionDeniedReason = computed(() =>
+    this.platform() === 'windows'
+      ? 'System audio permission was denied. Turn microphone access back on in Settings → Privacy → Microphone.'
+      : 'System audio permission was denied.',
+  );
 
   protected readonly showGrantPermission = computed(
     () => this.systemAudioStatus().kind === 'permission_denied'
@@ -98,6 +135,14 @@ export class CaptureSourcePickerComponent {
     const status = this.systemAudioStatus();
     return status.kind === 'permission_denied' && status.restartRequired;
   });
+
+  /**
+   * macOS caches the audio-capture grant per process, so a fresh grant
+   * needs a relaunch — the caveat only fires there.
+   */
+  protected readonly showRestartHint = computed(
+    () => this.platform() === 'macos' && this.restartRequired(),
+  );
 
   protected readonly showHeadphonesHint = computed(() => this.captureSource() === 'mixed');
 

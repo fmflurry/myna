@@ -22,10 +22,17 @@ fail() { printf '\nFAIL: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-Usage: make-latest-json.sh --app-tar-gz <path> [--tag <vX.Y.Z>] [--notes <text>] [--out <path>]
+Usage: make-latest-json.sh --app-tar-gz <path> [--windows-nsis <path>] [--tag <vX.Y.Z>] [--notes <text>] [--out <path>]
 
   --app-tar-gz   Path to the signed updater artifact (Myna.app.tar.gz).
                  Its sibling <path>.sig supplies the signature.
+  --windows-nsis Path to the signed Windows updater artifact
+                 (*-setup.exe, produced by scripts/release-windows.ps1).
+                 Its sibling <path>.sig supplies the signature. Adds a
+                 fixed windows-x86_64 entry alongside the macOS entry under
+                 the same single static manifest. The .msi stays a
+                 manual-download release asset and is never an updater URL:
+                 one entry per platform key keeps version comparison local.
   --tag          Git tag being released, e.g. v0.1.0. Defaults to
                  $GITHUB_REF_NAME, then `git describe --tags --exact-match`.
                  Must equal "v<version>" read from tauri.conf.json.
@@ -37,6 +44,7 @@ EOF
 }
 
 APP_TAR_GZ=""
+WINDOWS_NSIS=""
 TAG="${GITHUB_REF_NAME:-}"
 NOTES=""
 OUT=""
@@ -44,6 +52,7 @@ OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --app-tar-gz) APP_TAR_GZ="${2:-}"; shift 2 ;;
+    --windows-nsis) WINDOWS_NSIS="${2:-}"; shift 2 ;;
     --tag) TAG="${2:-}"; shift 2 ;;
     --notes) NOTES="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
@@ -123,23 +132,49 @@ log "Platform key (empirically determined): $PLATFORM_KEY"
 
 URL="https://github.com/fmflurry/myna/releases/download/$TAG/Myna.app.tar.gz"
 
+# --- 6b. Windows entry — fixed key, no empirical detection ---------------
+# The NSIS installer is always an x64 build off windows-latest, so unlike
+# the macOS entry there is nothing to inspect — and nothing to inspect it
+# with (no PE tooling on the macOS manifest job). The key must stay
+# windows-x86_64: it is the updater plugin's target triple for 64-bit
+# Windows, and a wrong key makes check() silently find nothing.
+WINDOWS_URL=""
+WINDOWS_SIGNATURE=""
+if [ -n "$WINDOWS_NSIS" ]; then
+  [ -f "$WINDOWS_NSIS" ] || fail "Windows updater artifact not found: $WINDOWS_NSIS"
+  WINDOWS_SIG_PATH="$WINDOWS_NSIS.sig"
+  [ -f "$WINDOWS_SIG_PATH" ] || fail "Signature file not found: $WINDOWS_SIG_PATH"
+  WINDOWS_SIGNATURE="$(cat "$WINDOWS_SIG_PATH")"
+  [ -n "$WINDOWS_SIGNATURE" ] || fail "$WINDOWS_SIG_PATH is empty — cannot publish an unsigned updater manifest"
+  WINDOWS_BASENAME="$(basename "$WINDOWS_NSIS")"
+  WINDOWS_URL="https://github.com/fmflurry/myna/releases/download/$TAG/$WINDOWS_BASENAME"
+  log "Windows entry: windows-x86_64 -> $WINDOWS_URL"
+fi
+
 # --- 7. Emit + self-validate ------------------------------------------------
-python3 - "$OUT" "$VERSION" "$NOTES" "$PUB_DATE" "$PLATFORM_KEY" "$URL" "$SIGNATURE" <<'PYEOF'
+python3 - "$OUT" "$VERSION" "$NOTES" "$PUB_DATE" "$PLATFORM_KEY" "$URL" "$SIGNATURE" "$WINDOWS_URL" "$WINDOWS_SIGNATURE" <<'PYEOF'
 import json
 import sys
 
-out, version, notes, pub_date, platform_key, url, signature = sys.argv[1:8]
+out, version, notes, pub_date, platform_key, url, signature, windows_url, windows_signature = sys.argv[1:10]
+
+platforms = {
+    platform_key: {
+        "url": url,
+        "signature": signature,
+    }
+}
+if windows_url:
+    platforms["windows-x86_64"] = {
+        "url": windows_url,
+        "signature": windows_signature,
+    }
 
 manifest = {
     "version": version,
     "notes": notes,
     "pub_date": pub_date,
-    "platforms": {
-        platform_key: {
-            "url": url,
-            "signature": signature,
-        }
-    },
+    "platforms": platforms,
 }
 
 with open(out, "w") as f:
@@ -156,6 +191,10 @@ echo "  Version:      $VERSION"
 echo "  Tag:          $TAG"
 echo "  Platform key: $PLATFORM_KEY"
 echo "  URL:          $URL"
+if [ -n "$WINDOWS_URL" ]; then
+  echo "  Windows key:  windows-x86_64"
+  echo "  Windows URL:  $WINDOWS_URL"
+fi
 echo "  pub_date:     $PUB_DATE"
 echo "  Signature:    ${SIGNATURE:0:24}... (${#SIGNATURE} bytes)"
 echo "  Output:       $OUT"

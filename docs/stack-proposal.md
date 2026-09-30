@@ -1,6 +1,6 @@
 # Myna — Stack Proposal
 
-> **Status**: Proposed · **Product**: Local-first AI meeting recorder/summarizer · **License**: MIT · **Targets**: macOS-first; Windows/Linux planned
+> **Status**: Proposed · **Product**: Local-first AI meeting recorder/summarizer · **License**: MIT · **Targets**: macOS-first; Windows beta; Linux planned and untested
 >
 > Eight decision areas, the Phase 2 repository layout, and the Phase 3 commands. No code, configs, or manifests are created by this document.
 
@@ -28,10 +28,20 @@
   - **Web Audio (getUserMedia) in the webview** — fallback only; permission UX and capture quirks make it unsuitable as primary.
   - **Native per-OS capture** (AVFoundation / WASAPI / ALSA) — three codebases to own for no benefit.
 
+- **Windows beta scope**: system audio is WASAPI loopback of the shared
+  render mix — no per-application selectivity, and no permission prompt
+  (loopback needs no grant; only the microphone needs Settings → Privacy →
+  Microphone). Status is `Available` whenever a default render endpoint
+  exists, `Unavailable` otherwise. Models and meetings resolve under
+  `%USERPROFILE%\myna` (`%USERPROFILE%\myna\models` for weights). The
+  Bluetooth-headset warning (AirPods-style name matching) is advisory and
+  measurement-only: it never blocks capture or recording. Linux stays
+  planned and untested.
+
 ## 4. GUI Framework
 
 - **Recommended**: **Tauri 2**.
-- **Rationale**: Tauri 2's Rust core + system webview (WKWebView / WebView2 / WebKitGTK) yields a small binary, is macOS-first, with Windows and Linux support planned, and sits naturally next to the all-Rust/C stack (cpal, sherpa-onnx, llama.cpp) via the command/IPC bridge. v2 stabilized multi-window and webview management. MIT/Apache-2.0 dual-licensed.
+- **Rationale**: Tauri 2's Rust core + system webview (WKWebView / WebView2 / WebKitGTK) yields a small binary, is macOS-first, with a Windows beta (NSIS/MSI via WebView2) and Linux support planned but untested, and sits naturally next to the all-Rust/C stack (cpal, sherpa-onnx, llama.cpp) via the command/IPC bridge. v2 stabilized multi-window and webview management. MIT/Apache-2.0 dual-licensed.
 - **Rejected alternatives**:
   - **Electron** — mature but ships a full Chromium/Node runtime (~100 MB+); heavier to distribute and update.
   - **Native SwiftUI** — best macOS experience but macOS-only; ruled out by the Windows/Linux requirement.

@@ -4,6 +4,7 @@ members = [
     "app/src-tauri",
     "crates/myna-audio",
     "crates/myna-coreaudio-tap",
+    "crates/myna-wasapi-probe",
     "crates/myna-stt",
     "crates/myna-llm",
     "tests/integration",

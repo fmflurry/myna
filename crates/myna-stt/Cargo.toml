@@ -17,6 +17,9 @@ serde = { workspace = true }
 clap = { workspace = true }
 hound = { workspace = true }
 ctrlc = { workspace = true }
+# sherpa-onnx 1.13 ships Windows prebuilts linked dynamically against
+# onnxruntime.dll, resolved via the standard DLL search path from its
+# installed location: no version bump or feature change needed for Windows.
 sherpa-onnx = { workspace = true }
 myna-audio = { path = "../myna-audio" }
 

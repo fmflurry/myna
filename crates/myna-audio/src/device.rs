@@ -32,7 +32,10 @@ pub fn list_input_devices() -> Result<Vec<DeviceInfo>, AudioError> {
 /// input. Opening one for capture flips most headsets (e.g. AirPods) from
 /// A2DP music quality to SCO call quality — live output goes quiet even
 /// though the recorded tracks look loud — while the system-audio tap alone
-/// never touches the input side.
+/// never touches the input side. Platform-neutral by construction: Core
+/// Audio and WASAPI both surface the hands-free endpoint with these
+/// substrings (`ag audio` is the WASAPI `Hands-Free AG Audio` endpoint
+/// suffix).
 const BLUETOOTH_INPUT_NEEDLES: &[&str] = &[
     "airpod",
     "bluetooth",
@@ -40,11 +43,21 @@ const BLUETOOTH_INPUT_NEEDLES: &[&str] = &[
     "handsfree",
     "hands free",
     "hfp",
+    "ag audio",
 ];
 
 /// Name parts (lowercased) marking a built-in microphone, preferred when
-/// routing away from a Bluetooth input.
-const BUILTIN_MIC_NEEDLES: &[&str] = &["built-in", "builtin", "built in", "macbook", "internal"];
+/// routing away from a Bluetooth input. The first five cover Core Audio;
+/// `microphone array` is the WASAPI name for built-in mics. Vendor-specific
+/// substrings are deliberately absent: they also match external hardware.
+const BUILTIN_MIC_NEEDLES: &[&str] = &[
+    "built-in",
+    "builtin",
+    "built in",
+    "macbook",
+    "internal",
+    "microphone array",
+];
 
 /// Returns `true` when `name` looks like a Bluetooth / HFP input — see
 /// [`BLUETOOTH_INPUT_NEEDLES`].

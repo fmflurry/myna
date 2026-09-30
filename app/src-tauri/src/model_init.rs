@@ -1,11 +1,13 @@
-//! First-run model initialization: drives `scripts/download-models.sh` from
-//! inside the app so onboarding can fetch missing models without a terminal.
+//! First-run model initialization: drives the download script
+//! (`scripts/download-models.sh`, `scripts/download-models.ps1` on Windows)
+//! from inside the app so onboarding can fetch missing models without a
+//! terminal.
 //!
 //! The script is resolved repo-relative in dev builds and from the bundled
 //! resources in release builds (see `bundle.resources` in
 //! `tauri.conf.json`). Each missing artifact (parakeet / qwen / vad /
-//! diarization) is fetched by one sequential `bash <script> --dest
-//! <models_root> --only <artifact>` run (`--only diarization` fetches both
+//! diarization) is fetched by one sequential script run (`--dest
+//! <models_root> --only <artifact>`; `--only diarization` fetches both
 //! pyannote + TitaNet together), emitting `models://progress` per artifact
 //! and `models://done` when the run ends. The runner iterates the full
 //! `missing_artifacts` queue so a fresh-install `Initialize` bundles the
@@ -33,7 +35,13 @@ use crate::paths;
 /// resource directory in release builds) containing the download script.
 const SCRIPT_DIR_NAME: &str = "scripts";
 
-/// File name of the idempotent download script driven by this module.
+/// File name of the idempotent download script driven by this module:
+/// PowerShell on Windows, bash elsewhere. Both accept the same `--dest` /
+/// `--only` selectors over the same artifacts, so the runner below stays
+/// platform-agnostic.
+#[cfg(windows)]
+const SCRIPT_FILE_NAME: &str = "download-models.ps1";
+#[cfg(not(windows))]
 const SCRIPT_FILE_NAME: &str = "download-models.sh";
 
 /// Directories appended to the child process' `PATH`. GUI apps on macOS do
@@ -44,7 +52,11 @@ const SCRIPT_FILE_NAME: &str = "download-models.sh";
 /// `/usr/local/bin` is group-writable on a stock macOS install, so
 /// prepending it would let anything placed there shadow a same-named binary
 /// the inherited `PATH` would otherwise have resolved from `/usr/bin` or
-/// `/bin`.
+/// `/bin`. Empty on Windows: the child only needs `%USERPROFILE%\.local\bin`
+/// (added by [`build_child_path`]), which has no brew equivalent.
+#[cfg(windows)]
+const CHILD_PATH_APPEND: [&str; 0] = [];
+#[cfg(not(windows))]
 const CHILD_PATH_APPEND: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// How often the runner re-checks whether the current download child has
@@ -182,12 +194,41 @@ fn build_child_path(home_dir: Option<&Path>, current: Option<&OsStr>) -> OsStrin
 
 /// [`build_child_path`] against the real process environment.
 fn child_path() -> OsString {
-    let home = env::var_os("HOME").map(PathBuf::from);
+    let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let home = env::var_os(home_key).map(PathBuf::from);
     build_child_path(home.as_deref(), env::var_os("PATH").as_deref())
 }
 
-/// Spawns one `bash <script> --dest <models_root> --only <artifact>` child
-/// with the augmented `PATH` from [`child_path`].
+/// Spawns one download-script child for `artifact` with the augmented
+/// `PATH` from [`child_path`]: `powershell -File <script> -Dest
+/// <models_root> -Only <artifact>` on Windows, `bash <script> --dest
+/// <models_root> --only <artifact>` elsewhere.
+#[cfg(windows)]
+fn spawn_artifact_download(
+    script: &Path,
+    models_root: &Path,
+    artifact: DownloadArtifact,
+) -> Result<Child, AppError> {
+    Command::new("powershell")
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(script)
+        .arg("-Dest")
+        .arg(models_root)
+        .arg("-Only")
+        .arg(artifact.as_str())
+        .env("PATH", child_path())
+        .spawn()
+        .map_err(AppError::Io)
+}
+
+/// Spawns one download-script child for `artifact` with the augmented
+/// `PATH` from [`child_path`]: `powershell -File <script> -Dest
+/// <models_root> -Only <artifact>` on Windows, `bash <script> --dest
+/// <models_root> --only <artifact>` elsewhere.
+#[cfg(not(windows))]
 fn spawn_artifact_download(
     script: &Path,
     models_root: &Path,

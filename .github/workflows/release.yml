@@ -1,10 +1,13 @@
-name: Release macOS
+name: Release
 
-# Builds, signs (when certificate secrets are configured), verifies, and
-# publishes the macOS .dmg whenever a `v*` tag is pushed. Delegates the
-# actual build/sign/verify/notarize work to scripts/release-macos.sh — see
-# docs/releasing-macos.md for what that script does and how to provision the
-# signing secrets referenced below.
+# Builds, signs (when secrets are configured), verifies, and publishes the
+# macOS .dmg + Windows NSIS/MSI installers whenever a `v*` tag is pushed.
+# Delegates the actual per-OS build/sign/verify work to
+# scripts/release-macos.sh and scripts/release-windows.ps1 — see
+# docs/releasing-macos.md for what the macOS script does and how to
+# provision the signing secrets referenced below. The shared updater
+# manifest (latest.json, one static URL per ADR 0010) is emitted in the
+# trailing updater-manifest job from both builds' artifacts.
 
 on:
   push:
@@ -15,10 +18,16 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    runs-on: macos-14 # Apple Silicon (arm64) — required for the macOS 14.4+ Core Audio process-tap APIs.
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+  build:
+    strategy:
+      # A broken Windows build must not cancel the macOS release (or vice
+      # versa); the updater-manifest job below still needs both to succeed.
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    # macos-14 is Apple Silicon (arm64) — required for the macOS 14.4+ Core
+    # Audio process-tap APIs.
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,7 +57,9 @@ jobs:
         run: npm ci
 
       - name: Warn if no signing certificate is configured
-        if: env.APPLE_CERTIFICATE == ''
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE == ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           echo "::warning::APPLE_CERTIFICATE secret is not set — this build will ship AD-HOC SIGNED (unsigned)."
           echo "::warning::Ad-hoc builds get a new Designated Requirement on every rebuild, so any microphone"
@@ -60,10 +71,11 @@ jobs:
       # scripts/release-macos.sh to auto-detect the signing identity) can
       # find it. Skipped entirely when no certificate secret is configured —
       # release-macos.sh then falls back to ad-hoc signing on its own and
-      # still exits 0.
+      # still exits 0. macOS-only: Windows Authenticode needs no keychain.
       - name: Import signing certificate
-        if: env.APPLE_CERTIFICATE != ''
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
@@ -92,7 +104,8 @@ jobs:
       # required (bundle.createUpdaterArtifacts is true) — the script fails
       # loudly if they're missing rather than shipping an unsigned updater
       # artifact.
-      - name: Build, sign, and verify release bundle
+      - name: Build, sign, and verify macOS release bundle
+        if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -102,19 +115,99 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: ./scripts/release-macos.sh
 
-      # Emits target/release/bundle/macos/latest.json from the version in
-      # app/src-tauri/tauri.conf.json and the signature scripts/release-macos.sh
-      # just produced/verified. GITHUB_REF_NAME is set by the runner for the
-      # v* tag push that triggered this workflow.
-      - name: Generate latest.json for the updater
-        run: ./scripts/make-latest-json.sh --app-tar-gz target/release/bundle/macos/Myna.app.tar.gz
+      # Windows counterpart: Authenticode (signtool) instead of codesign, no
+      # notarization step. APPLE_* secrets are deliberately NOT forwarded —
+      # release-windows.ps1 never reads them. TAURI_SIGNING_* are forwarded
+      # exactly as on macOS: the updater artifact must be signed on every
+      # platform.
+      - name: Build, sign, and verify Windows release bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PATH: ${{ secrets.WINDOWS_CERT_PATH }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/release-windows.ps1
 
-      - name: Upload dmg and updater artifacts to GitHub Release
+      # Stashes the signed updater artifacts for the updater-manifest job,
+      # which merges both platforms into a single latest.json. The macOS
+      # tarball + sig and the Windows NSIS installer + sig keep distinct
+      # artifact names so neither leg overwrites the other.
+      - name: Stash macOS updater artifact for the manifest job
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-updater
+          path: |
+            target/release/bundle/macos/Myna.app.tar.gz
+            target/release/bundle/macos/Myna.app.tar.gz.sig
+
+      - name: Stash Windows updater artifact for the manifest job
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-updater
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*-setup.exe.sig
+
+      - name: Upload macOS dmg and updater artifacts to GitHub Release
+        if: runner.os == 'macOS'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             target/release/bundle/dmg/*.dmg
             target/release/bundle/macos/Myna.app.tar.gz
             target/release/bundle/macos/Myna.app.tar.gz.sig
-            target/release/bundle/macos/latest.json
           generate_release_notes: true
+
+      - name: Upload Windows installers and updater artifacts to GitHub Release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*-setup.exe.sig
+            target/release/bundle/msi/*.msi
+            target/release/bundle/msi/*.msi.sig
+
+  # Emits target/release-equivalent latest.json from the version in
+  # app/src-tauri/tauri.conf.json and the signatures both build legs just
+  # produced/verified. Runs on macos-14 because make-latest-json.sh
+  # determines the macOS platform key empirically with `lipo`, which only
+  # exists on macOS. GITHUB_REF_NAME is set by the runner for the v* tag
+  # push that triggered this workflow.
+  updater-manifest:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS updater artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-updater
+          path: artifacts/macos
+
+      - name: Download Windows updater artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-updater
+          path: artifacts/windows
+
+      - name: Generate combined latest.json for the updater
+        run: |
+          set -euo pipefail
+          NSIS_EXE=(artifacts/windows/*-setup.exe)
+          ./scripts/make-latest-json.sh \
+            --app-tar-gz artifacts/macos/Myna.app.tar.gz \
+            --windows-nsis "$NSIS_EXE" \
+            --out artifacts/latest.json
+
+      - name: Upload updater manifest to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/latest.json

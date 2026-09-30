@@ -19,8 +19,10 @@ mod supervisor;
 mod system;
 #[cfg(target_os = "macos")]
 mod system_macos;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod system_stub;
+#[cfg(target_os = "windows")]
+mod system_windows;
 
 pub use capture::{
     capture, capture_sources, is_system_audio_stalled, CaptureConfig, CaptureRequest,
