@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "myna-app"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "hound",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "myna-audio"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cpal",
  "hound",
@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "myna-coreaudio-tap"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "block2",
  "objc2",
@@ -2409,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "myna-integration-tests"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "myna-audio",
  "myna-llm",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "myna-llm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2436,7 +2436,7 @@ dependencies = [
 
 [[package]]
 name = "myna-stt"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "myna-wasapi-probe"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "windows 0.62.2",
 ]
