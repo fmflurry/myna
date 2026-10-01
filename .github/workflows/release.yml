@@ -119,7 +119,9 @@ jobs:
       # notarization step. APPLE_* secrets are deliberately NOT forwarded —
       # release-windows.ps1 never reads them. TAURI_SIGNING_* are forwarded
       # exactly as on macOS: the updater artifact must be signed on every
-      # platform.
+      # platform. LLAMA_STATIC_CRT=1 forces llama-cpp to /MT (static CRT) to
+      # match the sherpa-onnx Windows prebuilts; without it the link fails
+      # with LNK2038/LNK1169. macOS is unaffected (no MSVC CRT there).
       - name: Build, sign, and verify Windows release bundle
         if: runner.os == 'Windows'
         shell: pwsh
@@ -129,6 +131,7 @@ jobs:
           WINDOWS_CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LLAMA_STATIC_CRT: '1'
         run: ./scripts/release-windows.ps1
 
       # Stashes the signed updater artifacts for the updater-manifest job,

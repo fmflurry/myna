@@ -73,6 +73,11 @@ if ($tauriConf -match '"createUpdaterArtifacts"\s*:\s*true') {
 }
 
 # --- 3. Build ------------------------------------------------------------
+# sherpa-onnx Windows prebuilts use /MT (static CRT) while llama-cpp builds
+# /MD by default; mixing them in one binary fails the link with
+# LNK2038/LNK1169, so build llama-cpp with /MT to match.
+if (-not (Test-Path 'env:LLAMA_STATIC_CRT')) { $env:LLAMA_STATIC_CRT = '1' }
+
 Log 'Building (tauri build --bundles nsis,msi)'
 Push-Location $RepoRoot
 try {
