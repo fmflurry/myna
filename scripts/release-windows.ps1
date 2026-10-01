@@ -75,9 +75,18 @@ if ($tauriConf -match '"createUpdaterArtifacts"\s*:\s*true') {
 # --- 3. Build ------------------------------------------------------------
 # sherpa-onnx Windows prebuilts use /MT (static CRT) while llama-cpp builds
 # /MD by default; mixing them in one binary fails the link with
-# LNK2038/LNK1169, so build llama-cpp with /MT to match.
+# LNK2038/LNK1169, so build llama-cpp with /MT to match. Two halves:
+# LLAMA_STATIC_CRT + CMAKE_MSVC_RUNTIME_LIBRARY cover the CMake-built
+# llama.cpp objs; RUSTFLAGS +crt-static covers wrapper_common.cpp, which
+# the crate compiles via the cc crate (ignores both knobs above, defaults
+# to /MD, auto-selects /MT only from the crt-static target feature).
 if (-not (Test-Path 'env:LLAMA_STATIC_CRT')) { $env:LLAMA_STATIC_CRT = '1' }
 if (-not (Test-Path 'env:CMAKE_MSVC_RUNTIME_LIBRARY')) { $env:CMAKE_MSVC_RUNTIME_LIBRARY = 'MultiThreaded' }
+if ([string]::IsNullOrEmpty($env:RUSTFLAGS)) {
+  $env:RUSTFLAGS = '-C target-feature=+crt-static'
+} elseif ($env:RUSTFLAGS -notmatch 'crt-static') {
+  $env:RUSTFLAGS = "$env:RUSTFLAGS -C target-feature=+crt-static"
+}
 
 # llama-cpp-sys-2 sets always_configure(false), so a rust-cache-restored
 # target/ reuses the stale MD CMakeCache even after LLAMA_STATIC_CRT flips
