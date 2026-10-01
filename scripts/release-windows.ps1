@@ -77,6 +77,14 @@ if ($tauriConf -match '"createUpdaterArtifacts"\s*:\s*true') {
 # /MD by default; mixing them in one binary fails the link with
 # LNK2038/LNK1169, so build llama-cpp with /MT to match.
 if (-not (Test-Path 'env:LLAMA_STATIC_CRT')) { $env:LLAMA_STATIC_CRT = '1' }
+if (-not (Test-Path 'env:CMAKE_MSVC_RUNTIME_LIBRARY')) { $env:CMAKE_MSVC_RUNTIME_LIBRARY = 'MultiThreaded' }
+
+# llama-cpp-sys-2 sets always_configure(false), so a rust-cache-restored
+# target/ reuses the stale MD CMakeCache even after LLAMA_STATIC_CRT flips
+# to /MT (run 36796870349 proved the env arrived yet the link still saw
+# MD_DynamicRelease). Drop the crate's cached build dirs so CMake must
+# reconfigure with /MT. Windows-only; the macOS leg never touches this.
+Get-ChildItem (Join-Path $RepoRoot 'target\release\build') -Directory -Filter 'llama-cpp-sys-2-*' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 Log 'Building (tauri build --bundles nsis,msi)'
 Push-Location $RepoRoot
