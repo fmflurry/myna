@@ -122,7 +122,12 @@ jobs:
       # match the sherpa-onnx Windows prebuilts; without it the link fails
       # with LNK2038/LNK1169. CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded is
       # the same knob in CMake-native form (forwarded as -D by the crate's
-      # build.rs); both agree on MT. macOS is unaffected (no MSVC CRT there).
+      # build.rs); both agree on MT. RUSTFLAGS=+crt-static fixes the second
+      # half of the same mismatch: wrapper_common.cpp is compiled via the cc
+      # crate (not CMake), which ignores both knobs above and defaults to
+      # /MD unless told otherwise — cc auto-selects /MT only when the Rust
+      # target features contain crt-static. macOS is unaffected (no MSVC CRT
+      # there; this env block is Windows-only).
       - name: Build, sign, and verify Windows release bundle
         if: runner.os == 'Windows'
         shell: pwsh
@@ -134,6 +139,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           LLAMA_STATIC_CRT: '1'
           CMAKE_MSVC_RUNTIME_LIBRARY: 'MultiThreaded'
+          RUSTFLAGS: '-C target-feature=+crt-static'
         run: ./scripts/release-windows.ps1
 
       # Stashes the signed updater artifacts for the updater-manifest job,
