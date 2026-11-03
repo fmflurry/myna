@@ -32,12 +32,22 @@ function Normalize-Path([string]$Path) {
 function Download-File([string]$Url, [string]$OutFile) {
   $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
   if ($curl) {
-    & $curl.Source -fSL -C - --retry 3 --retry-delay 2 -o $OutFile $Url
+    # -q is first so a curlrc cannot put another protocol back on the allow-list.
+    & $curl.Source -q --proto "=https" --proto-redir "=https" -fSL -C - --retry 3 --retry-delay 2 -o $OutFile $Url
     if ($LASTEXITCODE -ne 0) {
       throw "curl failed with exit code $LASTEXITCODE for $Url"
     }
-  } else {
-    Invoke-WebRequest -Uri $Url -OutFile $OutFile
+    return
+  }
+  # Write beside the destination. A failed request must not replace a shard
+  # that is already on disk; the rename happens only after the body is complete.
+  $part = "$OutFile.part"
+  try {
+    Invoke-WebRequest -Uri $Url -OutFile $part
+    Move-Item -LiteralPath $part -Destination $OutFile -Force
+  } catch {
+    Remove-Item -LiteralPath $part -ErrorAction SilentlyContinue
+    throw
   }
 }
 
@@ -97,13 +107,22 @@ function Fetch-Parakeet {
     }
   }
 }
+# curl -o truncates its destination before the first byte. A shard that
+# already meets the published size must not be passed to Download-File.
+function Save-QwenShard([string]$Dir, [string]$Name, [int64]$MinBytes) {
+  $out = Join-Path $Dir $Name
+  if ((Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -ge $MinBytes)) {
+    Write-Output "SKIP shard (already complete: $out)"
+    return
+  }
+  Download-File "$QwenBase/$Name" $out
+}
 function Fetch-Qwen {
   Fetch-One "Qwen2.5-7B-Instruct GGUF" $QwenDirName $QwenShard1Name {
     $d = Join-Path $Dest $QwenDirName
     New-Item -ItemType Directory -Force -Path $d | Out-Null
-    foreach ($f in @($QwenShard1Name, $QwenShard2Name)) {
-      Download-File "$QwenBase/$f" (Join-Path $d $f)
-    }
+    Save-QwenShard $d $QwenShard1Name $QwenShard1MinBytes
+    Save-QwenShard $d $QwenShard2Name $QwenShard2MinBytes
   }
 }
 function Fetch-Vad {
