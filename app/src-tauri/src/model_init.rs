@@ -1184,8 +1184,6 @@ printf '%s' "$PATH" > "$dest/path.txt"
             .find(|candidate| candidate.is_file())
     }
 
-    /// The download scripts must not treat a partial Qwen shard pair as
-    /// finished, and the PowerShell script must accept a `\\?\` destination.
     #[cfg(unix)]
     #[test]
     fn download_scripts_require_full_qwen_shards_and_accept_verbatim_paths() {
