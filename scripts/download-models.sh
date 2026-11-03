@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Fetches the local models Myna needs: Parakeet STT (v3), Qwen2.5-7B-Instruct
-# GGUF, and the silero VAD ONNX model. Idempotent: re-running skips any
-# artifact whose marker file already exists on disk.
+# GGUF, and the silero VAD ONNX model. Idempotent: re-running skips an
+# artifact whose marker file is already present. Qwen is skipped only when
+# both GGUF shards exist and each is at least the size published on
+# Hugging Face, so a partial download is retried.
 #
 # Downloads to the fixed models location `~/myna/models` by default
 # (matching `paths::models_root()` in release builds), overridable via
@@ -23,6 +25,10 @@ PARAKEET_MARKER_NAME="encoder.int8.onnx"
 QWEN_DIR_NAME="qwen2.5-7b-instruct"
 QWEN_MARKER_NAME="qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
 QWEN_MARKER_NAME_2="qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+# Published sizes of the Q4_K_M shards (Hugging Face
+# Qwen/Qwen2.5-7B-Instruct-GGUF). A shorter file is a partial download.
+QWEN_SHARD1_MIN_BYTES=3993201344
+QWEN_SHARD2_MIN_BYTES=689872288
 
 VAD_DIR_NAME="silero-vad"
 VAD_MARKER_NAME="silero_vad.onnx"
@@ -70,6 +76,8 @@ they move meetings/preferences/folders only:
     LICENSE preserved as evidence; TitaNet stays the default).
 
 Idempotent: already-present artifacts (detected via marker file) are skipped.
+Qwen counts as present only when both GGUF shards exist and each is at least
+the published Hugging Face size.
 
 If an artifact is already present under the repo's own models/ directory
 (the pre-migration layout) but missing from <dest>, this script will NOT
@@ -130,6 +138,22 @@ migrate_artifact() {
   mv "$legacy_dir" "$dest_dir"
 }
 
+qwen_shard_bytes() {
+  wc -c < "$1" | tr -d '[:space:]'
+}
+
+# qwen_shards_complete <models-root>
+qwen_shards_complete() {
+  local root="$1"
+  local part1="$root/$QWEN_DIR_NAME/$QWEN_MARKER_NAME"
+  local part2="$root/$QWEN_DIR_NAME/$QWEN_MARKER_NAME_2"
+  [[ -f "$part1" && -f "$part2" ]] || return 1
+  local size1 size2
+  size1="$(qwen_shard_bytes "$part1")"
+  size2="$(qwen_shard_bytes "$part2")"
+  [[ "$size1" -ge "$QWEN_SHARD1_MIN_BYTES" && "$size2" -ge "$QWEN_SHARD2_MIN_BYTES" ]]
+}
+
 # fetch_artifact orchestrates the marker/legacy/migrate/download decision
 # for a single artifact.
 # fetch_artifact <name> <dir_name> <marker_name> <fetch_cmd...>
@@ -143,12 +167,33 @@ fetch_artifact() {
   local legacy_marker
   legacy_marker="$(marker_path "$LEGACY_DEST" "$dir_name" "$marker_name")"
 
-  if [[ -e "$dest_marker" ]]; then
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" ]]; then
+    if qwen_shards_complete "$DEST"; then
+      echo "SKIP (already present: $dest_marker) - $name"
+      return 0
+    fi
+  elif [[ -e "$dest_marker" ]]; then
     echo "SKIP (already present: $dest_marker) - $name"
     return 0
   fi
 
-  if [[ "$dest_dir" != "$legacy_dir" && -e "$legacy_marker" ]]; then
+  local legacy_ready=0
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" ]]; then
+    if qwen_shards_complete "$LEGACY_DEST"; then
+      legacy_ready=1
+    fi
+  elif [[ -e "$legacy_marker" ]]; then
+    legacy_ready=1
+  fi
+
+  # migrate refuses to replace a destination directory that already exists,
+  # so a partial Qwen download has to be resumed instead of stopping here.
+  local resume_partial=0
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" && -e "$dest_dir" ]]; then
+    resume_partial=1
+  fi
+
+  if [[ "$resume_partial" -eq 0 && "$dest_dir" != "$legacy_dir" && "$legacy_ready" -eq 1 ]]; then
     if [[ "$migrate" -eq 1 ]]; then
       migrate_artifact "$legacy_dir" "$dest_dir"
     else

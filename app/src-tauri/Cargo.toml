@@ -30,6 +30,8 @@ time = { workspace = true }
 myna-audio = { path = "../../crates/myna-audio" }
 myna-stt = { path = "../../crates/myna-stt" }
 myna-llm = { path = "../../crates/myna-llm" }
+# Strips the Windows `\\?\` prefix before paths are handed to PowerShell.
+dunce = "1.0.5"
 
 [dev-dependencies]
 tempfile = { workspace = true }
