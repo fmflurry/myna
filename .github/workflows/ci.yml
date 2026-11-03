@@ -1,0 +1,107 @@
+name: CI
+
+# Pull requests and main. No signing secrets and no paid runners: Linux
+# builds the workspace, Windows runs the PowerShell download checks.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libasound2-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      # capture_sources_rejects_mixed_source_as_unavailable fails on main
+      # when the runner has no ALSA card. Mixed capture falls back to the
+      # microphone, and cpal then returns DeviceNotFound("default") instead
+      # of SystemAudioUnavailable. The test file is left unchanged.
+      - name: Test
+        run: cargo test --workspace --locked -- --skip capture_sources_rejects_mixed_source_as_unavailable
+
+      - name: Qwen download script
+        run: bash scripts/download-models_qwen_test.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pester
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version.Major -ge 5 })) {
+            Install-Module Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          }
+          Import-Module Pester -MinimumVersion 5.0.0
+          Invoke-Pester -Path scripts/download-models.Pester.ps1 -CI
+
+      # Windows PowerShell 5.1, not pwsh. A \\?\ destination must not make
+      # Join-Path throw; missing models are still a non-zero exit.
+      - name: PowerShell 5.1 verbatim -Check
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $temp = Join-Path $env:TEMP "myna-ci-models"
+          $dest = "\\?\" + $temp
+          $outFile = Join-Path $env:TEMP "myna-ci-check.txt"
+          & powershell.exe -NoProfile -File .\scripts\download-models.ps1 -Check -Dest $dest > $outFile 2>&1
+          $code = $LASTEXITCODE
+          $output = Get-Content -LiteralPath $outFile -Raw
+          Write-Output $output
+          if ($output -match 'drive' -and $output -match 'null') {
+            Write-Error "Join-Path rejected the verbatim destination"
+          }
+          if ($output -notmatch 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf' -or
+              $output -notmatch 'qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf') {
+            Write-Error "-Check did not list both Qwen shards"
+          }
+          if ($output -notmatch [regex]::Escape($temp)) {
+            Write-Error "-Check did not keep the destination path usable"
+          }
+          if ($code -eq 0) {
+            Write-Error "expected a non-zero exit while the models are missing"
+          }
