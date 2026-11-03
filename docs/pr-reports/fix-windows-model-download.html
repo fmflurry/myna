@@ -151,10 +151,10 @@ color system adapted from skills/statechart/references/render.md).
             <div class="state teal">Skip<small>part 1 ≥ 3,993,201,344<br>part 2 ≥ 689,872,288</small></div>
           </div>
           <div class="branch">
-            <div class="arrow bug">2 · part 1 only, or a short file</div>
-            <div class="state breaks bugPath">Used to skip<small>marker was part 1’s name</small></div>
-            <div class="arrow">now falls through</div>
-            <div class="state blue">Download both shards<small><code>curl.exe -fSL -C -</code></small></div>
+            <div class="arrow bug">2 · one shard is still short</div>
+            <div class="state breaks bugPath">Used to curl <code>-o</code> both<small>a finished part 1 was truncated</small></div>
+            <div class="arrow">skip a shard already at its floor</div>
+            <div class="state blue">Resume only the short shard<small><code>curl -q -fSL -C -</code></small></div>
           </div>
           <div class="branch">
             <div class="arrow">complete pair only in the repo <code>models/</code></div>
@@ -179,11 +179,11 @@ color system adapted from skills/statechart/references/render.md).
         <p class="path">1. App starts the script
 2. Path is a normal drive or UNC path
 3. Used to skip</p>
-        <p class="note">Same rule in <code>download-models.sh</code>. <code>-Check</code> already listed both shards; it still does. Part 2’s floor is the Hugging Face size, 689,872,288 bytes.</p>
+        <p class="note">Same rule in both scripts. <code>-Check</code> still lists both shards. Part 2’s floor is the Hugging Face size, 689,872,288 bytes. A shard already at its floor is not passed to curl. A short shard is resumed with <code>-C -</code> and three retries. Every curl call starts with <code>-q</code> and allows only https.</p>
       </div>
       <div class="card">
         <h2>If curl.exe is missing</h2>
-        <p class="note" style="margin-top:0"><code>$ProgressPreference</code> is <code>SilentlyContinue</code> so <code>Invoke-WebRequest</code> does not redraw a progress bar per packet. <code>Download-File</code> uses curl with <code>--retry 3</code>, throws when curl exits non-zero, and falls back to <code>Invoke-WebRequest</code>. Every fetch goes through that function.</p>
+        <p class="note" style="margin-top:0"><code>$ProgressPreference</code> is <code>SilentlyContinue</code>. <code>Download-File</code> uses curl, throws when curl exits non-zero, and otherwise writes the body to a <code>.part</code> file and renames it only after success, so a failed request leaves the existing shard in place.</p>
       </div>
     </div>
   </div>
@@ -195,7 +195,9 @@ color system adapted from skills/statechart/references/render.md).
         <li>scripts/download-models.ps1</li>
         <li>scripts/download-models.sh</li>
         <li>scripts/download-models.Tests.ps1</li>
+        <li>scripts/download-models.Pester.ps1</li>
         <li>scripts/download-models_qwen_test.sh</li>
+        <li>.github/workflows/ci.yml</li>
         <li>app/src-tauri/src/model_init.rs</li>
         <li>app/src-tauri/Cargo.toml</li>
         <li>Cargo.lock</li>
@@ -211,6 +213,7 @@ color system adapted from skills/statechart/references/render.md).
         <tbody>
           <tr><td><code>download-models_qwen_test.sh</code></td><td class="ok">pass</td></tr>
           <tr><td><code>download-models.Tests.ps1</code> (pwsh 7.5)</td><td class="ok">pass</td></tr>
+          <tr><td><code>download-models.Pester.ps1</code></td><td class="ok">pass</td></tr>
           <tr><td><code>cargo fmt --all --check</code></td><td class="ok">pass</td></tr>
           <tr><td><code>cargo clippy --workspace --all-targets --locked -D warnings</code></td><td class="ok">pass</td></tr>
           <tr><td><code>cargo build --workspace --locked</code></td><td class="ok">pass</td></tr>
@@ -218,13 +221,15 @@ color system adapted from skills/statechart/references/render.md).
         </tbody>
       </table>
       <p class="note"><code>capture_sources_rejects_mixed_source_as_unavailable</code> returns <code>DeviceNotFound("default")</code> here: Mixed falls back to the microphone, and this machine has no ALSA card. That test and that fallback were already on main. Every other workspace test passed, including the new path and Qwen checks.</p>
-      <p class="note">Not run here: Windows PowerShell 5.1, a packaged app whose resource directory really is <code>\\?\C:\...</code>, and a multi-gigabyte curl resume. Linux pwsh reproduces the null-drive error and the shard rules.</p>
+      <p class="note">CI on pull requests and on main runs the Linux fmt, clippy, build, and test commands, plus the bash Qwen script. The one pre-existing audio test is skipped there with a comment, and the test file is unchanged. A Windows job runs this Pester file under pwsh and a PowerShell 5.1 <code>-Check</code> with a <code>\\?\</code> destination.</p>
+      <p class="note">Not run on this Linux host: Windows PowerShell 5.1, a packaged app whose resource directory really is <code>\\?\C:\...</code>, and a multi-gigabyte curl resume. Linux pwsh reproduces the null-drive error and the shard rules.</p>
     </div>
   </div>
 
+
 <section id="kpi-metrics" style="margin-top:28px">
 <h2 style="font-size:18px;margin:0 0 8px">Metrics</h2>
-<p style="margin:0 0 10px;color:#57534e">fmflurry/myna  fix/windows-model-download  pr n/a. Status: partial.</p>
+<p style="margin:0 0 10px;color:#57534e">fmflurry/myna  fix/windows-model-download  pr 4. Status: partial.</p>
 <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #d6d3d1"><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Wall</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Active</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Sessions</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">cursor 0, claude 0, opencode 0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Tokens</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Tool failures</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Guard blocks</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Review rounds</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Fix rounds</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr></table>
 <p style="margin:10px 0 0">Tools: none</p>
 <p style="margin:4px 0 0">Skills: none</p>
