@@ -199,6 +199,34 @@ fn child_path() -> OsString {
     build_child_path(home.as_deref(), env::var_os("PATH").as_deref())
 }
 
+/// Path handed to the download script.
+///
+/// `std::fs::canonicalize` and Tauri's resource directory use a verbatim
+/// `\\?\` prefix on Windows. PowerShell `Join-Path` rejects that prefix
+/// because its drive parser returns null. `dunce` drops a verbatim disk
+/// prefix when the legacy form is unambiguous; `\\?\UNC\...` is left in
+/// place, so the same prefix rule is applied again here.
+fn path_for_shell(path: &Path) -> PathBuf {
+    strip_verbatim_prefix(dunce::simplified(path))
+}
+
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    const VERBATIM_UNC: &str = r"\\?\UNC\";
+    const VERBATIM: &str = r"\\?\";
+    if let Some(rest) = text.strip_prefix(VERBATIM_UNC) {
+        let mut unc = String::from(r"\\");
+        unc.push_str(rest);
+        return PathBuf::from(unc);
+    }
+    if let Some(rest) = text.strip_prefix(VERBATIM) {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 /// Spawns one download-script child for `artifact` with the augmented
 /// `PATH` from [`child_path`]: `powershell -File <script> -Dest
 /// <models_root> -Only <artifact>` on Windows, `bash <script> --dest
@@ -209,14 +237,16 @@ fn spawn_artifact_download(
     models_root: &Path,
     artifact: DownloadArtifact,
 ) -> Result<Child, AppError> {
+    let script = path_for_shell(script);
+    let models_root = path_for_shell(models_root);
     Command::new("powershell")
         .arg("-NoProfile")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-File")
-        .arg(script)
+        .arg(&script)
         .arg("-Dest")
-        .arg(models_root)
+        .arg(&models_root)
         .arg("-Only")
         .arg(artifact.as_str())
         .env("PATH", child_path())
@@ -234,10 +264,12 @@ fn spawn_artifact_download(
     models_root: &Path,
     artifact: DownloadArtifact,
 ) -> Result<Child, AppError> {
+    let script = path_for_shell(script);
+    let models_root = path_for_shell(models_root);
     Command::new("/bin/bash")
-        .arg(script)
+        .arg(&script)
         .arg("--dest")
-        .arg(models_root)
+        .arg(&models_root)
         .arg("--only")
         .arg(artifact.as_str())
         .env("PATH", child_path())
@@ -1116,5 +1148,72 @@ printf '%s' "$PATH" > "$dest/path.txt"
             std::thread::sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    #[test]
+    fn path_for_shell_strips_verbatim_drive_prefix() {
+        let path = Path::new(r"\\?\C:\Users\tester\AppData\Local\Myna\scripts\download-models.ps1");
+        assert_eq!(
+            path_for_shell(path),
+            Path::new(r"C:\Users\tester\AppData\Local\Myna\scripts\download-models.ps1")
+        );
+    }
+
+    #[test]
+    fn path_for_shell_strips_verbatim_unc_prefix() {
+        let path = Path::new(r"\\?\UNC\server\share\myna\models");
+        assert_eq!(
+            path_for_shell(path),
+            Path::new(r"\\server\share\myna\models")
+        );
+    }
+
+    #[test]
+    fn path_for_shell_leaves_ordinary_paths_unchanged() {
+        let windows = Path::new(r"C:\Users\tester\myna\models");
+        assert_eq!(path_for_shell(windows), windows);
+        let unix = Path::new("/home/tester/myna/models");
+        assert_eq!(path_for_shell(unix), unix);
+        assert_eq!(path_for_shell(Path::new("")), Path::new(""));
+    }
+
+    fn pwsh_on_path() -> Option<PathBuf> {
+        let path = env::var_os("PATH")?;
+        env::split_paths(&path)
+            .map(|dir| dir.join("pwsh"))
+            .find(|candidate| candidate.is_file())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_scripts_require_full_qwen_shards_and_accept_verbatim_paths() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bash = Command::new("bash")
+            .arg(repo.join("scripts/download-models_qwen_test.sh"))
+            .output()
+            .expect("run bash qwen shard test");
+        assert!(
+            bash.status.success(),
+            "bash qwen shard test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&bash.stdout),
+            String::from_utf8_lossy(&bash.stderr)
+        );
+
+        let Some(pwsh) = pwsh_on_path() else {
+            eprintln!("skipping download-models.ps1 tests: pwsh is not on PATH");
+            return;
+        };
+        let powershell = Command::new(pwsh)
+            .arg("-NoProfile")
+            .arg("-File")
+            .arg(repo.join("scripts/download-models.Tests.ps1"))
+            .output()
+            .expect("run powershell download-models tests");
+        assert!(
+            powershell.status.success(),
+            "powershell download-models tests failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&powershell.stdout),
+            String::from_utf8_lossy(&powershell.stderr)
+        );
     }
 }

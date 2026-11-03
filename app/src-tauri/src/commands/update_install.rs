@@ -195,6 +195,10 @@ pub async fn install_update(
 /// not match exactly `MacOS` -> `Contents` -> `*.app`. The binary name itself
 /// is intentionally unchecked: `productName` (`Myna`) differs from the bin
 /// name (`myna`).
+///
+/// The only production caller is the macOS relaunch path. Unit tests still
+/// walk the bundle shape on every host, so the helper stays compiled there.
+#[cfg(any(target_os = "macos", test))]
 fn relaunch_target(current_exe: &std::path::Path) -> Option<std::path::PathBuf> {
     let macos_dir = current_exe.parent()?;
     if macos_dir.file_name()?.to_str()? != "MacOS" {

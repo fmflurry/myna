@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Fetches the local models Myna needs: Parakeet STT (v3), Qwen2.5-7B-Instruct
-# GGUF, and the silero VAD ONNX model. Idempotent: re-running skips any
-# artifact whose marker file already exists on disk.
+# GGUF, and the silero VAD ONNX model. Idempotent: re-running skips an
+# artifact whose marker file is already present. Qwen is skipped only when
+# both GGUF shards exist and each is at least the size published on
+# Hugging Face, so a partial download is retried.
 #
 # Downloads to the fixed models location `~/myna/models` by default
 # (matching `paths::models_root()` in release builds), overridable via
@@ -9,6 +11,13 @@
 # storage location never affect this destination — they move
 # meetings/preferences/folders only.
 set -euo pipefail
+
+# -q is first so a curlrc cannot put another protocol back on the allow-list.
+# `--proto =https` replaces that list; redirects are held to https too.
+curl_https() {
+  command curl -q --proto =https --proto-redir =https "$@"
+}
+export -f curl_https
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -23,6 +32,10 @@ PARAKEET_MARKER_NAME="encoder.int8.onnx"
 QWEN_DIR_NAME="qwen2.5-7b-instruct"
 QWEN_MARKER_NAME="qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
 QWEN_MARKER_NAME_2="qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+# Published sizes of the Q4_K_M shards (Hugging Face
+# Qwen/Qwen2.5-7B-Instruct-GGUF). A shorter file is a partial download.
+QWEN_SHARD1_MIN_BYTES=3993201344
+QWEN_SHARD2_MIN_BYTES=689872288
 
 VAD_DIR_NAME="silero-vad"
 VAD_MARKER_NAME="silero_vad.onnx"
@@ -70,6 +83,8 @@ they move meetings/preferences/folders only:
     LICENSE preserved as evidence; TitaNet stays the default).
 
 Idempotent: already-present artifacts (detected via marker file) are skipped.
+Qwen counts as present only when both GGUF shards exist and each is at least
+the published Hugging Face size.
 
 If an artifact is already present under the repo's own models/ directory
 (the pre-migration layout) but missing from <dest>, this script will NOT
@@ -130,6 +145,22 @@ migrate_artifact() {
   mv "$legacy_dir" "$dest_dir"
 }
 
+qwen_shard_bytes() {
+  wc -c < "$1" | tr -d '[:space:]'
+}
+
+# qwen_shards_complete <models-root>
+qwen_shards_complete() {
+  local root="$1"
+  local part1="$root/$QWEN_DIR_NAME/$QWEN_MARKER_NAME"
+  local part2="$root/$QWEN_DIR_NAME/$QWEN_MARKER_NAME_2"
+  [[ -f "$part1" && -f "$part2" ]] || return 1
+  local size1 size2
+  size1="$(qwen_shard_bytes "$part1")"
+  size2="$(qwen_shard_bytes "$part2")"
+  [[ "$size1" -ge "$QWEN_SHARD1_MIN_BYTES" && "$size2" -ge "$QWEN_SHARD2_MIN_BYTES" ]]
+}
+
 # fetch_artifact orchestrates the marker/legacy/migrate/download decision
 # for a single artifact.
 # fetch_artifact <name> <dir_name> <marker_name> <fetch_cmd...>
@@ -143,12 +174,33 @@ fetch_artifact() {
   local legacy_marker
   legacy_marker="$(marker_path "$LEGACY_DEST" "$dir_name" "$marker_name")"
 
-  if [[ -e "$dest_marker" ]]; then
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" ]]; then
+    if qwen_shards_complete "$DEST"; then
+      echo "SKIP (already present: $dest_marker) - $name"
+      return 0
+    fi
+  elif [[ -e "$dest_marker" ]]; then
     echo "SKIP (already present: $dest_marker) - $name"
     return 0
   fi
 
-  if [[ "$dest_dir" != "$legacy_dir" && -e "$legacy_marker" ]]; then
+  local legacy_ready=0
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" ]]; then
+    if qwen_shards_complete "$LEGACY_DEST"; then
+      legacy_ready=1
+    fi
+  elif [[ -e "$legacy_marker" ]]; then
+    legacy_ready=1
+  fi
+
+  # migrate refuses to replace a destination directory that already exists,
+  # so a partial Qwen download has to be resumed instead of stopping here.
+  local resume_partial=0
+  if [[ "$dir_name" == "$QWEN_DIR_NAME" && -e "$dest_dir" ]]; then
+    resume_partial=1
+  fi
+
+  if [[ "$resume_partial" -eq 0 && "$dest_dir" != "$legacy_dir" && "$legacy_ready" -eq 1 ]]; then
     if [[ "$migrate" -eq 1 ]]; then
       migrate_artifact "$legacy_dir" "$dest_dir"
     else
@@ -168,7 +220,7 @@ fetch_parakeet() {
       dest_dir="$1"; base_url="$2"
       mkdir -p "$dest_dir"
       for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do
-        curl -fSL -o "$dest_dir/$f" "$base_url/$f"
+        curl_https -fSL -o "$dest_dir/$f" "$base_url/$f"
       done
     ' _ \
     "$DEST/$PARAKEET_DIR_NAME" \
@@ -210,25 +262,41 @@ link_ollama_qwen() {
   return 1
 }
 
+# curl -o truncates its destination before the first byte. A shard that
+# already meets the published size must not be passed to curl again.
+download_qwen_shard() {
+  local path="$1" url="$2" min="$3"
+  if [[ -f "$path" ]]; then
+    local size
+    size="$(qwen_shard_bytes "$path")"
+    if [[ "$size" -ge "$min" ]]; then
+      echo "SKIP shard (already complete: $path)"
+      return 0
+    fi
+  fi
+  curl_https -fSL -C - --retry 3 --retry-delay 2 -o "$path" "$url"
+}
+
+download_qwen_pair() {
+  local dest_dir="$1" base_url="$2"
+  mkdir -p "$dest_dir"
+  download_qwen_shard "$dest_dir/$QWEN_MARKER_NAME" \
+    "$base_url/$QWEN_MARKER_NAME" "$QWEN_SHARD1_MIN_BYTES"
+  download_qwen_shard "$dest_dir/$QWEN_MARKER_NAME_2" \
+    "$base_url/$QWEN_MARKER_NAME_2" "$QWEN_SHARD2_MIN_BYTES"
+}
+
 fetch_qwen() {
   link_ollama_qwen && return 0
   fetch_artifact "Qwen2.5-7B-Instruct GGUF" "$QWEN_DIR_NAME" "$QWEN_MARKER_NAME" \
-    bash -c '
-      set -euo pipefail
-      dest_dir="$1"; base_url="$2"
-      mkdir -p "$dest_dir"
-      for f in qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf \
-               qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf; do
-        curl -fSL -o "$dest_dir/$f" "$base_url/$f"
-      done
-    ' _ \
+    download_qwen_pair \
     "$DEST/$QWEN_DIR_NAME" \
     "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main"
 }
 
 fetch_vad() {
   fetch_artifact "silero VAD" "$VAD_DIR_NAME" "$VAD_MARKER_NAME" \
-    bash -c 'mkdir -p "$(dirname "$1")" && curl -fSL -o "$1" "$2"' _ \
+    bash -c 'mkdir -p "$(dirname "$1")" && curl_https -fSL -o "$1" "$2"' _ \
     "$DEST/$VAD_DIR_NAME/$VAD_MARKER_NAME" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 }
@@ -244,7 +312,7 @@ fetch_pyannote() {
       dest_dir="$1"; url="$2"
       mkdir -p "$dest_dir"
       tarball="$dest_dir/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
-      curl -fSL -o "$tarball" "$url"
+      curl_https -fSL -o "$tarball" "$url"
       tar -xjf "$tarball" -C "$dest_dir"
     ' _ \
     "$DEST/$PYANNOTE_DIR_NAME" \
@@ -256,7 +324,7 @@ fetch_pyannote() {
 fetch_titanet() {
   fetch_artifact "NeMo TitaNet speaker embedding (diarization, optional)" \
     "$TITANET_DIR_NAME" "$TITANET_MARKER_NAME" \
-    bash -c 'mkdir -p "$(dirname "$1")" && curl -fSL -o "$1" "$2"' _ \
+    bash -c 'mkdir -p "$(dirname "$1")" && curl_https -fSL -o "$1" "$2"' _ \
     "$DEST/$TITANET_DIR_NAME/$TITANET_MARKER_NAME" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx"
 }
@@ -276,7 +344,7 @@ fetch_eres2net() {
       dest_dir="$1"; url="$2"
       mkdir -p "$dest_dir"
       tarball="$dest_dir/sherpa-onnx-wespeaker-eres2net.tar.bz2"
-      if ! curl -fSL -o "$tarball" "$url"; then
+      if ! curl_https -fSL -o "$tarball" "$url"; then
         status=$?
         echo "SKIP ERes2Net (download unavailable at $url, curl exit $status) - keeping NeMo TitaNet default" >&2
         rm -f "$tarball"

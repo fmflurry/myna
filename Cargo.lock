@@ -2360,6 +2360,7 @@ name = "myna-app"
 version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
+ "dunce",
  "hound",
  "muda",
  "myna-audio",

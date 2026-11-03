@@ -8,7 +8,10 @@ Fetches the local models Myna needs — Parakeet STT v3 (sherpa-onnx, int8),
 Qwen2.5-7B-Instruct GGUF (Q4_K_M, two shards), and the silero VAD ONNX model — into
 `~/myna/models` by default, the same location the packaged app reads from
 (`paths::models_root()` in release builds). Idempotent — re-running skips
-any artifact already present.
+an artifact whose marker file is already present. Qwen is skipped only when
+both GGUF shards exist and each is at least the size published on Hugging Face,
+so a partial download is retried. `download-models.ps1` is the Windows mirror
+and uses the same `-Dest` / `-Only` / `-Migrate` / `-Check` selectors.
 
 The optional speaker diarization models (pyannote segmentation-3-0 + NeMo
 TitaNet) are **not** part of the default fetch — pass `--only diarization`
