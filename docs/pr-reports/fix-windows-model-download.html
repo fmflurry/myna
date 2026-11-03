@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Windows model download — verbatim paths and Qwen shards</title>
+<!--
+MIT License — Copyright (c) 2026 Lauren Tan
+Permission notice from https://github.com/backnotprop/pstack/blob/main/LICENSE
+must accompany substantial portions of the Software (including the mark/phase
+color system adapted from skills/statechart/references/render.md).
+-->
+<style>
+  :root {
+    --bg: #FAF6EE;
+    --bg-soft: #F3EDE0;
+    --card: #FFFcf6;
+    --text: #3A342C;
+    --muted: #7A7164;
+    --line: #D9CFC0;
+    --accent: #8B6F47;
+    --shadow: 0 8px 28px rgba(58, 52, 44, 0.07);
+    --radius: 16px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+    --sans: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --teal: #D7E6DF;
+    --blue: #D9E4F0;
+    --yellow: #F2E8CC;
+    --tan: #E8DFD4;
+    --breaks-fill: #F7E4E4;
+    --breaks-stroke: #B85C5C;
+    --breaks-text: #8A3A3A;
+    --may-fill: #F7ECDD;
+    --may-stroke: #C4873A;
+    --may-text: #8A5A20;
+    --bugpath: #5B7FA6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    padding: 2rem 1.25rem 3.5rem;
+    max-width: 1080px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    line-height: 1.55;
+  }
+  h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.4rem; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 0.35rem; max-width: 42rem; }
+  .credit { font-family: var(--sans); font-size: 0.78rem; color: var(--muted); margin: 0 0 1.15rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.45rem 0.7rem; margin: 0 0 1.2rem; font-family: var(--sans); font-size: 0.78rem; }
+  .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.28rem 0.65rem; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+  .swatch { width: 12px; height: 12px; border-radius: 4px; border: 1.5px solid transparent; }
+  .swatch.tan { background: var(--tan); }
+  .swatch.teal { background: var(--teal); }
+  .swatch.blue { background: var(--blue); }
+  .swatch.yellow { background: var(--yellow); }
+  .swatch.breaks { background: var(--breaks-fill); border-color: var(--breaks-stroke); }
+  .swatch.mayBreak { background: var(--may-fill); border-color: var(--may-stroke); }
+  .swatch.bugPath { background: var(--card); border-color: var(--bugpath); border-width: 2px; }
+  .layout { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 1rem; align-items: start; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.15rem 1.25rem;
+  }
+  .card h2 { margin: 0 0 0.75rem; font-family: var(--sans); font-size: 0.82rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .fork { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; width: 100%; margin-top: 0.2rem; }
+  .branch { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .state {
+    width: min(100%, 15.5rem);
+    text-align: center;
+    padding: 0.65rem 0.7rem;
+    border-radius: 12px;
+    border: 1.2px solid #C9BDAA;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .state small { display: block; font-weight: 500; color: var(--muted); margin-top: 0.2rem; }
+  .state.tan { background: var(--tan); }
+  .state.teal { background: var(--teal); }
+  .state.blue { background: var(--blue); }
+  .state.yellow { background: var(--yellow); }
+  .state.breaks { background: var(--breaks-fill) !important; border-color: var(--breaks-stroke) !important; color: var(--breaks-text) !important; }
+  .state.breaks small { color: var(--breaks-text); }
+  .state.mayBreak { background: var(--may-fill) !important; border-color: var(--may-stroke) !important; color: var(--may-text) !important; }
+  .state.bugPath { border-color: var(--bugpath) !important; border-width: 2.5px !important; }
+  .arrow { color: var(--muted); font-family: var(--sans); font-size: 0.75rem; text-align: center; line-height: 1.35; }
+  .arrow.bug { color: #4A6A8A; font-weight: 600; }
+  .side { display: flex; flex-direction: column; gap: 0.85rem; }
+  .bug { border-left: 3px solid var(--bugpath); }
+  .rule { font-family: var(--sans); font-weight: 600; color: var(--breaks-text); margin: 0 0 0.4rem; }
+  .path {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    padding: 0.55rem 0.7rem;
+    margin: 0;
+    white-space: pre-wrap;
+  }
+  .note { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.92rem; }
+  .files { font-family: var(--mono); font-size: 0.8rem; margin: 0; padding-left: 1.1rem; }
+  .results { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 0.88rem; }
+  .results th, .results td { text-align: left; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .results th { color: var(--muted); font-weight: 600; font-size: 0.75rem; letter-spacing: 0.03em; text-transform: uppercase; }
+  .ok { color: #3E6B4F; font-weight: 600; }
+  .wait { color: var(--may-text); font-weight: 600; }
+  .stack { margin-top: 1rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  code { font-family: var(--mono); font-size: 0.86em; }
+  @media (max-width: 800px) {
+    .layout, .stack, .fork { grid-template-columns: 1fr; }
+    body { padding: 1.25rem 0.9rem 2.5rem; }
+    .state { width: 100%; }
+  }
+</style>
+</head>
+<body>
+  <h1>A <code>\\?\</code> path made model download throw</h1>
+  <p class="sub">The Windows app starts <code>download-models.ps1</code> from a canonicalized resource path. PowerShell <code>Join-Path</code> then reports that the drive argument is null, before any model is fetched. A short first Qwen shard was also treated as a finished download.</p>
+  <p class="credit">Visual vocabulary adapted from @poteto's /statechart in backnotprop/pstack (MIT · Lauren Tan). Fixes reported by Kevin LAURENCEAU, ported onto current main.</p>
+
+  <div class="legend">
+    <span class="pill"><span class="swatch tan"></span> app handoff</span>
+    <span class="pill"><span class="swatch teal"></span> safe to continue</span>
+    <span class="pill"><span class="swatch blue"></span> downloading</span>
+    <span class="pill"><span class="swatch yellow"></span> already on disk, elsewhere</span>
+    <span class="pill"><span class="swatch breaks"></span> breaks</span>
+    <span class="pill"><span class="swatch mayBreak"></span> may stall</span>
+    <span class="pill"><span class="swatch bugPath"></span> bug path</span>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <h2>What the script does with Qwen</h2>
+      <div class="flow">
+        <div class="state tan bugPath">App starts the script<small><code>-File</code> and <code>-Dest</code></small></div>
+        <div class="arrow bug">1 · path still starts with <code>\\?\</code></div>
+        <div class="state breaks bugPath">Join-Path drive is null<small>script stops at the legacy models dir</small></div>
+        <div class="arrow">prefix removed first</div>
+        <div class="state teal">Path is a normal drive or UNC path<small><code>path_for_shell</code>, then <code>Normalize-Path</code></small></div>
+        <div class="arrow">look at the Qwen folder</div>
+        <div class="fork">
+          <div class="branch">
+            <div class="arrow">both shards ≥ published size</div>
+            <div class="state teal">Skip<small>part 1 ≥ 3,993,201,344<br>part 2 ≥ 689,872,288</small></div>
+          </div>
+          <div class="branch">
+            <div class="arrow bug">2 · part 1 only, or a short file</div>
+            <div class="state breaks bugPath">Used to skip<small>marker was part 1’s name</small></div>
+            <div class="arrow">now falls through</div>
+            <div class="state blue">Download both shards<small><code>curl.exe -fSL -C -</code></small></div>
+          </div>
+          <div class="branch">
+            <div class="arrow">complete pair only in the repo <code>models/</code></div>
+            <div class="state yellow">Hint, or move with <code>-Migrate</code></div>
+            <div class="arrow">unless the destination folder already exists</div>
+            <div class="state mayBreak">Partial destination is resumed<small>migrate will not replace it</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card bug">
+        <h2>Bug path 1</h2>
+        <p class="rule">Join-Path cannot read a verbatim drive.</p>
+        <p class="path">1. App starts the script
+2. Join-Path drive is null</p>
+        <p class="note">Rust <code>canonicalize</code> and Tauri’s resource directory use <code>\\?\</code>. <code>dunce</code> drops a safe disk prefix; <code>\\?\UNC\</code> is stripped in the same helper. The script strips both again before <code>$PSScriptRoot</code>, <code>-Dest</code>, or <code>MYNA_MODELS_DIR</code> reach <code>Join-Path</code>.</p>
+      </div>
+      <div class="card bug">
+        <h2>Bug path 2</h2>
+        <p class="rule">One shard file is not a finished Qwen download.</p>
+        <p class="path">1. App starts the script
+2. Path is a normal drive or UNC path
+3. Used to skip</p>
+        <p class="note">Same rule in <code>download-models.sh</code>. <code>-Check</code> already listed both shards; it still does. Part 2’s floor is the Hugging Face size, 689,872,288 bytes.</p>
+      </div>
+      <div class="card">
+        <h2>If curl.exe is missing</h2>
+        <p class="note" style="margin-top:0"><code>$ProgressPreference</code> is <code>SilentlyContinue</code> so <code>Invoke-WebRequest</code> does not redraw a progress bar per packet. <code>Download-File</code> uses curl with <code>--retry 3</code>, throws when curl exits non-zero, and falls back to <code>Invoke-WebRequest</code>. Every fetch goes through that function.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Files</h2>
+      <ul class="files">
+        <li>scripts/download-models.ps1</li>
+        <li>scripts/download-models.sh</li>
+        <li>scripts/download-models.Tests.ps1</li>
+        <li>scripts/download-models_qwen_test.sh</li>
+        <li>app/src-tauri/src/model_init.rs</li>
+        <li>app/src-tauri/Cargo.toml</li>
+        <li>Cargo.lock</li>
+        <li>app/src-tauri/src/commands/update_install.rs</li>
+        <li>crates/myna-audio/tests/system_macos_live.rs</li>
+      </ul>
+      <p class="note">Selectors stay <code>-Dest</code>, <code>-Only</code>, <code>-Migrate</code>, <code>-Check</code>. The app still treats any <code>.gguf</code> as “Qwen present”; this change only stops the downloader from skipping a partial pair. Two macOS-only items were cfg-gated so <code>cargo clippy -D warnings</code> can pass on Linux.</p>
+    </div>
+    <div class="card">
+      <h2>Checks on this machine</h2>
+      <table class="results">
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>download-models_qwen_test.sh</code></td><td class="ok">pass</td></tr>
+          <tr><td><code>download-models.Tests.ps1</code> (pwsh 7.5)</td><td class="ok">pass</td></tr>
+          <tr><td><code>cargo fmt --all --check</code></td><td class="ok">pass</td></tr>
+          <tr><td><code>cargo clippy --workspace --all-targets --locked -D warnings</code></td><td class="ok">pass</td></tr>
+          <tr><td><code>cargo build --workspace --locked</code></td><td class="ok">pass</td></tr>
+          <tr><td><code>cargo test --workspace --locked</code></td><td class="ok">pass, except one pre-existing audio test</td></tr>
+        </tbody>
+      </table>
+      <p class="note"><code>capture_sources_rejects_mixed_source_as_unavailable</code> returns <code>DeviceNotFound("default")</code> here: Mixed falls back to the microphone, and this machine has no ALSA card. That test and that fallback were already on main. Every other workspace test passed, including the new path and Qwen checks.</p>
+      <p class="note">Not run here: Windows PowerShell 5.1, a packaged app whose resource directory really is <code>\\?\C:\...</code>, and a multi-gigabyte curl resume. Linux pwsh reproduces the null-drive error and the shard rules.</p>
+    </div>
+  </div>
+
+<section id="kpi-metrics" style="margin-top:28px">
+<h2 style="font-size:18px;margin:0 0 8px">Metrics</h2>
+<p style="margin:0 0 10px;color:#57534e">fmflurry/myna  fix/windows-model-download  pr n/a. Status: partial.</p>
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #d6d3d1"><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Wall</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Active</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Sessions</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">cursor 0, claude 0, opencode 0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Tokens</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">n/a</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Tool failures</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Guard blocks</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Review rounds</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid #d6d3d1">Fix rounds</th><td style="padding:6px 10px;border-bottom:1px solid #d6d3d1">0</td></tr></table>
+<p style="margin:10px 0 0">Tools: none</p>
+<p style="margin:4px 0 0">Skills: none</p>
+<p style="margin:4px 0 0">Agents: main 0</p>
+<p style="margin:4px 0 0">Failure tools: none. Durations: n/a.</p>
+</section>
+</body>
+</html>
