@@ -35,9 +35,33 @@ new_sandbox() {
   d="$(mktemp -d)"
   mkdir -p "$d/scripts" "$d/bin" "$d/home"
   cp "$SRC" "$d/scripts/download-models.sh"
+  # Real curl -o truncates the destination before any byte arrives.
+  # -C - resumes instead. The stub does both, so a finished shard that is
+  # passed to curl shows up shorter on disk as well as in the log.
   cat >"$d/bin/curl" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"${CURL_LOG:?}"
+out=""
+resume=0
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out=$arg
+  fi
+  if [ "$prev" = "-C" ] && [ "$arg" = "-" ]; then
+    resume=1
+  fi
+  case "$arg" in
+    -C-) resume=1 ;;
+  esac
+  prev=$arg
+done
+if [ -n "$out" ]; then
+  if [ "$resume" -eq 0 ]; then
+    : >"$out"
+  fi
+  printf x >>"$out"
+fi
 exit 0
 EOF
   chmod +x "$d/bin/curl" "$d/scripts/download-models.sh"
@@ -162,6 +186,33 @@ write_shard "$dest/$DIR_NAME/$SHARD1_NAME" "$SHARD1_MIN"
 write_shard "$dest/$DIR_NAME/$SHARD2_NAME" $((SHARD2_MIN - 1))
 run_qwen "$root" "$dest"
 assert_fetches "undersized part 2 is not skipped"
+
+# A finished part 1 must not be passed to curl while part 2 is still short.
+# curl -o would truncate that finished shard.
+root="$(new_sandbox)"
+dest="$root/out"
+write_shard "$dest/$DIR_NAME/$SHARD1_NAME" "$SHARD1_MIN"
+write_shard "$dest/$DIR_NAME/$SHARD2_NAME" $((SHARD2_MIN - 1))
+run_qwen "$root" "$dest"
+part1_size="$(wc -c <"$dest/$DIR_NAME/$SHARD1_NAME" | tr -d '[:space:]')"
+part2_size="$(wc -c <"$dest/$DIR_NAME/$SHARD2_NAME" | tr -d '[:space:]')"
+if [[ "$RUN_CURL" == *"$SHARD1_NAME"* ]]; then
+  fail "finished part 1 must be absent from the curl log when part 2 is short" "$RUN_CURL"
+elif [[ "$part1_size" != "$SHARD1_MIN" ]]; then
+  fail "finished part 1 must keep its published size" "size=$part1_size"
+elif [[ "$RUN_CURL" != *"$SHARD2_NAME"* ]]; then
+  fail "short part 2 must be downloaded" "$RUN_CURL"
+elif [[ "$RUN_CURL" != -q\ * ]]; then
+  fail "curl must be invoked with -q first" "$RUN_CURL"
+elif [[ "$RUN_CURL" != *"--proto =https"* || "$RUN_CURL" != *"--proto-redir =https"* ]]; then
+  fail "curl must allow only https" "$RUN_CURL"
+elif [[ "$RUN_CURL" != *"-C -"* || "$RUN_CURL" != *"--retry 3"* || "$RUN_CURL" != *"--retry-delay 2"* ]]; then
+  fail "short part 2 must resume with retries" "$RUN_CURL"
+elif [[ "$part2_size" -lt $((SHARD2_MIN - 1)) ]]; then
+  fail "resuming part 2 must not truncate it" "size=$part2_size"
+else
+  pass "finished part 1 is not re-downloaded when part 2 is short"
+fi
 
 # A partial destination is resumed even when a complete legacy copy exists.
 root="$(new_sandbox)"
