@@ -1117,4 +1117,46 @@ printf '%s' "$PATH" > "$dest/path.txt"
         }
         false
     }
+
+    fn pwsh_on_path() -> Option<PathBuf> {
+        let path = env::var_os("PATH")?;
+        env::split_paths(&path)
+            .map(|dir| dir.join("pwsh"))
+            .find(|candidate| candidate.is_file())
+    }
+
+    /// The download scripts must not treat a partial Qwen shard pair as
+    /// finished, and the PowerShell script must accept a `\\?\` destination.
+    #[cfg(unix)]
+    #[test]
+    fn download_scripts_require_full_qwen_shards_and_accept_verbatim_paths() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bash = Command::new("bash")
+            .arg(repo.join("scripts/download-models_qwen_test.sh"))
+            .output()
+            .expect("run bash qwen shard test");
+        assert!(
+            bash.status.success(),
+            "bash qwen shard test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&bash.stdout),
+            String::from_utf8_lossy(&bash.stderr)
+        );
+
+        let Some(pwsh) = pwsh_on_path() else {
+            eprintln!("skipping download-models.ps1 tests: pwsh is not on PATH");
+            return;
+        };
+        let powershell = Command::new(pwsh)
+            .arg("-NoProfile")
+            .arg("-File")
+            .arg(repo.join("scripts/download-models.Tests.ps1"))
+            .output()
+            .expect("run powershell download-models tests");
+        assert!(
+            powershell.status.success(),
+            "powershell download-models tests failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&powershell.stdout),
+            String::from_utf8_lossy(&powershell.stderr)
+        );
+    }
 }
