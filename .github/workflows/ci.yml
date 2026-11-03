@@ -90,6 +90,10 @@ jobs:
           $outFile = Join-Path $env:TEMP "myna-ci-check.txt"
           & powershell.exe -NoProfile -File .\scripts\download-models.ps1 -Check -Dest $dest > $outFile 2>&1
           $code = $LASTEXITCODE
+          # The Actions PowerShell wrapper exits with LASTEXITCODE. A missing
+          # model set is supposed to make -Check exit 1; that must not fail
+          # the step once the output has been checked.
+          $global:LASTEXITCODE = 0
           $output = Get-Content -LiteralPath $outFile -Raw
           Write-Output $output
           if ($output -match 'drive' -and $output -match 'null') {
