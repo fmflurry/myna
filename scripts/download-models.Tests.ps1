@@ -262,7 +262,7 @@ Write-Output "IWR_OK"
   $listener.Start()
   $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
   $listener.Stop()
-  $server = Start-Process -FilePath python3 -ArgumentList @("-m", "http.server", "$port", "--bind", "127.0.0.1") -WorkingDirectory $web -PassThru -WindowStyle Hidden
+  $server = Start-Process -FilePath python3 -ArgumentList @("-m", "http.server", "$port", "--bind", "127.0.0.1") -WorkingDirectory $web -PassThru
   Start-Sleep -Milliseconds 400
   try {
     $failCurl = Join-Path $unitRoot "fail-curl"
